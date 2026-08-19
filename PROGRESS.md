@@ -3547,6 +3547,12 @@ immutable;本次曾误改过它的 COMMENT,已回滚)。两条路径最终一致
   ⚠️ **本批次顺带带进了期间别人改的表**:`role.json`(+13)、`role_level.json`(+8)、
   `skill.json`(+52,技能 63→67 行)。提交 dist 时要么连同这些一起说明,要么等对方先把源表提交。
   pkg/configtable(含钉死真实 dist 的契约测试)/ matchmaker / team 三处测试全绿。
+- **2026-08-19 溯源勘误**:策划源表后继提交 SVN **r2129**(`关卡/g_关卡.xlsx`,提交说明
+  「准备模式修复」)把关卡 6/7 的 `ready_mode` 从 2 修正为 1;其余已配置战斗关卡仍为 1。
+  `configtable/dist` 已按该干净 revision 重导为 version **20260819001**、
+  `source_rev=svn-r2129`;Git 侧仅 `level.json` 与 `manifest.json` 变化,不再夹带 08-18 记录的
+  role/role_level/skill 并发数据。31 张表 checksum 全匹配;pkg/configtable、configtable-gen、
+  matchmaker、team、robot/stress 均以 `go test -count=1 -p 1 ./...` 通过。
 
 ## 2026-08-18 首次生产上线日期成为全仓兼容闸
 

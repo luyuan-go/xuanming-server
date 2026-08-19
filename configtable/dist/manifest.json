@@ -1,8 +1,8 @@
 {
-  "version": 20260818003,
-  "generated_at_ms": 1787061220099,
+  "version": 20260819001,
+  "generated_at_ms": 1787113964484,
   "generator": "configtable-gen@0.1.0",
-  "source_rev": "svn-r2115",
+  "source_rev": "svn-r2129",
   "tables": [
     {
       "name": "chest_drop",
@@ -85,7 +85,7 @@
       "name": "level",
       "file": "level.json",
       "proto": "pandora.config.v1.LevelTableData",
-      "checksum": "sha256:a22e7bec8e7e529d3e9f4279dd47048b9493df19f8704926531f00a716f6e4de",
+      "checksum": "sha256:33fb7e6115cf8cf1605cf0bc234a2aabaa66e3f80d168369501bf2c80f19189d",
       "rows": 14
     },
     {
