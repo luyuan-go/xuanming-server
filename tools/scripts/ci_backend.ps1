@@ -215,6 +215,11 @@ $contractTests = @(
     # deploy/k8s/agones/16-ds-envoy.yaml 各写一遍,加新身份头的人只会改自己在用的那份。
     # 集群那份漏剥 = 该头在生产上可被任意调用方伪造(实测曾漏 account-id 与 client-ip)。
     'tools/scripts/tests/envoy_ds_identity_header_strip_contract_test.ps1'
+    # 客户端仓 / 策划表根目录定位(2026-08-18):本地目录名和开发机不一样就找不到表 =
+    # 一键启动在**第一步导表**就中止,整套后端起不来。这个回归没有任何 go test 能挡
+    # (逻辑全在 ps1 里),而且开发机 F:\work\Pandora-Client-SVN 永远是绿的 ——
+    # 只有按 SVN 原名(Client)或自定义名检出的机器才炸,人工 review 也看不出来。
+    'tools/scripts/tests/configtable_client_repo_resolve_test.ps1'
 )
 $contractFailed = @()
 foreach ($rel in $contractTests) {

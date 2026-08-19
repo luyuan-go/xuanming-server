@@ -214,6 +214,9 @@ Sync-ProcessPathFromRegistry
 # 本机 dev.env 自举(被 git 忽略 → 新机器必然缺)。start.ps1 自己也在恢复 / 状态查询处
 # 用 --env-file $EnvFile,所以入口这一层也要接。
 . (Join-Path $ScriptDir 'dev_env_file.ps1')
+# 客户端仓(SVN 工作副本)定位。与 configtable_gen.ps1 / configtable_sync.ps1 同一份,
+# 保证「跑 DS 的那个仓」和「导表的那个仓」永远是同一个。
+. (Join-Path $ScriptDir 'client_repo_lib.ps1')
 # rotation contract 自身在加载期开启 StrictMode；start.ps1 是历史运维入口，
 # 未全面满足 StrictMode Latest，因此只共享其纯函数契约后恢复本脚本既有语义。
 Set-StrictMode -Off
@@ -3955,15 +3958,11 @@ function Resolve-PandoraUProject {
     if (-not [string]::IsNullOrWhiteSpace($Explicit)) { $candidates += $Explicit.Trim() }
     if (-not [string]::IsNullOrWhiteSpace($env:PANDORA_DS_UPROJECT)) { $candidates += $env:PANDORA_DS_UPROJECT.Trim() }
 
-    $parent = Split-Path -Parent $ProjectRoot
-    if ($parent) {
-        foreach ($repo in @('Pandora-Client-SVN', 'Pandora-Client', 'ClientBase')) {
-            $candidates += (Join-Path $parent "$repo\Pandora\Pandora.uproject")
-        }
-        # 兜底:平级目录里任意一个 <repo>\Pandora\Pandora.uproject(容忍策划自定义仓名)。
-        foreach ($dir in @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue)) {
-            $candidates += (Join-Path $dir.FullName 'Pandora\Pandora.uproject')
-        }
+    # 客户端仓候选路径与导表共用一份公共件(client_repo_lib.ps1)。两处各写一套的后果是
+    # 「DS 读 A 仓的资源、导表用 B 仓的表」,而且两边都不报错。候选里已含 SVN 原名 Client、
+    # 文档里的 Pandora-Client-SVN、策划自取的仓名,以及 PANDORA_CLIENT_REPO 指定的目录。
+    foreach ($repoRoot in (Get-PandoraClientRepoCandidate -ProjectRoot $ProjectRoot)) {
+        $candidates += (Join-Path $repoRoot 'Pandora\Pandora.uproject')
     }
 
     foreach ($c in $candidates) {

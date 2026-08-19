@@ -127,6 +127,11 @@ git clone https://github.com/luyuan-go/XuanMing-Server.git D:\XuanMing-Server
 svn checkout http://infinity-svn/svn/Pandora-Moba/trunk/Client D:\Pandora-Client-SVN
 ```
 
+> 目录名 `Pandora-Client-SVN` 只是这里的例子,不是硬要求 —— 不写目标目录时 `svn checkout`
+> 会按 SVN 原名检出成 `Client`,两种都行。导表 / 起 DS 的定位逻辑在
+> `tools/scripts/client_repo_lib.ps1`,按内容认仓不按名字认;把客户端仓和后端仓放在同一个
+> 父目录下最省事,否则设 `PANDORA_CLIENT_REPO` 指到仓根。
+
 路径按这台机器的实际盘符定；下面第 5 步的 `-ClientRepo` 与 `.env` 里的
 `PANDORA_PROTO_SERVER_ROOT` 要跟着改成实际路径。
 

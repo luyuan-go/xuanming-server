@@ -54,30 +54,18 @@ function Write-Info([string]$m) { Write-Host "[..]  $m" -ForegroundColor Cyan }
 function Write-Warn2([string]$m) { Write-Host "[!!]  $m" -ForegroundColor Yellow }
 function Write-Err([string]$m) { Write-Host "[ERR] $m" -ForegroundColor Red }
 
-# 定位策划表根目录(与 configtable_gen.ps1 同款顺序,避免两个脚本指向不同的表)。
-function Resolve-TableRoot([string]$Explicit) {
-    $candidates = New-Object System.Collections.Generic.List[string]
-    if ($Explicit) { $candidates.Add($Explicit) }
-    if ($env:PANDORA_CLIENT_TABLE_ROOT) { $candidates.Add($env:PANDORA_CLIENT_TABLE_ROOT) }
-    $candidates.Add((Join-Path $ProjectRoot '..\Pandora-Client-SVN\Table'))
-    $candidates.Add('F:\work\Pandora-Client-SVN\Table')
-    foreach ($c in $candidates) {
-        if ([string]::IsNullOrWhiteSpace($c)) { continue }
-        try { $full = [System.IO.Path]::GetFullPath($c) } catch { continue }
-        if (-not (Test-Path -LiteralPath $full -PathType Container)) { continue }
-        $anyXlsx = Get-ChildItem -LiteralPath $full -Filter '*.xlsx' -Recurse -File -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if ($null -eq $anyXlsx) { continue }
-        return $full
-    }
-    return ''
-}
+# 定位策划表根目录:与 configtable_gen.ps1 共用同一份公共件,不再各抄一遍
+# (两份"同款顺序"的拷贝迟早漂移,而漂移后两个脚本会指向不同的表 —— 表头同步比对的是
+# 这一份表,导表导的是另一份,得出的结论直接是错的)。
+. (Join-Path $ScriptDir 'client_repo_lib.ps1')
 
-$TableRoot = Resolve-TableRoot $TableRoot
-if (-not $TableRoot) {
-    Write-Err '找不到客户端策划表根目录(Table)。用 -TableRoot 显式指定。'
+$resolved = Resolve-PandoraClientTableRoot -Explicit $TableRoot -ProjectRoot $ProjectRoot
+if (-not $resolved.Path) {
+    Write-Err '找不到客户端策划表根目录(Table)。'
+    Write-PandoraClientTableRootHelp -ProjectRoot $ProjectRoot -NearMiss $resolved.NearMiss
     exit 1
 }
+$TableRoot = $resolved.Path
 Write-Ok "策划表目录: $TableRoot"
 
 # 本脚本是程序用的,直接要求本机有 Go:同步要改 .proto,改完必须重生 pb + 重建 exe,

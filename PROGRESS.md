@@ -3563,3 +3563,42 @@ immutable;本次曾误改过它的 COMMENT,已回滚)。两条路径最终一致
   超时 / 重试 / 可见恢复、玩家不卡死、事故建档与验证证据等红线。同步更新 `AGENTS.md`、
   `docs/design/proto-design.md`、`docs/design/zero-downtime-update.md` 与 `docs/design/pandora-arch.md` 的引用口径，
   避免多份“是否上线”状态漂移。
+
+## 2026-08-18 一键导表按目录名找客户端仓 → 改成按内容找(策划机起不来)
+
+- **现场**:策划双击 `策划一键启动-免Docker-测试版.cmd`,pwsh 自举完成后在**第一步导表**
+  就 `[ERR] 找不到客户端策划表根目录(Table)`,整套后端起不来。根因不是环境问题:
+  `configtable_gen.ps1` 的 `Resolve-TableRoot` 只找 `<后端仓>\..\Pandora-Client-SVN\Table`
+  和写死的 `F:\work\Pandora-Client-SVN\Table` 两处 —— 而**客户端仓在 SVN 上的名字是 `Client`**
+  (`^/trunk/Client`,与 `Art` / `Design` / `Server` 平级),`svn checkout` 不指定目标目录时
+  检出来就叫 `Client`。同一个仓在不同机器上至少两种名字,脚本只认其中一种。
+- **修法:不赌名字,按内容认仓**。新增公共件 `tools/scripts/client_repo_lib.ps1`,顺序为
+  ①显式入口(`-TableRoot` / `PANDORA_CLIENT_TABLE_ROOT` / **新增 `PANDORA_CLIENT_REPO`** /
+  从 `PANDORA_DS_UPROJECT` 回推两级)→ ②后端仓平级 / 上一级的已知仓名
+  (`Client` 排第一,其后 `Pandora-Client-SVN` / `Pandora-Client` / `ClientBase`)→
+  ③同两层里任意仓名通配(容忍中文自定义名;并试 `<目录>\Client`,覆盖"整个 trunk 检出成一个目录")
+  → ④各固定盘根目录及其下一层的已知仓名(两个仓没放一块时兜底)→ ⑤老开发机写死路径。
+  判据始终是 `Table` 下**递归有 xlsx**,名字只决定先看谁。
+- **近旁优先于满盘**:一台机器上同时存在多份检出是常态(本机 `F:\work\Pandora-Client-SVN`
+  与 `D:\luyuan\Client` 各一份,后者还是 r2097 的旧检出)。第一版把"另一块盘上名字对得上的"
+  排在"后端仓旁边名字不对的"之前,被新契约测试当场抓红,已改为近旁证据一律优先。
+- **三处共用一份**:`configtable_gen.ps1` / `configtable_sync.ps1`(导表与表头同步)和
+  `start.ps1` 的 `Resolve-PandoraUProject`(定位 DS 的 `.uproject`)找的是**同一个客户端仓**,
+  此前各写一套。漂移的表现是"导表用 A 仓的表、DS 读 B 仓的资源",两边都不报错。现全部改为
+  调 `Get-PandoraClientRepoCandidate`;实测同一布局下两者结论一致
+  (策划机 `D:\luyuan\Pandora-Server` → 两者都落 `D:\luyuan\Client`)。
+- **多份检出必须报出来**:命中不止一个时,`configtable_gen.ps1` 打印本次用的是哪一份、
+  还有哪些没用、怎么切。选错那份的表现是"我明明改了表却没生效",最难自查。
+  另把「`Table` 在但一张 xlsx 都没有」单独归为 `NearMiss` 报告 —— 那是**检出不完整 /
+  源表没进 SVN**(2026-08-12 Jenkins 那次的同款),跟"路径找错了"是两回事,报错方向不能混。
+- **找不到时的提示重写**:列全找过的位置,并给出 `setx PANDORA_CLIENT_REPO ...`、
+  `-TableRoot ...`、以及可直接复制的 `svn checkout http://infinity-svn/svn/Pandora-Moba/trunk/Client D:\Client`。
+- **门禁**:新增 `tools/scripts/tests/configtable_client_repo_resolve_test.ps1`(8 组、13 条断言,
+  在临时目录造真实布局跑真解析,非源码 grep),已登记进 `ci_backend.ps1` 的 `$contractTests`。
+  这个回归没有任何 go test 能挡(逻辑全在 ps1 里),且**开发机永远是绿的** ——
+  只有目录名不一样的机器才炸,人工 review 也看不出来。
+  既有 `configtable_gen_svn_status_test.ps1` / `configtable_gen_error_hint_test.ps1` 复跑全绿;
+  本机 `configtable_gen.ps1 -Check` 结果与改动前一致(仍是 `F:\work\Pandora-Client-SVN\Table`)。
+- 文档同步:`docs/ops/planner-quickstart.md` 新增「客户端仓放哪儿、叫什么名字」,
+  `tools/devops/BUILD-MACHINE-SETUP.md` 注明 `D:\Pandora-Client-SVN` 只是例子,
+  `tools/scripts/README.md` 登记公共件与新契约测试。

@@ -23,9 +23,13 @@
     两者都会再导一次表(内容没变就是空跑),所以先跑本脚本也不冲突。
 
 .PARAMETER TableRoot
-  客户端策划表根目录。留空按顺序自动探测:
-    -TableRoot 参数 → $env:PANDORA_CLIENT_TABLE_ROOT → <服务端仓库>/../Pandora-Client-SVN/Table
+  客户端策划表根目录。留空自动探测,完整顺序见 tools/scripts/client_repo_lib.ps1:
+    -TableRoot 参数 → $env:PANDORA_CLIENT_TABLE_ROOT
+    → $env:PANDORA_CLIENT_REPO / $env:PANDORA_DS_UPROJECT 推出来的客户端仓 \Table
+    → 后端仓平级 / 上一级目录、各固定盘下的客户端仓 \Table
     → F:\work\Pandora-Client-SVN\Table
+  **本地目录名叫什么都行**:客户端仓在 SVN 上的名字是 Client(^/trunk/Client),
+  按原名检出的 Client、文档里写的 Pandora-Client-SVN、策划自己取的名字,都能找到。
 
 .PARAMETER SourceRev
   产物溯源标注。留空则从 SVN 读 Table 目录的最后改动版本,填成 svn-r<N>。
@@ -62,37 +66,27 @@ function Write-Err([string]$m) { Write-Host "[ERR] $m" -ForegroundColor Red }
 # ---------------------------------------------------------------------------
 # 1. 定位客户端策划表根目录
 # ---------------------------------------------------------------------------
-function Resolve-TableRoot([string]$Explicit) {
-    $candidates = New-Object System.Collections.Generic.List[string]
-    if ($Explicit) { $candidates.Add($Explicit) }
-    if ($env:PANDORA_CLIENT_TABLE_ROOT) { $candidates.Add($env:PANDORA_CLIENT_TABLE_ROOT) }
-    $candidates.Add((Join-Path $ProjectRoot '..\Pandora-Client-SVN\Table'))
-    $candidates.Add('F:\work\Pandora-Client-SVN\Table')
+# 定位逻辑放公共件:configtable_sync.ps1 和 start.ps1(定位 DS 的 .uproject)找的是**同一个
+# 客户端仓**,三处各抄一份必然漂移,而漂移的表现是"导表用的是 A 仓的表、DS 读的是 B 仓的资源"。
+. (Join-Path $ScriptDir 'client_repo_lib.ps1')
 
-    foreach ($c in $candidates) {
-        if ([string]::IsNullOrWhiteSpace($c)) { continue }
-        try { $full = [System.IO.Path]::GetFullPath($c) } catch { continue }
-        if (-not (Test-Path -LiteralPath $full -PathType Container)) { continue }
-        # 目录存在还不够:指错到某个空目录会让生成器报一堆"读 xlsx 失败",
-        # 不如在这里就确认它确实是策划表根(至少有一个 xlsx)。
-        $anyXlsx = Get-ChildItem -LiteralPath $full -Filter '*.xlsx' -Recurse -File -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if ($null -eq $anyXlsx) { continue }
-        return $full
-    }
-    return ''
-}
-
-$TableRoot = Resolve-TableRoot $TableRoot
-if (-not $TableRoot) {
+$resolved = Resolve-PandoraClientTableRoot -Explicit $TableRoot -ProjectRoot $ProjectRoot
+if (-not $resolved.Path) {
     Write-Err '找不到客户端策划表根目录(Table)。'
-    Write-Host '      按顺序找过:-TableRoot 参数 / 环境变量 PANDORA_CLIENT_TABLE_ROOT /'
-    Write-Host '      <服务端仓库>\..\Pandora-Client-SVN\Table / F:\work\Pandora-Client-SVN\Table'
-    Write-Host '      解决:显式指定,例如'
-    Write-Host '        pwsh tools\scripts\configtable_gen.ps1 -TableRoot D:\work\Pandora-Client-SVN\Table'
+    Write-PandoraClientTableRootHelp -ProjectRoot $ProjectRoot -NearMiss $resolved.NearMiss
     exit 1
 }
+$TableRoot = $resolved.Path
 Write-Ok "策划表目录: $TableRoot"
+Write-Info "定位方式: $($resolved.Source)"
+foreach ($nm in $resolved.NearMiss) { Write-Warn2 "跳过(目录在但底下没有 xlsx):$nm" }
+if ($resolved.Others.Count -gt 0) {
+    # 一台机器上存在多份客户端检出时,挑错那份的表现是"我明明改了表却没生效",最难自查。
+    # 所以宁可啰嗦:本次用了哪个、还有哪些没用、想换怎么换,一次说清。
+    Write-Warn2 '本机还有别的策划表目录,这次没有用:'
+    foreach ($o in $resolved.Others) { Write-Host "        $o" }
+    Write-Host '      想用其中某一个:加 -TableRoot <路径>,或设环境变量 PANDORA_CLIENT_TABLE_ROOT。'
+}
 
 # ---------------------------------------------------------------------------
 # 2. 取 SVN 版本号当 -source-rev(生成器必填,且拒 unknown / 空白)
