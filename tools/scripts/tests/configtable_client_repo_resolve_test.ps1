@@ -43,6 +43,13 @@ foreach ($k in @('PANDORA_CLIENT_TABLE_ROOT', 'PANDORA_CLIENT_REPO', 'PANDORA_DS
 }
 
 $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pandora-clientrepo-" + [guid]::NewGuid().ToString('N'))
+$missingDriveLetter = @('Z', 'Y', 'X', 'W', 'V', 'U', 'T', 'S', 'R', 'Q', 'P', 'O', 'N', 'M', 'L', 'K', 'J', 'I', 'H', 'G', 'F', 'E', 'D', 'C', 'B', 'A') |
+    Where-Object { $null -eq (Get-PSDrive -Name $_ -PSProvider FileSystem -ErrorAction SilentlyContinue) } |
+    Select-Object -First 1
+if ([string]::IsNullOrWhiteSpace($missingDriveLetter)) {
+    throw '测试机 A-Z 全部是已存在的文件系统盘符,无法构造“不存在盘符”回归现场'
+}
+$missingClientRepo = "${missingDriveLetter}:\Client"
 try {
     # ===== 1. SVN 原名 Client:核心回归 =====
     Write-Host '[1] 目录按 SVN 原名叫 Client 也要能找到'
@@ -123,6 +130,57 @@ try {
     Assert-True ($help -match '\^/trunk/Client') '帮助里写明客户端仓在 SVN 上叫 Client'
     Assert-True ($help -match 'svn checkout http://infinity-svn/svn/Pandora-Moba/trunk/Client') '帮助里给出可直接复制的检出命令'
     Assert-True ($help -match 'PANDORA_CLIENT_REPO') '帮助里给出一次性设死路径的办法'
+
+    # ===== 9. 过期环境变量指向不存在盘符:跳过后继续自动探测 =====
+    Write-Host '[9] 不存在的候选盘符不能中断策划表定位'
+    $case9 = Join-Path $sandbox 'case9'
+    $srv9 = Join-Path $case9 'XuanMing-Server'
+    New-Item -ItemType Directory -Path $srv9 -Force | Out-Null
+    $want9 = New-FakeTableRoot (Join-Path $case9 'Client')
+    $r9 = $null
+    $err9 = ''
+    $env:PANDORA_CLIENT_REPO = $missingClientRepo
+    try { $r9 = Resolve-PandoraClientTableRoot -ProjectRoot $srv9 } catch { $err9 = $_.Exception.Message } finally { $env:PANDORA_CLIENT_REPO = '' }
+    Assert-True ([string]::IsNullOrWhiteSpace($err9)) '不存在的候选盘符只跳过,不抛 Cannot find drive'
+    $actual9 = if ($null -ne $r9) { $r9.Path } else { '' }
+    Assert-PathEq $actual9 $want9 '跳过坏候选后仍能找到当前后端仓旁的 Client\Table'
+
+    # ===== 10. start.ps1 的 DS 工程定位也必须跳过不存在盘符 =====
+    Write-Host '[10] 不存在的候选盘符不能中断 DS 工程定位'
+    $startPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'start.ps1'
+    $parseTokens = $null
+    $parseErrors = $null
+    $startAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        $startPath, [ref]$parseTokens, [ref]$parseErrors)
+    Assert-True ($parseErrors.Count -eq 0) 'start.ps1 可被 PowerShell 解析'
+    $uprojectFunctions = @($startAst.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $n.Name -ceq 'Resolve-PandoraUProject' }, $true))
+    Assert-True ($uprojectFunctions.Count -eq 1) 'start.ps1 只有一个 Resolve-PandoraUProject 定义'
+    if ($uprojectFunctions.Count -eq 1) {
+        . ([scriptblock]::Create($uprojectFunctions[0].Extent.Text))
+        $case10 = Join-Path $sandbox 'case10'
+        $srv10 = Join-Path $case10 'XuanMing-Server'
+        New-Item -ItemType Directory -Path $srv10 -Force | Out-Null
+        $repo10 = Join-Path $case10 '任意盘符任意名字的客户端仓'
+        $pandora10 = Join-Path $repo10 'Pandora'
+        New-Item -ItemType Directory -Path $pandora10 -Force | Out-Null
+        $want10 = Join-Path $pandora10 'Pandora.uproject'
+        Set-Content -LiteralPath $want10 -Value '{}' -NoNewline
+
+        # 好候选放前、坏候选放末,精确覆盖“先找到 D 盘客户端仓,随后被历史 F 盘兜底拖死”。
+        $script:UProjectCandidateRoots = @($repo10, $missingClientRepo)
+        function Get-PandoraClientRepoCandidate {
+            param([string]$ProjectRoot = '')
+            return @($script:UProjectCandidateRoots)
+        }
+        $ProjectRoot = $srv10
+        $r10 = $null
+        $err10 = ''
+        try { $r10 = Resolve-PandoraUProject -Explicit '' } catch { $err10 = $_.Exception.Message }
+        Assert-True ([string]::IsNullOrWhiteSpace($err10)) 'DS 工程定位跳过不存在盘符,不抛 Cannot find drive'
+        Assert-PathEq $r10 $want10 '真实候选与坏候选并存时仍能找到 Pandora.uproject'
+    }
 }
 finally {
     foreach ($k in $saved.Keys) {

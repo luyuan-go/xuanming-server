@@ -3610,6 +3610,21 @@ immutable;本次曾误改过它的 COMMENT,已回滚)。两条路径最终一致
   `tools/scripts/README.md` 登记公共件与新契约测试。
 
 
+## 2026-08-19 客户端仓候选含不存在盘符 → 启动报 Cannot find drive
+
+- **现场**:`D:\Pandora-Moba\Server` 启动 DS 时,公共定位器最后加入历史候选
+  `F:\work\Pandora-Client-SVN`;该机没有 F 盘,`Resolve-PandoraUProject` 在存在性判断前用
+  provider-aware `Join-Path`,因此直接中止。过期的 `PANDORA_CLIENT_REPO` 指向已不存在盘符时,
+  导表 / 表头同步也有同形状故障。
+- **修法**:候选消费点统一用 `[System.IO.Path]::Combine` 做纯词法拼接,再由
+  `Test-Path -ErrorAction SilentlyContinue` 判断存在性。历史 F 路径仍是最后一级兼容候选,
+  但本机没有 F 盘时只会被跳过,不再要求仓库必须位于任何固定盘符。
+- **门禁 / 验证**:`configtable_client_repo_resolve_test.ps1` 扩到 10 组、19 条断言,
+  动态选一个不存在的 A-Z 盘符,覆盖坏候选在前的 Table 定位和坏候选在末的真
+  `Resolve-PandoraUProject`;全绿。本机另以过期盘符环境变量跑真
+  `configtable_gen.ps1 -Check`,仍正确定位实际 Table 并通过。截图那台无 F 盘机器的双击入口待更新脚本后复验。
+
+
 ## 2026-08-19 本机基础设施起不来时只给日志路径 → 改成把现场打出来
 
 - **现场**:策划机(`D:\Pandora-Moba\Server`,即 `^/trunk` 整检出的 `Server` + `Client` 布局)

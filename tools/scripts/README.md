@@ -80,7 +80,7 @@ fail-closed、招募列表恒空）。生成器会拒绝公开 dev key、短 key
 | `tests/gen_cluster_b1_contract_test.ps1` | B1 signer/verifier、Model-B callback、Stable/Canary allocator 配置生成契约 | 手动/CI |
 | `tests/gen_cluster_team_resume_auth_contract_test.ps1` | Team→Matchmaker 服务身份 key:两端成对、与 login 那把独立、-Prod 必填与跨域复用反例 | 手动/CI |
 | `tests/configtable_gen_svn_status_test.ps1` | 导表失败归因用的 SVN 判定(取版本号 / 未提交判定,含"干净副本 ≠ 没装 svn")行为测试 | 手动/CI |
-| `tests/configtable_client_repo_resolve_test.ps1` | 客户端仓定位:SVN 原名 `Client` / 自定义仓名 / trunk 整检出 / `-TableRoot` / `PANDORA_CLIENT_REPO` / 空 Table 归类 / 多份检出必须报出来 | 手动/CI |
+| `tests/configtable_client_repo_resolve_test.ps1` | 客户端仓定位:SVN 原名 `Client` / 自定义仓名 / trunk 整检出 / `-TableRoot` / `PANDORA_CLIENT_REPO` / 空 Table 归类 / 多份检出必须报出来 / 不存在盘符只跳过 | 手动/CI |
 | `tests/oneclick_devenv_exitcode_contract_test.ps1` | 策划一键启动两条护栏:dev.env 自举三态(建/不覆盖/工作区不全硬失败)+ `Invoke-Local` 必须透传 dev_all 退出码 | 手动/CI |
 | `tests/publish_to_minio_contract_test.ps1` | MinIO 分发错误传播、不可变内容先传/latest 指针后切、允许远端历史对象的单向完整性校验 | 手动/CI |
 | `tests/infra_etcd_persistence_contract_test.ps1` | 本地 etcd PVC/Recreate 持久化契约与反例 | 手动/CI |

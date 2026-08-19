@@ -16,7 +16,7 @@
 #   2. 已知仓名,Client(SVN 原名)排最前,其后是历史上用过的几个名字;
 #   3. 平级 / 上一级目录里任何一个"长得像客户端仓"的目录 —— 容忍策划自己取的中文名、
 #      也容忍把整个 ^/trunk 检出成一个目录(那时客户端仓是它下面的 Client);
-#   4. 老开发机的写死路径。
+#   4. 老开发机的写死路径(仅是最后候选,盘符不存在时安全跳过)。
 # 判据始终是**内容**(Table 下有 xlsx / 有 Pandora\Pandora.uproject),不是名字:
 # 名字只用来决定先看谁,防止一台机器上有多份检出时随机挑一个。
 
@@ -121,7 +121,7 @@ function Get-PandoraClientRepoCandidate {
         }
     }
 
-    # ---- 4. 老开发机写死路径 ----
+    # ---- 4. 老开发机写死路径(可选兼容项,不要求本机存在 F 盘)----
     Add-PandoraPathCandidate $out $seen 'F:\work\Pandora-Client-SVN'
 
     return $out.ToArray()
@@ -136,7 +136,7 @@ function Test-PandoraTableRoot {
     if ([string]::IsNullOrWhiteSpace($Path)) { return 'missing' }
     $full = $null
     try { $full = [System.IO.Path]::GetFullPath($Path) } catch { return 'missing' }
-    if (-not (Test-Path -LiteralPath $full -PathType Container)) { return 'missing' }
+    if (-not (Test-Path -LiteralPath $full -PathType Container -ErrorAction SilentlyContinue)) { return 'missing' }
     $anyXlsx = Get-ChildItem -LiteralPath $full -Filter '*.xlsx' -Recurse -File -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($null -eq $anyXlsx) { return 'empty' }
@@ -184,7 +184,9 @@ function Resolve-PandoraClientTableRoot {
     # ---- 自动探测 ----
     $hits = New-Object 'System.Collections.Generic.List[string]'
     foreach ($repo in (Get-PandoraClientRepoCandidate -ProjectRoot $ProjectRoot)) {
-        $table = Join-Path $repo 'Table'
+        # 候选可以来自另一台机器留下的环境变量,其盘符在本机未必存在。
+        # Path.Combine 只拼字符串,不会像 Join-Path 一样先解析 PowerShell drive 而中断启动。
+        $table = [System.IO.Path]::Combine($repo, 'Table')
         switch (Test-PandoraTableRoot $table) {
             'ok' { $hits.Add([System.IO.Path]::GetFullPath($table)) }
             'empty' { $nearMiss.Add(('{0}(目录在,但底下一张 xlsx 都没有)' -f $table)) }

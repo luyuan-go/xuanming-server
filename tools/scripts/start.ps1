@@ -3962,11 +3962,12 @@ function Resolve-PandoraUProject {
     # 「DS 读 A 仓的资源、导表用 B 仓的表」,而且两边都不报错。候选里已含 SVN 原名 Client、
     # 文档里的 Pandora-Client-SVN、策划自取的仓名,以及 PANDORA_CLIENT_REPO 指定的目录。
     foreach ($repoRoot in (Get-PandoraClientRepoCandidate -ProjectRoot $ProjectRoot)) {
-        $candidates += (Join-Path $repoRoot 'Pandora\Pandora.uproject')
+        # 候选可能是别的机器遗留的盘符。这里只拼路径,存在性统一留到下方 Test-Path 判断。
+        $candidates += [System.IO.Path]::Combine($repoRoot, 'Pandora', 'Pandora.uproject')
     }
 
     foreach ($c in $candidates) {
-        if ((-not [string]::IsNullOrWhiteSpace($c)) -and (Test-Path -LiteralPath $c -PathType Leaf)) {
+        if ((-not [string]::IsNullOrWhiteSpace($c)) -and (Test-Path -LiteralPath $c -PathType Leaf -ErrorAction SilentlyContinue)) {
             return (Resolve-Path -LiteralPath $c).Path
         }
     }
