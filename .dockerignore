@@ -24,6 +24,13 @@ deploy/dev-ca/
 deploy/envoy/cert.pem
 deploy/envoy/key.pem
 
+# Python 侧实现(strangler 迁移,与 Go 版并存)。
+# Go 服务镜像里一个字节都用不到它,但它进构建上下文的代价不是"多拷点文件" ——
+# 改任何一个 .py 都会让 BuildKit 的上下文哈希变化,击穿 go mod download 那层缓存,
+# 于是每次动 Python 代码,22 个 Go 服务镜像都要重下一遍依赖。
+# .venv 有近两千个文件,更是绝不能进上下文。
+python/
+
 # 文档 / 杂项
 docs/
 robot/logs/
