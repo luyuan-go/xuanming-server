@@ -387,16 +387,160 @@ function Save-Pid([string]$Name, [int]$ProcessId) {
     Set-Content -LiteralPath (Get-PidFile $Name) -Value $ProcessId -Encoding ascii
 }
 
+function Read-LogTail([string]$Path, [int]$Lines = 40) {
+    <#
+      读日志尾部。**不能用 Get-Content**:组件进程可能还开着这个文件(超时那条路径上它还活着),
+      Get-Content 默认按 FileShare.Read 打开,撞上写者的独占写句柄会直接抛异常 ——
+      于是"诊断"本身失败,现场反而看不到。这里显式用 ReadWrite 共享读。
+      返回 $null = 文件不存在 / 读不了;返回空数组 = 文件在但没有内容(这本身就是结论)。
+    #>
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    $all = $null
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $sr = [System.IO.StreamReader]::new($fs)
+            try { $all = $sr.ReadToEnd() } finally { $sr.Dispose() }
+        } finally { $fs.Dispose() }
+    } catch { return $null }
+    $rows = @($all -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+    # 逗号不能省:PowerShell 会把返回的空数组拆成「什么都没返回」= $null,于是调用方那里
+    # 「日志是空的」和「日志读不到」撞成同一个值 —— 而这两条结论正好相反(前者是"别在日志里
+    # 找原因",后者是"路径不对")。诊断代码把人指错方向,比不诊断更糟。
+    return , @($rows | Select-Object -Last $Lines)
+}
+
+function Get-PortHolder([int]$Port) {
+    <# 谁在占这个端口。端口冲突是本机基础设施起不来的头号原因,而且"占用者是谁"必须报出来 ——
+       只说"端口被占"人还得自己去 netstat 翻。 #>
+    $rows = @()
+    foreach ($c in @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)) {
+        $p = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
+        if (-not $p) { $rows += "pid $($c.OwningProcess)(进程查不到)"; continue }
+        $exePath = $null
+        try { $exePath = $p.Path } catch { $exePath = $null }
+        $rows += ("{0}(pid {1}){2}" -f $p.ProcessName, $p.Id, $(if ($exePath) { " → $exePath" } else { '' }))
+    }
+    return , @($rows | Sort-Object -Unique)   # 逗号同上:没有占用者时必须是空数组,不是 $null
+}
+
+# 日志里认识的错 → 人话 + 该怎么办。命中几条就报几条(一次崩溃常常同时有因和果)。
+# 只登记**判据明确**的:猜出来的"可能是杀软吧"只会把人带偏(见 Envoy 那段 AF_UNIX 的教训)。
+$script:InfraLogHints = @(
+    @{ Pattern = 'Address already in use|Bind on TCP/IP port|Do you already have another mysqld server running'
+       Message = '端口已被别的进程占着。上面「端口占用者」那行就是它;不是本项目的进程就换掉它或改端口。' }
+    @{ Pattern = "Can't create/write to file|Access is denied|Permission denied|OS errno 13|errno: 13"
+       Message = '数据 / 日志目录写不进去。要么这个目录被安全软件锁了,要么工作区放在了需要管理员才能写的位置(如 C:\Program Files)。' }
+    @{ Pattern = 'unknown variable|unknown option|Failed to set up|error while setting value'
+       Message = '生成的 my.ini 里有本版本 mysqld 不认的配置项 —— 通常是 dist 下的二进制版本和脚本对不上。删掉 run\localinfra\dist\mysql 重跑 provision。' }
+    @{ Pattern = 'Cannot allocate memory|Out of memory|mmap\(.*\) failed|Failed to allocate memory for the buffer pool'
+       Message = '内存不够(InnoDB 缓冲池默认要 512M)。关掉占内存的程序重试;长期不够就得把 my.ini 的 innodb_buffer_pool_size 调小。' }
+    @{ Pattern = 'TCP/IP, --shared-memory, or --named-pipe should be configured'
+       Message = 'mysqld 认为所有网络通道都被关了(通常是配置里出现了 skip-networking)。my.ini 由脚本生成,出现这条说明配置被手改过或残留了旧文件 —— 删掉 run\localinfra\cfg\my.ini 重试。' }
+    @{ Pattern = 'Execution of init_file|--init-file'
+       Message = '启动时执行引导 SQL(建 pandora 账号)失败。日志上一条就是失败的语句;数据目录是旧版本残留时最常见,-Action reset 清掉数据目录可解。' }
+    @{ Pattern = 'Data Dictionary initialization failed|The designated data directory .* is unusable|Corrupt|corrupted|Invalid redo log'
+       Message = '数据目录坏了或与本版本不兼容。本机是开发数据,直接 -Action reset 清掉重建(会清空本机 MySQL/Kafka/Redis 数据)。' }
+    @{ Pattern = 'Another process with pid \d+ is using unix socket file|Unable to lock .*ibdata1'
+       Message = '上一轮的 mysqld 还活着占着数据目录。先 -Action down,确认任务管理器里没有 mysqld.exe 再重试。' }
+)
+
+function Test-MysqldConfig {
+    <#
+      mysqld 起不来又**没往日志里写一个字**时,唯一能拿到真话的办法:用 --validate-config
+      在前台跑一次,把 stderr 抓回来。
+      为什么必须有这一步:mysqld 只有在成功打开 log-error 之后才往日志里写;my.ini 本身有问题、
+      或日志文件建不出来时,报错只去 stderr —— 而常驻启动那次刻意没做重定向(见 Kafka 那段
+      关于句柄继承的说明),于是那段话谁也看不到,现场只剩一个 exit 1。
+      只读、不落盘、几百毫秒。
+    #>
+    $mysqld = Find-Tool 'mysql' 'mysqld.exe'
+    if (-not $mysqld) { return $null }
+    $ini = Get-MysqlIniPath
+    if (-not (Test-Path -LiteralPath $ini -PathType Leaf)) { return $null }
+    try {
+        $out = & $mysqld "--defaults-file=$ini" '--validate-config' 2>&1
+    } catch { return $null }
+    $text = @($out | ForEach-Object { [string]$_ } | Where-Object { $_.Trim() -ne '' })
+    if ($text.Count -eq 0) { return $null }
+    return , @($text)
+}
+
+function Show-ComponentFailure {
+    <#
+      组件起不来时,把**现场**打到窗口里,而不是丢一个日志路径了事。
+      为什么这条很重要:这些一键入口跑在策划机 / 别人的机器上,写脚本的人当场看不到那台机器。
+      只给路径 = 让不熟悉的人去翻一个几百行、混着历次启动记录的日志 —— 实际结果是把现场
+      原样贴回来这一步就断了,排查从此靠猜。
+    #>
+    param([string]$Name, [int]$Port, [System.Diagnostics.Process]$Proc)
+
+    if ($Proc -and $Proc.HasExited) {
+        $code = $Proc.ExitCode
+        # 进程压根没跑起来的两个经典退出码:DLL 缺失(0xC0000135)/ 映像格式不对(0xC000007B)。
+        # 这两种情况日志里永远是空的,不单独认出来就会一路往"配置写错了"的方向查。
+        if ($code -eq -1073741515) {
+            Write-Err "$Name 的 exe 没能加载依赖 DLL (0xC0000135)。多半缺 Visual C++ 运行库,装一次 VC++ 2015-2022 x64 再试。"
+        } elseif ($code -eq -1073741701) {
+            Write-Err "$Name 的 exe 与本机架构不匹配 (0xC000007B) —— 备料包坏了,删掉 run\localinfra\dist\$Name 重跑 provision。"
+        }
+    }
+
+    if ($Port -gt 0) {
+        $holders = Get-PortHolder $Port
+        if ($holders.Count -gt 0) { Write-Err ("端口 :{0} 的占用者:{1}" -f $Port, ($holders -join '; ')) }
+    }
+
+    $logPath = Join-Path $LogDir "$Name.log"
+    $tail = Read-LogTail -Path $logPath -Lines 40
+    if ($null -eq $tail) {
+        Write-Warn2 "读不到日志 $logPath(文件不存在或打不开)。"
+    } elseif ($tail.Count -eq 0) {
+        Write-Warn2 "日志 $logPath 是空的 —— 说明进程在能写日志之前就死了,别在日志里找原因。"
+    } else {
+        Write-Host "      ---- $logPath 末尾 $($tail.Count) 行 ----" -ForegroundColor DarkGray
+        foreach ($line in $tail) { Write-Host "      $line" -ForegroundColor DarkGray }
+        Write-Host "      ---- 日志结束 ----" -ForegroundColor DarkGray
+
+        $text = $tail -join "`n"
+        foreach ($h in $script:InfraLogHints) {
+            if ($text -match $h.Pattern) { Write-Err $h.Message }
+        }
+    }
+
+    # mysqld 专用兜底:日志没内容(或没命中任何已知模式)时再问一次配置本身。
+    if ($Name -eq 'mysql') {
+        $needProbe = ($null -eq $tail) -or ($tail.Count -eq 0)
+        if (-not $needProbe) {
+            $text = $tail -join "`n"
+            $needProbe = -not (@($script:InfraLogHints | Where-Object { $text -match $_.Pattern }).Count -gt 0)
+        }
+        if ($needProbe) {
+            $probe = Test-MysqldConfig
+            if ($probe) {
+                Write-Err 'mysqld --validate-config 的输出(配置层面的真实报错):'
+                foreach ($line in $probe) { Write-Host "      $line" -ForegroundColor DarkGray }
+            }
+        }
+    }
+
+    Write-Host "      完整日志:$logPath" -ForegroundColor DarkGray
+}
+
 function Wait-Port([string]$Name, [int]$Port, [int]$TimeoutSec, [System.Diagnostics.Process]$Proc) {
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
         if ($Proc -and $Proc.HasExited) {
-            Fail "$Name 启动后立即退出 (exit $($Proc.ExitCode))。日志: $(Join-Path $LogDir "$Name.log")"
+            Write-Err "$Name 启动后立即退出 (exit $($Proc.ExitCode))。"
+            Show-ComponentFailure -Name $Name -Port $Port -Proc $Proc
+            exit 1
         }
         if (Test-PortOpen $Port) { return }
         Start-Sleep -Milliseconds 500
     }
-    Fail "$Name 在 ${TimeoutSec}s 内没有监听 :$Port。日志: $(Join-Path $LogDir "$Name.log")"
+    Write-Err "$Name 在 ${TimeoutSec}s 内没有监听 :$Port。"
+    Show-ComponentFailure -Name $Name -Port $Port -Proc $Proc
+    exit 1
 }
 
 function Get-RemoteFile {
@@ -808,7 +952,9 @@ function Start-LocalMysql {
         $p = Start-Process -FilePath $mysqld -ArgumentList "--defaults-file=$(Get-MysqlIniPath)", '--initialize-insecure' `
             -WindowStyle Hidden -PassThru -Wait
         if ($p.ExitCode -ne 0) {
-            Fail "MySQL 初始化失败 (exit $($p.ExitCode))。日志: $(Join-Path $LogDir 'mysql.log')"
+            Write-Err "MySQL 初始化失败 (exit $($p.ExitCode))。"
+            Show-ComponentFailure -Name 'mysql' -Port 0 -Proc $p
+            exit 1
         }
     }
 
@@ -833,7 +979,9 @@ function Start-LocalMysql {
     try {
         Invoke-MysqlSql -Sql 'SELECT 1;' -User $MysqlUser -Password $MysqlUserPwd | Out-Null
     } catch {
-        Fail "MySQL 起来了但账号 '$MysqlUser' 连不上:$($_.Exception.Message)`n日志: $(Join-Path $LogDir 'mysql.log')"
+        Write-Err "MySQL 起来了但账号 '$MysqlUser' 连不上:$($_.Exception.Message)"
+        Show-ComponentFailure -Name 'mysql' -Port 0 -Proc $null
+        exit 1
     }
     Write-Ok "MySQL :$MysqlPort"
 }

@@ -3608,3 +3608,40 @@ immutable;本次曾误改过它的 COMMENT,已回滚)。两条路径最终一致
 - 文档同步:`docs/ops/planner-quickstart.md` 新增「客户端仓放哪儿、叫什么名字」,
   `tools/devops/BUILD-MACHINE-SETUP.md` 注明 `D:\Pandora-Client-SVN` 只是例子,
   `tools/scripts/README.md` 登记公共件与新契约测试。
+
+
+## 2026-08-19 本机基础设施起不来时只给日志路径 → 改成把现场打出来
+
+- **现场**:策划机(`D:\Pandora-Moba\Server`,即 `^/trunk` 整检出的 `Server` + `Client` 布局)
+  跑免 Docker 一键启动,导表已通过(见上一条修复),卡在
+  `[ERR ] mysql 启动后立即退出 (exit 1)。日志: ...\logs\mysql.log`。
+  **排查到此为止** —— 那台机器不在手边,而窗口里只有一个路径,没有一个字的原因。
+- **判断**:exit 1 是 mysqld 自己 abort(不是 0xC0000135 那种加载失败),原因必然写在
+  `mysql.log` 里;`--initialize-insecure` 已成功(否则会先报"初始化失败"),所以问题出在
+  正常启动这一次 —— 它与初始化那次的差别只有三处:绑 :3307、`--no-monitor`、`--init-file`。
+- **修法(不猜原因,改现场可见性)**:`Wait-Port` 的两条失败路径(立即退出 / 超时未监听)
+  改为调用新增的 `Show-ComponentFailure`,输出:①退出码的已知含义(0xC0000135 缺 VC++ 运行库、
+  0xC000007B 备料包架构不对);②`Get-PortHolder` 报出端口占用者(进程名 + pid + 映像路径,
+  不用人去 netstat);③日志**末尾 40 行原文**;④命中 `$script:InfraLogHints` 里的已知原因
+  并给出人话处置(端口占用 / 目录不可写 / my.ini 有本版本不认的项 / 内存不足 /
+  网络通道全关 / 引导 SQL 失败 / 数据目录损坏 / 上一轮进程占着数据目录)。
+  MySQL 初始化失败与"起来了但账号连不上"两处也一并接上。
+- **`--validate-config` 兜底**:mysqld 只有成功打开 `log-error` 之后才往日志里写;my.ini 本身
+  有问题时报错只去 stderr,而常驻启动那次**刻意没做重定向**(见 Kafka 那段句柄继承的说明),
+  于是现场只剩一个 exit 1、日志一个字没有。日志为空或没命中任何已知模式时,自动用
+  `mysqld --defaults-file=... --validate-config` 在前台再问一次并贴出 stderr(只读、几百毫秒)。
+- **`Read-LogTail` 必须用 `FileShare.ReadWrite` 打开**:超时那条路径上组件进程还活着占着日志,
+  `Get-Content` 的默认共享模式会直接抛异常 —— 诊断自己失败,现场反而看不到。测试里有反证用例。
+- **首版自己就有一个正好属于本类的 bug**:`Read-LogTail` / `Get-PortHolder` 用 `return @(...)`,
+  而 PowerShell 会把返回的空数组拆成「什么都没返回」= `$null`,于是「日志是空的」(别在日志里
+  找原因)和「日志读不到」(路径不对)两条**相反**结论撞成同一个值,`$holders.Count` 还成了在
+  `$null` 上取属性 = 在报错处理里再炸一次。已改 `return , @(...)`。**这个 bug 是新契约测试当场
+  抓出来的**,不是 review 看出来的。
+- **门禁**:新增 `tools/scripts/tests/localinfra_failure_diagnostics_test.ps1`(6 组 20 条断言),
+  已登记进 `ci_backend.ps1`。用 AST 从 `local_infra.ps1` 抠出被测函数原文来跑(整脚本 dot-source
+  会真的去备料起进程),所以测的确实是仓库里那份代码。样例日志取自本机
+  `run/localinfra/logs/mysql.log` 的真实失败现场(2026-08-15 的 `MY-010131` → `Aborting`)。
+  这段代码**只在出故障时才执行**,正常跑一百次也碰不到一次,没有机械门禁就只能等下一次事故
+  才发现它自己坏了。
+- **仍未定谳**:策划机那次 exit 1 的具体原因。需要那台机器上
+  `run\localinfra\logs\mysql.log` 的末尾;装上本次改动后重跑一次,原因会直接打在窗口里。

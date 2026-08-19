@@ -220,6 +220,11 @@ $contractTests = @(
     # (逻辑全在 ps1 里),而且开发机 F:\work\Pandora-Client-SVN 永远是绿的 ——
     # 只有按 SVN 原名(Client)或自定义名检出的机器才炸,人工 review 也看不出来。
     'tools/scripts/tests/configtable_client_repo_resolve_test.ps1'
+    # 本机基础设施起不来时的诊断输出(2026-08-19)。这段代码**只在出故障时才执行**,
+    # 正常跑一百次也碰不到一次,它自己有 bug 的表现是「报错处理里再崩一次」——
+    # 把一个可查的故障变成不可查的。首版就踩了空数组被拆成 +''+ 导致"日志是空的"
+    # 与"日志读不到"两条相反结论撞成同一个值,是这个测试当场抓出来的。
+    'tools/scripts/tests/localinfra_failure_diagnostics_test.ps1'
 )
 $contractFailed = @()
 foreach ($rel in $contractTests) {
