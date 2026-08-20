@@ -63,7 +63,10 @@ rem change to the machine. Read that file for why it is not the .msi.
 call "%~dp0tools\scripts\bootstrap_pwsh.cmd"
 if errorlevel 1 (
   rem The web admin runs this headless; pausing there would hang it forever.
-  if not defined PANDORA_NONINTERACTIVE pause
+  rem Keep an interactive failure window visible, but suppress the standard
+  rem "Press any key" success-looking prompt.
+  echo [ERROR] PowerShell bootstrap failed. See the error above.
+  if not defined PANDORA_NONINTERACTIVE pause >nul
   exit /b 1
 )
 rem Quote it: with the portable build this is a full path, which can contain spaces.
@@ -73,8 +76,16 @@ set "PANDORA_PLANNER_FAST_START=1"
 "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\scripts\start.ps1" -Mode local -NoDocker -DsLauncher editor -GenTables
 set "RC=%ERRORLEVEL%"
 
-rem Keep the window open only for interactive (double-click) runs. The web admin
-rem runs this headless with PANDORA_NONINTERACTIVE=1 and shows the output there,
-rem so the misleading "Press any key" line must not be printed.
+rem A failed start stays visible without printing cmd.exe's standard success-like
+rem prompt. Only RC=0 means start.ps1 proved login + Envoy + Hub DS playable.
+if not "%RC%"=="0" (
+  echo [ERROR] Pandora is not playable yet. See the error above.
+  if not defined PANDORA_NONINTERACTIVE pause >nul
+  exit /b %RC%
+)
+
+rem Keep the successful window open only for interactive double-click runs.
+rem start.ps1 has already printed the explicit playable message immediately
+rem before returning RC=0. The web admin is headless and must never block.
 if not defined PANDORA_NONINTERACTIVE pause
-exit /b %RC%
+exit /b 0

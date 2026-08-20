@@ -1389,7 +1389,11 @@ class TailRepo(FakeRepo):
             raise self.battle_errs[match_id]
         return self.battles.get(match_id)
 
-    async def expire_battle(self, match_id: int) -> None:
+    # ★ 签名必须与 repo.expire_battle(match_id, ttl_sec) 一致 —— 对应 Go
+    # `RedisBattleRepo.ExpireBattle(ctx, matchID, ttl)`。少一个形参不会让被测分支
+    # "没走到",而是走到之后抛 TypeError 被 except 吞掉打成 empty_abandon_expire_failed,
+    # 于是断言看到的是"没调用",把假的通过/失败信号喂给测试。
+    async def expire_battle(self, match_id: int, ttl_sec: float) -> None:
         self.calls.append("expire_battle")
         if self.expire_err is not None:
             raise self.expire_err

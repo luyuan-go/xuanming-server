@@ -22,7 +22,11 @@ param(
     # 免 Docker 模式(策划机):基础设施改用本机原生进程(local_infra.ps1),
     # 不起 TiDB(社交四服改连本机 MySQL 的 pandora_social)。
     # 默认关 = 完全保持原有 docker 行为(CLAUDE.md §14.2)。
-    [switch]$NoDocker
+    [switch]$NoDocker,
+
+    # 本轮 -GenTables 的强指纹是否确认产物发生变化。默认 false，普通入口行为不变；
+    # run_services 用它把读表服务纳入选择性重启集合。
+    [switch]$ConfigTableChanged
 )
 
 $ErrorActionPreference = 'Stop'
@@ -105,7 +109,8 @@ if ($NoDocker) {
     Write-Host ""
     Write-Host "===== [3/3] 业务服务 =====" -ForegroundColor Cyan
     & "$ScriptDir/run_services.ps1" -Exclude $Exclude -SocialOnMysql -NoDocker -MysqlPort $mysqlPort `
-        -FastExistingProbe:($env:PANDORA_PLANNER_FAST_START -eq '1')
+        -FastExistingProbe:($env:PANDORA_PLANNER_FAST_START -eq '1') `
+        -ConfigTableChanged:$ConfigTableChanged
     exit $LASTEXITCODE
 }
 
@@ -143,7 +148,7 @@ if ($LASTEXITCODE -ne 0) {
 # 4) 业务服务
 Write-Host ""
 Write-Host "===== [4/4] 业务服务 =====" -ForegroundColor Cyan
-& "$ScriptDir/run_services.ps1" -Exclude $Exclude
+& "$ScriptDir/run_services.ps1" -Exclude $Exclude -ConfigTableChanged:$ConfigTableChanged
 exit $LASTEXITCODE
 } finally {
     Exit-PandoraOrchestrationLock

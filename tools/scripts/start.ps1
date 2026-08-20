@@ -4281,7 +4281,7 @@ function Invoke-Local {
         }
     }
 
-    & "$ScriptDir/dev_all.ps1" -NoDocker:$NoDocker
+    & "$ScriptDir/dev_all.ps1" -NoDocker:$NoDocker -ConfigTableChanged:$script:ConfigTableChanged
     # dev_all.ps1 每一步失败都会 exit 1,但 `&` 调子脚本**不会**让本脚本失败 —— 不透传的话
     # start.ps1 走完 switch 就正常结束,双击窗口 / Web 管理台拿到的是「完成(退出码 0)」,
     # 而基础设施其实压根没起来(2026-08-12 现场:另一台机器缺 dev.env,[1/4] 就断了,外层照报 0)。
@@ -4290,6 +4290,17 @@ function Invoke-Local {
     if ($LASTEXITCODE -ne 0) {
         Write-Err "local 模式启动失败(见上方第一条 [ERR];退出码 $LASTEXITCODE)。后端没起来,别去查客户端。"
         exit $LASTEXITCODE
+    }
+
+    # 策划双击入口把标准 `Press any key` 当作“现在就能登录”的唯一绿灯。因此完整
+    # dev_all 成功还不够：它只证明 22 个 Go listener 已就绪，editor Hub DS 仍可能在
+    # 后台加载关卡。仅该入口等待完整玩家面；普通 local/NoDocker 命令保持原行为。
+    if ($NoDocker -and $env:PANDORA_PLANNER_FAST_START -eq '1') {
+        if (-not (Wait-LocalPlannerPlayable)) {
+            Write-Err '策划启动未达到最终可玩状态；本次返回失败，不会显示标准 Press any key。'
+            exit 1
+        }
+        Write-Ok '现在可以登录进游戏。'
     }
 }
 
@@ -4394,6 +4405,29 @@ function Test-LocalTcpPort([int]$Port) {
     }
 }
 
+# Get-LocalServiceProcess:只接受 run_services 写下的 PID + 当前 exact exe。
+# 不能按进程名取第一个：并发启动、旧残留或另一份工作区都可能有同名服务。
+function Get-LocalServiceProcess([string]$Name) {
+    $pidFile = Join-Path $ProjectRoot "run/dev/logs/$Name.pid"
+    if (-not (Test-Path -LiteralPath $pidFile -PathType Leaf)) { return $null }
+
+    $pidText = ''
+    try { $pidText = [IO.File]::ReadAllText($pidFile).Trim() } catch { return $null }
+    [int]$servicePid = 0
+    if (-not [int]::TryParse($pidText, [ref]$servicePid) -or $servicePid -le 0) { return $null }
+
+    $proc = Get-Process -Id $servicePid -ErrorAction SilentlyContinue
+    if (-not $proc) { return $null }
+    $actualExe = $null
+    try { $actualExe = $proc.Path } catch { $actualExe = $null }
+    if ([string]::IsNullOrWhiteSpace($actualExe)) { return $null }
+
+    $expectedExe = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "run/dev/bin/$Name.exe"))
+    try { $actualExe = [IO.Path]::GetFullPath($actualExe) } catch { return $null }
+    if (-not [string]::Equals($actualExe, $expectedExe, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    return $proc
+}
+
 # Get-LocalDsChildProcess:找出某个 allocator 直接拉起的那个本机 DS。
 # 判据与 run_services.ps1 的 Test-IsLocalDsProcess 逐字同源(进程名 + `-server` + 关卡 URL),
 # 保证绝不把策划自己手工开着的 UnrealEditor 认成 DS。
@@ -4428,9 +4462,9 @@ function Get-LocalDsChildProcess([int]$OwnerPid) {
 function Wait-LocalHubDsReady {
     param([int]$SpawnTimeoutSeconds = 90, [int]$ReadyTimeoutSeconds = 300)
 
-    $hub = @(Get-Process -Name 'hub_allocator' -ErrorAction SilentlyContinue)[0]
+    $hub = Get-LocalServiceProcess -Name 'hub_allocator'
     if (-not $hub) {
-        Write-Warn "hub_allocator 不在运行,没法等 Hub DS。"
+        Write-Warn "当前工作区登记的 exact hub_allocator 不在运行,没法等 Hub DS。"
         return $false
     }
 
@@ -4457,14 +4491,28 @@ function Wait-LocalHubDsReady {
     $port = 0
     if ($ds.CommandLine -match '(?i)-port=(\d+)') { $port = [int]$Matches[1] }
     if ($port -le 0) {
-        Write-Warn "没能从 DS 命令行读出 -port=,跳过就绪等待(进程已起,加载完就能进)。"
-        return $true
+        Write-Warn "没能从当前 Hub DS 命令行读出 -port=；无法证明客户端该连哪个端口。"
+        return $false
     }
 
     Write-Info "等它加载完关卡并监听 UDP :$port(editor 形态读未 cook 的散装资产,慢;首次进新图还要现场构 DDC,更慢)..."
     $lastTick = 0
     while ($sw.Elapsed.TotalSeconds -lt $ReadyTimeoutSeconds) {
-        if (Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue) {
+        # 每轮都重查“当前登记 allocator → 它的 exact 直系 Hub DS”，再把 UDP owner 钉到
+        # 该 DS PID。只看端口会把旧残留/另一份工作区的 DS 冒充成本轮可玩。
+        $currentHub = Get-LocalServiceProcess -Name 'hub_allocator'
+        if (-not $currentHub -or [int]$currentHub.Id -ne [int]$hub.Id) {
+            Write-Err '等待期间当前工作区的 hub_allocator 已退出或被替换。'
+            return $false
+        }
+        $currentDs = Get-LocalDsChildProcess $hub.Id
+        if (-not $currentDs -or [int]$currentDs.ProcessId -ne [int]$ds.ProcessId) {
+            Write-Err '等待期间 Hub DS 已退出或被替换，不能用旧 PID 的端口冒充本轮就绪。'
+            return $false
+        }
+        $ownedUdp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue |
+            Where-Object { [int]$_.OwningProcess -eq [int]$ds.ProcessId })
+        if ($ownedUdp.Count -gt 0) {
             Write-Ok ("Hub DS 已监听 UDP :{0}(从重启算起 {1:n0}s)—— 现在可以进大厅了。" -f $port, $sw.Elapsed.TotalSeconds)
             return $true
         }
@@ -4485,6 +4533,81 @@ function Wait-LocalHubDsReady {
     Write-Warn ("等了 {0}s 仍未监听 UDP :{1};DS 进程还活着(PID {2}),多半是首次进新图在构 DDC。" -f $ReadyTimeoutSeconds, $port, $ds.ProcessId)
     Write-Info "可以直接去客户端试进大厅;卡住就看 DS 日志:services/battle/hub_allocator/run/dev/logs/ds/"
     return $false
+}
+
+# 业务服务的最终探活必须同时满足 PID 登记、exact exe 与 listener owner。
+# 两个 scriptblock 参数只给纯虚拟契约测试注入系统边界；生产默认读取真实进程/端口。
+function Test-LocalServiceExactTcpListener {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][int]$Port,
+        [scriptblock]$GetServiceProcess,
+        [scriptblock]$GetListenerRecords
+    )
+    if (-not $GetServiceProcess) {
+        $GetServiceProcess = { param($ServiceName) Get-LocalServiceProcess -Name $ServiceName }
+    }
+    if (-not $GetListenerRecords) {
+        $GetListenerRecords = { @(Get-PandoraTcpListenerRecords) }
+    }
+
+    try {
+        $proc = & $GetServiceProcess $Name
+        if (-not $proc) { return $false }
+        $listeners = @(& $GetListenerRecords)
+        return @($listeners | Where-Object {
+                [int]$_.LocalPort -eq $Port -and [int]$_.OwningProcess -eq [int]$proc.Id
+            }).Count -gt 0
+    } catch {
+        return $false
+    }
+}
+
+# 从玩家真正使用的 TLS :8443 向 login_cluster 发一个只读 reflection ListServices
+# gRPC-Web 请求。HTTP 200 证明 listener、route、HTTP/2 上游和 login 都已接通；upstream
+# 未就绪时 Envoy 会返回 503。不能拿空 Login 当探针：dev 自动注册模式可能创建空账号。
+function Test-LocalEnvoyLoginRouteReady {
+    param([scriptblock]$Request)
+    if (-not $Request) {
+        $Request = {
+            # protobuf ServerReflectionRequest.list_services = ""：payload 3a 00，前置标准 5-byte frame。
+            $listServicesFrame = [byte[]]@(0, 0, 0, 0, 2, 0x3a, 0)
+            Invoke-WebRequest -Uri 'https://127.0.0.1:8443/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo' `
+                -Method Post -Body $listServicesFrame -ContentType 'application/grpc-web+proto' `
+                -Headers @{ 'x-grpc-web' = '1' } -HttpVersion ([Version]'2.0') `
+                -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 5 -ErrorAction Stop
+        }
+    }
+    try {
+        $response = & $Request
+        return $null -ne $response -and [int]$response.StatusCode -eq 200
+    } catch {
+        return $false
+    }
+}
+
+# 完整 planner fast 的最终成功门。Hub DS 加载可能远慢于 Go 服务，因此在等待前后各
+# 复核一次 login/Envoy，避免等待期间进程退出后仍给出绿色成功提示。
+function Wait-LocalPlannerPlayable {
+    Write-Info '业务服务已启动；继续等待登录入口和 Hub DS 达到最终可玩状态...'
+    if (-not (Test-LocalServiceExactTcpListener -Name login -Port 20001)) {
+        Write-Err 'login :20001 不是当前工作区登记进程的 exact listener。'
+        return $false
+    }
+    if (-not (Test-LocalEnvoyLoginRouteReady)) {
+        Write-Err 'Envoy :8443 尚未能把 Login 请求送达 login upstream。'
+        return $false
+    }
+    if (-not (Wait-LocalHubDsReady)) { return $false }
+    if (-not (Test-LocalServiceExactTcpListener -Name login -Port 20001)) {
+        Write-Err '等待 Hub DS 期间 login 已退出或 listener 已被替换。'
+        return $false
+    }
+    if (-not (Test-LocalEnvoyLoginRouteReady)) {
+        Write-Err '等待 Hub DS 结束后 Envoy Login 路由已不可达。'
+        return $false
+    }
+    return $true
 }
 
 function Invoke-LocalDsOnly {

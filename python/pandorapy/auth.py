@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as _dt
+import hashlib as _hashlib
 import uuid as _uuid
 
 import jwt as pyjwt
@@ -42,6 +43,61 @@ ALGORITHM = "HS256"
 
 # HS256 密钥最小长度(RFC 7518 §3.2)。与 Go 侧 auth.Config.Validate 同值。
 MIN_SECRET_BYTES = 32
+
+# 账号态受众的默认值。对应 Go 侧 auth.Config.Defaults() 里的 "pandora-account"。
+#
+# ★ 权威副本在**本层**(= Go 的 pkg/auth):services/login/conf.py 的
+#   DEFAULT_JWT_ACCOUNT_AUDIENCE 是服务层的同值副本。DS 回调面的 Signer 用不到账号态,
+#   但 SignerConfig.validate 要求 account_audience 非空且与 audience 不同 ——
+#   Go 那边由 Config.Defaults() 自动填上,这里给出同一个默认值,免得每个
+#   DS 回调调用点各编一个字符串(编出来若恰好撞上 audience,就是启动期 fail-fast)。
+DEFAULT_ACCOUNT_AUDIENCE = "pandora-account"
+
+# DS 回调令牌(DS→后端)的 iss / aud。对应 Go 侧 pkg/auth/jwt.go 的
+# DSCallbackIssuer / DSCallbackAudience。
+#
+# ★ 与玩家面(pandora-login → pandora-client)**严格分域**:玩家令牌拿到 DS 面用不了,
+#   DS 令牌拿到玩家面也用不了。两侧签发器共用同一把密钥都不行 —— aud 校验发生在
+#   签名校验的同一层,是这道分域唯一机械可拦的一环。
+DS_CALLBACK_ISSUER = "pandora-ds-control"
+DS_CALLBACK_AUDIENCE = "pandora-ds"
+
+# DS 类型词表。对应 Go 侧 pkg/auth/jwt.go 的 DSTypeHub / DSTypeBattle(type DSType string)。
+#
+# ★ 这两个串是**跨语言签发/校验契约**:签发侧写进 ds_type claim,校验侧(dsauth.DSScope /
+#   DSCallbackGuard)逐字比对。任何一侧写成 "Hub" / "battles",令牌就永远范围不匹配 ——
+#   而 permissive 档下它只是 warn 放行,要到切 enforce 那天才全线拒。
+DS_TYPE_HUB = "hub"
+DS_TYPE_BATTLE = "battle"
+
+# uint64 上界。Go 的 matchID / gen 是 uint64,类型系统天然挡住负数与溢出;
+# Python 的 int 无界,必须在签发口显式判 —— 否则 -1 会被 JSON 编成 -1 签进令牌,
+# 校验侧 int() 解出 -1,match_id 范围校验静默失配(且只在那一场对局上发生)。
+UINT64_MAX = (1 << 64) - 1
+
+
+def key_fingerprint(secret: bytes) -> str:
+    """密钥的稳定短指纹(SHA256 前 8 字节的 hex)—— 对应 Go 的 auth.keyFingerprint。
+
+    ★ 取前 8 字节、hex 编码,共 16 个字符。**长度和截取位置都不能改**:它同时进
+      JWT 头 kid 与 ds_kid claim,Go 侧校验器按 kid 把令牌路由到对应校验密钥。
+      截 16 字节的 Python 与截 8 字节的 Go 互相认不出对方的 kid,轮换期就会退化成
+      "逐把密钥试"(还能过)或直接找不到 key(全线拒)。
+    """
+    return _hashlib.sha256(secret).hexdigest()[:16]
+
+
+def _check_uint64(name: str, value: int) -> None:
+    """uint64 边界闸。Go 侧由类型系统免费提供,Python 必须手动补上。
+
+    ★ bool 是 int 的子类(True == 1),`sign_ds_callback(..., match_id=True)` 会静默签出
+      match_id=1 的令牌。这类调用只会出现在参数写串的场合,放过它等于把一个错配的
+      授权范围签成合法令牌。
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TokenError(f"auth.SignDSCallback: {name} 必须是 int(得到 {type(value).__name__})")
+    if value < 0 or value > UINT64_MAX:
+        raise TokenError(f"auth.SignDSCallback: {name} 超出 uint64 范围(得到 {value})")
 
 # 本二进制实现的 Model B writer capability。对应 Go 侧 pkg/auth/jwt.go 的
 # DSAuthWriterEpochV2(uint32 = 2)。
@@ -237,6 +293,98 @@ class Signer:
             with_kid=True,
         )
 
+    # ── DS 回调服务令牌(方向:DS→后端)────────────────────────────────────
+
+    def sign_ds_callback(
+        self, ds_type: str, pod: str, match_id: int, ttl: _dt.timedelta
+    ) -> tuple[str, int]:
+        """签发 DS 回调服务令牌 —— 对应 Go 的 `Signer.SignDSCallback`。
+
+        方向与 DSTicket(玩家→DS 的入场票)相反:它证明回调方(Heartbeat /
+        ReportResult / SetLocation / PollCommands …)确实是后端刚分配 / 发现的那个
+        DS 实例,而不是集群内的伪造调用者。
+
+        约束(与 Go 逐条同):
+          - ds_type=battle:match_id 必填(授权范围 = 本场对局),pod 可空(分配时
+            尚不知道 Agones 会选中哪个 GameServer)
+          - ds_type=hub:pod 必填(授权范围 = 本实例),match_id 必须为 0
+          - ttl 必须 > 0(battle 4h / hub 24h 由 ds_auth 配置决定,调用方传入)
+
+        ★ 签发用的 Signer 必须以 **DS 回调专用**配置构造(iss=pandora-ds-control /
+          aud=pandora-ds),不要复用玩家令牌 Signer —— 见 DSCallbackSigner。
+        """
+        return self.sign_ds_callback_with_gen(ds_type, pod, match_id, 0, ttl)
+
+    def sign_ds_callback_with_gen(
+        self, ds_type: str, pod: str, match_id: int, gen: int, ttl: _dt.timedelta
+    ) -> tuple[str, int]:
+        """同 `sign_ds_callback`,但额外把 hub 令牌代际 gen 签进 `ds_gen` claim。
+
+        对应 Go 的 `Signer.SignDSCallbackWithGen`。
+
+        gen=0 等价于 `sign_ds_callback`(battle 令牌 / 未启用代际门控)。gen>0 仅用于
+        hub 令牌:hub_allocator 经 Redis INCR 领取严格递增的 gen 后签进来,DS 心跳原样
+        回显,服务端**精确相等**比较判定是否当前代际 —— 它替代的是"按秒级 exp 分代际",
+        后者在同一秒内重签会碰撞(两张不同令牌 exp 相同 → 旧令牌被误判为当前代际)。
+
+        返回 (token, exp_ms)。exp_ms 与 Go 的 `exp.UnixMilli()` 同义:**毫秒**,
+        而令牌里的 `exp` claim 是 JWT NumericDate 规定的**秒**。两个单位不同不是笔误 ——
+        写反了会让调用方按 1970 年附近的时刻算续期,于是要么每次心跳都重签、要么永不重签。
+        """
+        # ★ 校验顺序与 Go 一致:先 ds_type 分支,再 ttl。顺序影响的是"配置写错时报哪条
+        #   错误",而运维就是按这条错误去改 yaml 的。
+        if ds_type == DS_TYPE_BATTLE:
+            if match_id == 0:
+                raise TokenError("auth.SignDSCallback: battle token requires matchID")
+        elif ds_type == DS_TYPE_HUB:
+            if not pod:
+                raise TokenError("auth.SignDSCallback: hub token requires pod")
+            if match_id != 0:
+                raise TokenError("auth.SignDSCallback: hub token must not carry matchID")
+        else:
+            raise TokenError(f"auth.SignDSCallback: invalid dsType {ds_type!r}")
+        if ttl <= _dt.timedelta(0):
+            raise TokenError("auth.SignDSCallback: ttl must be > 0")
+        # ★ Go 侧 matchID / gen 是 uint64,负数与溢出由类型系统挡掉;Python 的 int 无界,
+        #   必须在这里显式判 —— 否则 -1 / 2**64 会被 JSON 原样签进令牌,校验侧 int()
+        #   解出来照样能用,范围校验静默失配。
+        _check_uint64("match_id", match_id)
+        _check_uint64("gen", gen)
+
+        now = self._now()
+        exp = now + ttl
+        kid = key_fingerprint(self._cfg.secret)
+        # ★ 逐字段对应 Go 的 DSCallbackClaims json tag,并**照搬 omitempty**:
+        #   ds_type 无 omitempty(恒在);sub / match_id / ds_gen 零值时整个 key 不出现。
+        #   多写一个 "match_id": 0 不会让 hub 令牌验不过,但会让"hub 令牌不得携带
+        #   match_id"这条约束在字节层失真,后续按 claim 存在性判别的代码就会分叉。
+        #   注意 DS 回调令牌**没有 jti**(Go 的 RegisteredClaims.ID 未设,jti omitempty),
+        #   校验侧 required claim 也只有 exp / iss / aud —— 这里补一个 jti 不会立刻出错,
+        #   却会让"令牌是否带 jti"成为两栈差异。
+        claims: dict[str, object] = {
+            "iss": self._cfg.issuer,
+            "aud": [self._cfg.audience],  # 与 Go 的 jwt.ClaimStrings 一致(数组形式)
+            # JWT NumericDate 以**秒**为粒度;Go 的 jwt.NewNumericDate 按 TimePrecision
+            # (默认 1s)截断,int() 对正数同样是向下截断,两栈同值。
+            "iat": int(now.timestamp()),
+            "exp": int(exp.timestamp()),
+            "ds_type": ds_type,
+            "ds_kid": kid,
+        }
+        if pod:
+            claims["sub"] = pod
+        if match_id:
+            claims["match_id"] = match_id
+        if gen:
+            claims["ds_gen"] = gen
+        # 打 kid = 主密钥指纹:令牌自描述用了哪把密钥,轮换期校验侧据此路由到对应密钥。
+        # DS 回调令牌不经 Envoy jwt_authn(只由 DSCallbackGuard 校验),加 kid 头无影响 ——
+        # 这与模块头 ② 说的"经 Envoy 的不设 kid"并不矛盾,正是那条规则的另一半。
+        token = pyjwt.encode(
+            claims, self._cfg.secret, algorithm=ALGORITHM, headers={"kid": kid}
+        )
+        return token, int(exp.timestamp() * 1000)
+
     # ── 内部 ─────────────────────────────────────────────────────────────
 
     def _sign(
@@ -293,3 +441,38 @@ class Signer:
                 # iss / aud / 必填 claim 不对:换密钥也救不了,直接抛。
                 raise TokenInvalidError(f"auth.verify: {exc}") from exc
         raise TokenInvalidError(f"auth.verify: {last}") from last
+
+
+class DSCallbackSigner:
+    """只签 DS→后端回调令牌 —— 对应 Go 的 `auth.DSCallbackSigner`(pkg/auth/domains.go)。
+
+    ★ 存在的理由是**收窄方法集**,不是加一层壳。裸 `Signer` 同时能签 session / account /
+      DS 回调,"拿玩家面密钥签 DS 回调令牌"只能靠约定防;域类型把这类串域错误从运行期
+      约定升级成"构造时就过不去":iss / aud 不是 DS 回调面的那一对,直接拒绝构造。
+
+    ★ 与 Go 一样**不接 additional_secrets**:备用密钥只用于校验、绝不用于签发。
+      签发侧一旦能用旧密钥签,三段式轮换的第二段(主密钥已翻新、旧密钥仅待退役)就没有
+      终点 —— 旧密钥会被无限续命,而运维以为它早已退役。
+    """
+
+    __slots__ = ("_signer",)
+
+    def __init__(self, cfg: SignerConfig, now_fn=None) -> None:
+        if cfg.issuer != DS_CALLBACK_ISSUER or cfg.audience != DS_CALLBACK_AUDIENCE:
+            raise TokenError(
+                f"auth: DS callback signer requires issuer={DS_CALLBACK_ISSUER!r} "
+                f"audience={DS_CALLBACK_AUDIENCE!r}"
+            )
+        self._signer = Signer(cfg, now_fn)
+
+    def sign_ds_callback(
+        self, ds_type: str, pod: str, match_id: int, ttl: _dt.timedelta
+    ) -> tuple[str, int]:
+        """同 `Signer.sign_ds_callback`。"""
+        return self._signer.sign_ds_callback(ds_type, pod, match_id, ttl)
+
+    def sign_ds_callback_with_gen(
+        self, ds_type: str, pod: str, match_id: int, gen: int, ttl: _dt.timedelta
+    ) -> tuple[str, int]:
+        """同 `Signer.sign_ds_callback_with_gen`。"""
+        return self._signer.sign_ds_callback_with_gen(ds_type, pod, match_id, gen, ttl)
