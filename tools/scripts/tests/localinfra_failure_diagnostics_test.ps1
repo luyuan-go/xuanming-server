@@ -15,6 +15,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $infra = Join-Path (Split-Path -Parent $PSScriptRoot) 'local_infra.ps1'
+$stateLib = Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/local_infra_state.ps1'
 $source = [System.Text.UTF8Encoding]::new($false).GetString([System.IO.File]::ReadAllBytes($infra))
 
 $script:Failed = New-Object 'System.Collections.Generic.List[string]'
@@ -30,11 +31,14 @@ $errs = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($infra, [ref]$null, [ref]$errs)
 if ($errs -and $errs.Count -gt 0) { throw "local_infra.ps1 语法错误:$($errs[0].Message)" }
 
-foreach ($name in @('Read-LogTail', 'Get-PortHolder', 'Test-MysqldConfig', 'Show-ComponentFailure')) {
+foreach ($name in @('Read-LogTail', 'Get-PortHolder', 'Get-PortReservation', 'Show-PortDiagnosis', 'Test-MysqldConfig', 'Show-ComponentFailure')) {
     $fn = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true))
     if ($fn.Count -ne 1) { throw "local_infra.ps1 里找不到唯一的 $name(找到 $($fn.Count) 个)" }
     Invoke-Expression $fn[0].Extent.Text
 }
+# Get-PortHolder 的 listener 数据来自共享快照库；这里加载真实 parser/netstat seam，避免用
+# “函数不存在”异常制造一个假占用者，导致忙端口用例假绿、空闲端口用例假红。
+. $stateLib
 # 提示表是脚本级赋值,不是函数,单独抠。
 $hintAssign = @($ast.FindAll({
             param($n)
@@ -116,6 +120,26 @@ try {
         $outPort = Invoke-Diag -Name 'mysql' -Port $busyPort
         Assert-True ($outPort -match '端口 :\d+ 的占用者') '输出里直接写明端口占用者(不用人去 netstat)'
     } finally { $listener.Stop() }
+
+    # ===== 4b. bind 失败但**没人 LISTEN**:绝不允许说成"被别的进程占着" =====
+    # 现场教训(2026-08-19 策划机):mysqld 报 WSAEACCES(端口落在 winnat 保留区间),
+    # 日志里却跟了一句 "Do you already have another mysqld server running on port",
+    # 旧提示表照抄成"端口已被别的进程占着" —— 而当时根本没人 LISTEN。人就这么被带偏一轮。
+    Write-Host '[4b] 没人 LISTEN 时不允许下"被占用"的结论'
+    $freeListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $freeListener.Start(); $freePort = $freeListener.LocalEndpoint.Port; $freeListener.Stop()
+    Assert-True ((Get-PortHolder $freePort).Count -eq 0) "空闲端口 :$freePort 确实没有占用者"
+    $mysqldGuess = Join-Path $script:Sandbox 'mysql.log'
+    @(
+        "2026-08-19T14:30:33Z 0 [ERROR] [MY-010262] [Server] Can't start server: Bind on TCP/IP port: 以一种访问权限不允许的方式做了一个访问套接字的尝试。"
+        '2026-08-19T14:30:33Z 0 [ERROR] [MY-010257] [Server] Do you already have another mysqld server running on port: 3307 ?'
+        '2026-08-19T14:30:33Z 0 [ERROR] [MY-010119] [Server] Aborting'
+    ) -join "`n" | Set-Content -LiteralPath $mysqldGuess -Encoding utf8NoBOM
+    $outFree = Invoke-Diag -Name 'mysql' -Port $freePort
+    Assert-True ($outFree -match '没有任何进程在 LISTEN') '明确告诉人「没人 LISTEN」(否定掉错误方向)'
+    Assert-True ($outFree -notmatch '端口已被别的进程占着') 'WSAEACCES 场景不再报"端口已被别的进程占着"'
+    Assert-True ($outFree -match '它是猜的') '点名 mysqld 那句 MY-010257 是猜测,不能当结论'
+    Assert-True ($null -eq (Get-PortReservation $freePort)) '刚释放的临时端口不在保留区间里'
 
     # ===== 5. 每条已知原因都必须真能被自己的样例日志命中 =====
     Write-Host '[5] 提示表:样例 → 命中'

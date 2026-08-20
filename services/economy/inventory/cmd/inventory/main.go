@@ -24,7 +24,6 @@ import (
 	klog "github.com/go-kratos/kratos/v2/log"
 
 	"github.com/luyuancpp/pandora/pkg/cellroute/etcdtable"
-	pkgconfig "github.com/luyuancpp/pandora/pkg/config"
 	"github.com/luyuancpp/pandora/pkg/configtable"
 	"github.com/luyuancpp/pandora/pkg/dbguard"
 	plog "github.com/luyuancpp/pandora/pkg/log"
@@ -201,7 +200,7 @@ func main() {
 	// bag.dsn 为空 = 未启用(不注册 BagService,现网行为不变,安全默认)。
 	var bagSvc *service.BagService
 	if cfg.Bag.DSN != "" {
-		bagDB := mysqlx.MustNewClient(pkgconfig.MySQLConf{DSN: cfg.Bag.DSN})
+		bagDB := mysqlx.MustNewClient(cfg.Bag.MySQLClientConf())
 		defer func() { _ = bagDB.Close() }()
 		// 背包库同样断言严格模式:三个 blob 列(snapshot/section/payload)是最怕静默截断的
 		// ——截断后 proto.Unmarshal 失败,该玩家背包直接读不出来。

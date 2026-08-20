@@ -20,7 +20,10 @@ $EnvFile     = "$ProjectRoot/deploy/env/dev.env"
 . "$PSScriptRoot/envoy_cert.ps1"
 # 本机 dev.env 自举:被 git 忽略 → 新机器必然缺,而缺了 --env-file 会直接失败。
 . "$PSScriptRoot/dev_env_file.ps1"
+. "$PSScriptRoot/lib/local_infra_state.ps1"
 
+Enter-PandoraOrchestrationLock -ProjectRoot $ProjectRoot -Operation 'Docker 基础设施启动'
+try {
 Write-Host "===== Pandora dev infra up =====" -ForegroundColor Cyan
 Write-Host "Project:      $ProjectRoot"
 Write-Host "Compose file: $ComposeFile"
@@ -149,3 +152,6 @@ Write-Host "ntfy        http://localhost:$(if ($env:PANDORA_NTFY_BIND_PORT) { $e
 Write-Host ""
 Write-Host "===== 状态 =====" -ForegroundColor Green
 docker compose -f $ComposeFile --env-file $EnvFile ps
+} finally {
+    Exit-PandoraOrchestrationLock
+}

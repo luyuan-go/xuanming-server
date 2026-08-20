@@ -79,6 +79,12 @@ match:
   locator_addr: "127.0.0.1:20006"
   match_resume_auth_secret: "pandora-dev-match-resume-auth-key-v1!"
   match_resume_auth_audience: "matchmaker:pve_coop"
+  # Team→Matchmaker 复用 ResolvePlayerMatchContext 做入队闸门与招募列表剪枝。
+  # 与上面 Login 那把**故意分开**:共用一把等于两个服务可互相冒充。
+  # 必须等于 team-dev.yaml 的 team.match_resume_auth_secret(pve 与 pvp 打同一台 team)。
+  # 漏配的后果是静默的:启动只 WARN team_resume_service_auth_disabled,
+  # 之后 ListOpenTeams 恒空、team 入队被 ERR_UNAVAILABLE fail-closed。
+  team_resume_auth_secret: "pandora-dev-team-resume-auth-key-v1!"
   allocation_abort_auth_secret: "pandora-dev-allocation-abort-auth-key-v1!"
   allocation_abort_auth_audience: "ds-allocator:battle-allocation-abort"
   battle_gate_fail_open: false

@@ -15,12 +15,21 @@
 package mysqlx
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
+	"encoding/pem"
 	"fmt"
+	"io"
+	"net"
+	"os"
+	"strings"
+	"sync/atomic"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql" // mysql 驱动注册
+	"github.com/go-sql-driver/mysql"
 
 	"github.com/luyuancpp/pandora/pkg/config"
 )
@@ -31,7 +40,10 @@ const (
 	defaultMaxIdleConns    = 8
 	defaultConnMaxLifetime = 30 * time.Minute
 	defaultPingTimeout     = 3 * time.Second
+	maxTLSCAFileBytes      = 1 << 20
 )
+
+var tlsConfigSequence atomic.Uint64
 
 // MustNewClient 用 config.MySQLConf 构造 *sql.DB,失败 panic。
 //
@@ -50,10 +62,62 @@ func NewClient(c config.MySQLConf) (*sql.DB, error) {
 	if c.DSN == "" {
 		return nil, fmt.Errorf("mysql DSN is empty")
 	}
-
-	db, err := sql.Open("mysql", c.DSN)
+	tlsCAFile := strings.TrimSpace(c.TLSCAFile)
+	tlsServerName := strings.TrimSpace(c.TLSServerName)
+	if (tlsCAFile == "") != (tlsServerName == "") {
+		return nil, fmt.Errorf("mysql tls_ca_file and tls_server_name must be configured together")
+	}
+	driverCfg, err := mysql.ParseDSN(c.DSN)
 	if err != nil {
-		return nil, fmt.Errorf("sql.Open: %w", err)
+		return nil, fmt.Errorf("parse mysql DSN: %w", err)
+	}
+	if mode := strings.ToLower(driverCfg.TLSConfig); mode == "skip-verify" || mode == "preferred" ||
+		driverCfg.AllowFallbackToPlaintext || unsafeTLSConfig(driverCfg.TLS) {
+		return nil, fmt.Errorf("mysql DSN contains unsafe tls mode %q", driverCfg.TLSConfig)
+	}
+	if tlsCAFile != "" {
+		if driverCfg.Net != "tcp" {
+			return nil, fmt.Errorf("mysql TLS requires tcp DSN, got network %q", driverCfg.Net)
+		}
+		host, _, splitErr := net.SplitHostPort(driverCfg.Addr)
+		if splitErr != nil {
+			return nil, fmt.Errorf("parse mysql tcp address %q: %w", driverCfg.Addr, splitErr)
+		}
+		if !strings.EqualFold(host, tlsServerName) {
+			return nil, fmt.Errorf("mysql DSN host %q must equal tls_server_name %q", host, tlsServerName)
+		}
+	}
+
+	var db *sql.DB
+	if tlsCAFile == "" {
+		db, err = sql.Open("mysql", c.DSN)
+		if err != nil {
+			return nil, fmt.Errorf("sql.Open: %w", err)
+		}
+	} else {
+		if driverCfg.TLSConfig != "" || driverCfg.TLS != nil {
+			return nil, fmt.Errorf("mysql DSN must not contain tls parameter when tls_ca_file/tls_server_name are configured")
+		}
+		rootCAs, rootErr := loadStrictRootCAs(tlsCAFile)
+		if rootErr != nil {
+			return nil, fmt.Errorf("mysql tls_ca_file %q: %w", tlsCAFile, rootErr)
+		}
+		configKey := fmt.Sprintf("pandora-strict-%d", tlsConfigSequence.Add(1))
+		if registerErr := mysql.RegisterTLSConfig(configKey, &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			RootCAs:            rootCAs,
+			ServerName:         tlsServerName,
+			InsecureSkipVerify: false,
+		}); registerErr != nil {
+			return nil, fmt.Errorf("register strict mysql TLS config: %w", registerErr)
+		}
+		driverCfg.TLSConfig = configKey
+		connector, connectorErr := mysql.NewConnector(driverCfg)
+		mysql.DeregisterTLSConfig(configKey)
+		if connectorErr != nil {
+			return nil, fmt.Errorf("create mysql TLS connector: %w", connectorErr)
+		}
+		db = sql.OpenDB(connector)
 	}
 
 	maxOpen := c.MaxOpenConns
@@ -88,4 +152,67 @@ func NewClient(c config.MySQLConf) (*sql.DB, error) {
 		return nil, fmt.Errorf("ping mysql: %w", err)
 	}
 	return db, nil
+}
+
+func unsafeTLSConfig(cfg *tls.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.InsecureSkipVerify ||
+		(cfg.MinVersion != 0 && cfg.MinVersion < tls.VersionTLS12) ||
+		(cfg.MaxVersion != 0 && cfg.MaxVersion < tls.VersionTLS12)
+}
+
+// loadStrictRootCAs 只信中心 MySQL bundle 的私有 CA。不能从 SystemCertPool 起步：
+// 否则同名证书只要被任意系统根签发也会通过，bundle 就不再是唯一信任锚。
+// 文件中任何非证书、损坏证书或尾随垃圾都拒绝，避免
+// AppendCertsFromPEM“至少成功一个就返回 true”掩盖坏包。
+func loadStrictRootCAs(path string) (*x509.CertPool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("must be a regular file")
+	}
+	if info.Size() > maxTLSCAFileBytes {
+		return nil, fmt.Errorf("size %d exceeds %d-byte limit", info.Size(), maxTLSCAFileBytes)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	pemBytes, err := io.ReadAll(io.LimitReader(file, maxTLSCAFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(pemBytes) > maxTLSCAFileBytes {
+		return nil, fmt.Errorf("content exceeds %d-byte limit", maxTLSCAFileBytes)
+	}
+	rest := pemBytes
+	certCount := 0
+	for len(bytes.TrimSpace(rest)) > 0 {
+		block, next := pem.Decode(rest)
+		if block == nil {
+			return nil, fmt.Errorf("contains data that is not a PEM certificate")
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("contains PEM block %q, want CERTIFICATE", block.Type)
+		}
+		if _, parseErr := x509.ParseCertificate(block.Bytes); parseErr != nil {
+			return nil, fmt.Errorf("parse certificate: %w", parseErr)
+		}
+		certCount++
+		rest = next
+	}
+	if certCount == 0 {
+		return nil, fmt.Errorf("contains no certificate")
+	}
+
+	pool := x509.NewCertPool()
+	if ok := pool.AppendCertsFromPEM(pemBytes); !ok {
+		return nil, fmt.Errorf("append certificate to bundle-only pool")
+	}
+	return pool, nil
 }

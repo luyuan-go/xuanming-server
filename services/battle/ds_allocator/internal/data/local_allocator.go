@@ -557,6 +557,13 @@ func (l *LocalGameServerAllocator) buildArgs(port int, mapURL string) []string {
 		args = append(args, mapURL)
 	}
 	args = append(args, "-server", "-log", fmt.Sprintf("-port=%d", port))
+	// editor 形态额外关掉「缺 streaming level package 就踢人」:未 cook 的 editor DS 与 PIE
+	// 客户端对 World Partition runtime cell 的命名天然对不上,不关掉就是秒级无限重连
+	// (完整成因、引擎出处与作用域理由见 conf.EditorLauncherCVarArg 声明处)。
+	// 必须排在 ExtraArgs 之前,运维仍可用 extra_args 覆盖回去。
+	if l.cfg.Launcher == conf.LauncherEditor {
+		args = append(args, conf.EditorLauncherCVarArg)
+	}
 	args = append(args, l.cfg.ExtraArgs...)
 	return args
 }

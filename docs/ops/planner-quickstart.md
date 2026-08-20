@@ -1,14 +1,17 @@
 # 策划本地启动手册(Pandora 后端)
 
-> 给策划的最简上手:**只要装 Docker,双击一个文件,整套后端就跑起来。**
-> 不需要装 Go、不需要会编译。
+> 稳定入口仍是 Docker；没有 Docker 的策划机可用
+> `策划一键启动-免Docker-测试版.cmd`。两条路线都不需要会编译；免 Docker 测试入口连
+> PowerShell 7 和基础设施都放在仓库 `run/` 下自举，不安装系统服务。SVN 工作副本在
+> `installers/localinfra` 自带固定安装包；Git 检出缺包时才从官方源自动下载。
 
 ## 一、第一次准备(只做一次)
 
-1. 安装 **Docker Desktop**:https://www.docker.com/products/docker-desktop/
+1. 使用稳定 Docker 入口时，安装 **Docker Desktop**:https://www.docker.com/products/docker-desktop/
    - 装完按提示重启电脑。
    - 启动 Docker Desktop,等右下角**鲸鱼图标变绿**(表示 Docker 已就绪)。
    - (如果你机器有 `winget`,也可以直接双击下面的启动脚本,它会尝试自动安装。)
+   使用下文“免 Docker 测试入口”时跳过这一步，不要为了本项目安装或改动 Docker。
 2. 用 Git 把本仓库拉到本地(已有就 `git pull` 更新到最新)。
 
 ## 二、日常使用
@@ -16,7 +19,56 @@
 | 操作 | 怎么做 |
 |---|---|
 | 启动整套后端 | 命令行执行 `pwsh tools/scripts/play.ps1`(docker 模式,DS=mock) |
-| 停止 | 命令行执行 `pwsh tools/scripts/play.ps1 -Stop`;旧机器遗留的含战斗环境双击 `策划一键停止.cmd` 清理 |
+| 停止 | 命令行执行 `pwsh tools/scripts/play.ps1 -Stop`;旧机器遗留的含战斗环境执行 `pwsh tools/scripts/play.ps1 -Battle -Stop` 清理 |
+
+### 没装 Docker：测试入口
+
+双击 `策划一键启动-免Docker-测试版.cmd`。它会导表，并以原生 Windows 进程启动
+Redis / Kafka / Envoy 与 22 个后端服务；SVN 已带固定安装包，Git/不完整目录才逐项联网。
+
+`installers/planner-db/central-mysql.json` 是唯一模式开关：文件存在即连接中心 MySQL，
+本机不下载、解包、启动、停止或重置 MySQL。首次会要求输入一次性 enrollment code，
+中心建好独立 workspace 后，密码只保存在当前 Windows 用户的 DPAPI 凭据文件。建库/迁移
+正在处理时会按服务端节奏等待，总截止为 10 分钟。配置损坏、DNS/TLS/认证/schema
+预检不通都会中止，**不会静默回退到本机 MySQL**。没有该文件时才保持下文的
+`local-owned` 动态端口行为。
+
+这条路线不会占用或复用 Docker MySQL 的 `3307`：本项目原生 MySQL 会从 `13307..13398`
+自动选择可用端口，验证确属本工作区后记录在 `run/localinfra/cfg/ports.json`，服务配置副本生成到
+`run/localinfra/cfg/services/`。机器上已有的 Docker/MySQL 不会被迁移、停止或删除；停止本项目也
+只认本工作区的 mysqld 映像和 `my.ini`。启动包还必须带
+`run/artifacts/windows/bin/pandora-migrate.exe`；缺少它会明确失败，不会带旧表结构继续启动。
+
+第一次 `svn update` 会多取约 544.5 MiB 的第三方便携包，之后双击不需要使用者再下载或安装
+PowerShell、MySQL、Redis、Kafka、JRE、mkcert、Envoy。脚本逐文件校验固定 SHA256 后才执行；
+空目录或缺少某个当前版本文件时，只对该文件回退公网。同名包损坏会明确失败，请先重新
+`svn update`，不要关闭校验。仓库内的本机包校验后直接解包，不再额外复制一份 544.5 MiB cache；
+显式共享镜像仍可通过 `PANDORA_LOCALINFRA_MIRROR` 覆盖，并会先复制到稳定的本机 cache。
+以后 SVN 更新了固定包，下一次启动会根据 dist 里的 SHA256 marker 自动重备，不会继续误用旧版。
+若旧基础设施进程还占用对应目录，脚本会保留旧版并明确提示；先执行
+`pwsh tools/scripts/start.ps1 -Mode local -NoDocker -Down`，再重新双击即可。不会为了换包停止外部
+Docker/MySQL，也不会把下载或解包一半的目录当成可用版本。
+
+如果要核对启动耗时、已修复的端口查询瓶颈或后续业务 exe 压缩边界，见
+[`性能优化-策划一键启动-20260820.md`](性能优化-策划一键启动-20260820.md)。
+查看状态：
+
+```powershell
+pwsh tools/scripts/local_infra.ps1 -Action status
+```
+
+本机模式状态里的 MySQL 应为 `OWNED`；中心模式为 `EXTERNAL-UP`。`FOREIGN` 表示
+本机端口后来被外部进程占用，脚本不会碰它。
+Docker 与免 Docker 来回切换时，脚本会依据 `run/dev/mysql-port-applied.json` 中的模式、端口和
+社交库配置自动完整重启宿主服务，避免旧进程继续连接上一次模式的数据库。
+连续双击启动/停止也不会并发穿插：整条导表、基础设施、迁移和业务服务链共用工作区编排锁；
+已有一轮在执行时，第二轮会明确退出，不会停掉刚由另一轮启动的 MySQL。
+
+中心凭据同时绑定首次登记的 `MachineGuid + Windows SID` 摘要；复制 identity/凭据到
+摘要不同的电脑会 fail-closed，不自动改绑。这不是 TPM 证明：如果位级系统镜像同时复制了
+MachineGuid、SID 且 DPAPI 也可解密，客户端单独无法可靠识别，须由中心重复使用监控/终端
+证明补强。PowerShell 会尽快释放 token/响应字符串引用，但 immutable string 不能承诺
+物理清零；安全承诺是不写入仓库、日志、identity/profile 或进程命令行。
 
 > 【已废弃 2026-07-14】「策划一键启动-含战斗.cmd」已删除:Windows DS 只在开发机
 > `local` 模式下启动;要真实战斗请直接用客户端连**内网 k8s 服务器**
@@ -38,9 +90,9 @@
 
 | 操作 | 怎么做 |
 |---|---|
-| 启动 | 双击 `策划一键启动-改资源即时生效.cmd` |
-| **改完资源后重来一次(日常最常用)** | 双击 `策划一键重启DS-读最新资源.cmd` |
-| 停止 | 双击 `策划一键停止-改资源即时生效.cmd` |
+| 启动 | 双击 `策划一键启动-免Docker-测试版.cmd` |
+| **改完资源后重来一次(日常最常用)** | 双击 `策划一键重启DS-免Docker-测试版.cmd` |
+| 停止 | 双击 `策划一键停止-免Docker-测试版.cmd` |
 
 **两个入口都会自己先导表**(策划 xlsx → `configtable/dist`),不用另外双击导表脚本。
 **也都不需要先双击停止** —— 后端在跑就就地重启该重启的,没在跑就自动转成完整启动。
@@ -104,13 +156,27 @@ pwsh tools\scripts\configtable_gen.ps1 -TableRoot D:\你的客户端目录\Table
 用的是哪一份 —— 确认那就是你正在改表的那一份;不是的话按上面两条之一指过去。这个提示很重要:
 用错检出的表现是"我明明改了表却没生效",最难自己查出来。
 
+**新电脑取不到 SVN 版本号**:导表会把源表 revision 写进产物,所以日常双击自动导表时 `Table`
+必须来自真正的 SVN checkout,不能是别人复制的普通文件夹或 export。脚本会自动从
+PATH 和 TortoiseSVN 注册表找 `svn.exe`(安装在非 C 盘也可以);只装了右键菜单、
+没有 CLI 时,还会回退到 TortoiseSVN 自带的 SubWCRev。如果两者都读不到,先确认目录
+真是 checkout;再重跑 TortoiseSVN 安装器并勾选 **command-line client tools**。也可以显式指定已安装的命令:
+
+```powershell
+setx PANDORA_SVN_EXE "D:\Program Files\TortoiseSVN\bin\svn.exe"
+```
+
+设完要重开窗口;不要为了绕过报错沿用旧表,否则会把新改动伪装成已生效。
+命令行 `-SourceRev svn-r<N>` 只给「程序已核实普通导出快照的精确来源」的特殊流程用;
+日常策划不要靠猜一个版本号来放行。
+
 ### 为什么日常该用「重启 DS」而不是再启动一次
 
 一天里绝大多数改动都只在**客户端仓**(改资源,或重编了编辑器 DLL),后端 go 服务一行没动。
 但完整启动每次都要走:等基础设施容器 healthy → 起 TiDB → 跑数据库迁移 → 21 个 go 服务
 逐个 build / 启动 / 端口探活。这些步骤没有一步和你改的资源有关,纯属白等。
 
-`策划一键重启DS-读最新资源.cmd` 只做真正相关的事:
+`策划一键重启DS-免Docker-测试版.cmd` 只做真正相关的事:
 
 - **不碰** docker 基础设施、TiDB、数据库迁移、21 个 go 服务(它们继续跑,连重启都没有);
 - 杀掉正在跑的本机 DS —— editor 形态是在**进程启动时**读未 cook 的 `Content/`,
@@ -137,7 +203,7 @@ pwsh tools\scripts\configtable_gen.ps1 -TableRoot D:\你的客户端目录\Table
 
 - **本机正在进行的战斗会被中断**(战斗 DS 是 `ds_allocator` 的子进程),重进即可;
 - **改了 go 服务代码、或后端同学给了新的 `run/artifacts` 二进制** → 那就得走完整启动,
-  双击 `策划一键启动-改资源即时生效.cmd`。
+  双击 `策划一键启动-免Docker-测试版.cmd`。
 
 后端还没起来时双击「重启」也没关系:脚本发现后端没在跑,会自己改走完整启动流程并说明原因,
 不需要你分辨今天该点哪个图标。
@@ -169,26 +235,16 @@ pwsh tools/scripts/build_release_binaries.ps1 -Zip
 启动脚本检测到本机没有 Go 会**自动改用这批预编译二进制**,秒级启动。
 以后升级也只需**替换 `run/artifacts` 这一个目录**,不用重装任何东西。
 
-> 唯一绕不开的安装项仍然是 **Docker Desktop**:MySQL/Redis/Kafka/etcd 都跑在容器里,
-> 而 Docker 在 Windows 上是系统级组件(装虚拟化 + 驱动 + 服务),没法塞进项目目录里"绿色免安装"。
-> 除它之外的东西(镜像、二进制、配置、证书)都已经在仓库目录里,拷过去就能用。
+> 上述普通 `local` / Docker 入口绕不开 **Docker Desktop**。若机器不能安装 Docker，改用
+> `策划一键启动-免Docker-测试版.cmd`；它不起 TiDB/观测栈，并用仓库内免安装二进制代替
+> MySQL/Redis/Kafka/Envoy，具体限制以上文“没装 Docker：测试入口”为准。
 
 ## 三、机器拉不到镜像（内网 / 断网 / 镜像加速失效）
 
-若这台机器连不上 Docker Hub / 国内加速站(双击启动时会卡在「拉 golang / alpine 镜像失败」,
-TLS 超时 / EOF / 403),**不用做任何额外操作**:仓库里带了离线镜像包
-`deploy/offline-images/pandora-images.tar`(随 git/svn 同步),双击启动脚本时会
-**自动检测并导入**,导入后直接起服务。
-
-你要做的只有:
-
-1. `git pull` / `svn update` 确保拿到最新的 `deploy/offline-images/pandora-images.tar`。
-2. 双击一键启动脚本即可(脚本自动导入离线镜像 + 起服务,无需手动命令)。
-
-> 离线包由能联网的机器用 `pwsh tools/scripts/export_images.ps1 -Build` 生成并提交。
-> 基础设施(mysql/redis/kafka 等)不在包内;若目标机基础设施也拉不到,在联网机用
-> `-IncludeInfra -Out D:\pandora-full-images.tar` 另打仓库外的大包，不能覆盖仓库受管业务包。
-> 若这台机器其实能联网、想强制重新构建最新镜像:命令行加 `-Rebuild`(如 `pwsh tools/scripts/start.ps1 -Mode docker -Rebuild`)。
+Docker 业务镜像已不再随 git/svn 提交；`deploy/offline-images/pandora-images.tar` 的旧方案已退役。
+需要 Docker 离线镜像时，由后端通过 `publish_offline_images.ps1` 发布到制品目录，再在目标机运行
+`fetch_offline_images.ps1` 校验取回。`installers/localinfra` 只服务于上面的**免 Docker**入口，
+不包含任何业务 Docker 镜像。
 
 ## 四、常见问题
 

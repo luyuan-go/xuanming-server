@@ -90,6 +90,7 @@ type PlayerServiceClient interface {
 	//
 	// 只读幂等。查不到的 player_id **不出现在响应里**(不返回空名字占位):
 	// 「查不到」与「名字是空串」必须可区分,前者调用方应保留旧值 / 走兜底,后者是真数据。
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE DS 与 Team internal 入口共用 canonical name messages。
 	GetPlayerNames(ctx context.Context, in *GetPlayerNamesRequest, opts ...grpc.CallOption) (*GetPlayerNamesResponse, error)
 	ListHeroes(ctx context.Context, in *ListHeroesRequest, opts ...grpc.CallOption) (*ListHeroesResponse, error)
 	UnlockHero(ctx context.Context, in *UnlockHeroRequest, opts ...grpc.CallOption) (*UnlockHeroResponse, error)
@@ -458,6 +459,7 @@ type PlayerServiceServer interface {
 	//
 	// 只读幂等。查不到的 player_id **不出现在响应里**(不返回空名字占位):
 	// 「查不到」与「名字是空串」必须可区分,前者调用方应保留旧值 / 走兜底,后者是真数据。
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE DS 与 Team internal 入口共用 canonical name messages。
 	GetPlayerNames(context.Context, *GetPlayerNamesRequest) (*GetPlayerNamesResponse, error)
 	ListHeroes(context.Context, *ListHeroesRequest) (*ListHeroesResponse, error)
 	UnlockHero(context.Context, *UnlockHeroRequest) (*UnlockHeroResponse, error)
@@ -1237,6 +1239,120 @@ var PlayerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AddExperience",
 			Handler:    _PlayerService_AddExperience_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "pandora/player/v1/player.proto",
+}
+
+const (
+	PlayerInternalService_ResolvePlayerNames_FullMethodName = "/pandora.player.v1.PlayerInternalService/ResolvePlayerNames"
+)
+
+// PlayerInternalServiceClient is the client API for PlayerInternalService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// PlayerInternalService 只供受信后端服务读取 player 域权威最小投影。
+// 不经客户端/DS Envoy 暴露；实现层仍强制 request-bound internalrpcauth，网络位置不是身份。
+type PlayerInternalServiceClient interface {
+	// ResolvePlayerNames 供 team 组装成员视图时按 player_id 有界批量读取角色显示名。
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE Team 与 DS 入口共用 canonical name messages。
+	// buf:lint:ignore RPC_REQUEST_STANDARD_NAME 避免复制同形 request 造成协议漂移。
+	// buf:lint:ignore RPC_RESPONSE_STANDARD_NAME 避免复制同形 response 造成协议漂移。
+	ResolvePlayerNames(ctx context.Context, in *GetPlayerNamesRequest, opts ...grpc.CallOption) (*GetPlayerNamesResponse, error)
+}
+
+type playerInternalServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewPlayerInternalServiceClient(cc grpc.ClientConnInterface) PlayerInternalServiceClient {
+	return &playerInternalServiceClient{cc}
+}
+
+func (c *playerInternalServiceClient) ResolvePlayerNames(ctx context.Context, in *GetPlayerNamesRequest, opts ...grpc.CallOption) (*GetPlayerNamesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPlayerNamesResponse)
+	err := c.cc.Invoke(ctx, PlayerInternalService_ResolvePlayerNames_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// PlayerInternalServiceServer is the server API for PlayerInternalService service.
+// All implementations should embed UnimplementedPlayerInternalServiceServer
+// for forward compatibility.
+//
+// PlayerInternalService 只供受信后端服务读取 player 域权威最小投影。
+// 不经客户端/DS Envoy 暴露；实现层仍强制 request-bound internalrpcauth，网络位置不是身份。
+type PlayerInternalServiceServer interface {
+	// ResolvePlayerNames 供 team 组装成员视图时按 player_id 有界批量读取角色显示名。
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE Team 与 DS 入口共用 canonical name messages。
+	// buf:lint:ignore RPC_REQUEST_STANDARD_NAME 避免复制同形 request 造成协议漂移。
+	// buf:lint:ignore RPC_RESPONSE_STANDARD_NAME 避免复制同形 response 造成协议漂移。
+	ResolvePlayerNames(context.Context, *GetPlayerNamesRequest) (*GetPlayerNamesResponse, error)
+}
+
+// UnimplementedPlayerInternalServiceServer should be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedPlayerInternalServiceServer struct{}
+
+func (UnimplementedPlayerInternalServiceServer) ResolvePlayerNames(context.Context, *GetPlayerNamesRequest) (*GetPlayerNamesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResolvePlayerNames not implemented")
+}
+func (UnimplementedPlayerInternalServiceServer) testEmbeddedByValue() {}
+
+// UnsafePlayerInternalServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to PlayerInternalServiceServer will
+// result in compilation errors.
+type UnsafePlayerInternalServiceServer interface {
+	mustEmbedUnimplementedPlayerInternalServiceServer()
+}
+
+func RegisterPlayerInternalServiceServer(s grpc.ServiceRegistrar, srv PlayerInternalServiceServer) {
+	// If the following call pancis, it indicates UnimplementedPlayerInternalServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&PlayerInternalService_ServiceDesc, srv)
+}
+
+func _PlayerInternalService_ResolvePlayerNames_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPlayerNamesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlayerInternalServiceServer).ResolvePlayerNames(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlayerInternalService_ResolvePlayerNames_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlayerInternalServiceServer).ResolvePlayerNames(ctx, req.(*GetPlayerNamesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// PlayerInternalService_ServiceDesc is the grpc.ServiceDesc for PlayerInternalService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var PlayerInternalService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "pandora.player.v1.PlayerInternalService",
+	HandlerType: (*PlayerInternalServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ResolvePlayerNames",
+			Handler:    _PlayerInternalService_ResolvePlayerNames_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

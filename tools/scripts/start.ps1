@@ -77,6 +77,13 @@ param(
     #           代价:DS 启动慢(加载一大批编辑器模块 + 读未 cook 的散装资产),首次进图可能等一两分钟;
     #           allocator 会自动把 ready 等待/心跳超时放宽到 300s/120s。
     #           (不包括编 shader:-server 下引擎跳过全局与材质着色器编译。)
+    #           另:allocator 只给 editor 形态自动加 -DPCVars=net.SkipMissingLevelDisconnect=1。
+    #           未 cook 的 DS 把 World Partition runtime cell 注册成 <WorldPackage>/<Cell>,而 PIE
+    #           客户端把同一个 cell 报成 /Memory/UEDPIE_<n>_<World>_<Cell>,服务端找不到就**直接踢人**;
+    #           客户端拿不到踢人原因(UE 5.8 在客户端侧丢弃 NMT_CloseReason),只会当瞬态掉线一遍遍
+    #           连回同一个 DS,形成秒级无限重连(2026-08-18 实测)。关掉后服务端只打 Warning 忽略,
+    #           副作用是那批 cell 里的 Actor 不复制给该客户端(可能少看到点东西)。
+    #           packaged 与 k8s Linux DS 不加,那里的内容不一致是真问题,保留引擎的踢人保护。
     [ValidateSet('', 'packaged', 'editor')]
     [string]$DsLauncher = '',
     # editor:Pandora.uproject 路径。留空则自动探测「与本仓库平级的客户端仓」,策划零手改。
@@ -175,6 +182,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $ScriptDir   = $PSScriptRoot
 $ProjectRoot = (Resolve-Path "$ScriptDir/../..").Path
+. (Join-Path $ScriptDir 'lib/local_infra_state.ps1')
+. (Join-Path $ScriptDir 'lib/planner_mysql_startup.ps1')
 
 # 本脚本也会由长期运行的 web 进程拉起。Windows 进程只在启动时继承一次 PATH；之后安装
 # minikube 等工具，即使已经写入机器/用户 PATH，web 创建的新控制台仍会继承旧快照。
@@ -3775,19 +3784,32 @@ function Ensure-Go {
 # 第一次起完不停、再点一次就报端口被占,而人根本没起别的东西(本机实测踩到)。
 # 注:监听方显示的是 com.docker.backend / wslrelay 这类 Docker 转发进程,从 PID 根本
 # 反查不到是哪个容器,故改从 docker 实际发布端口这一侧认。
-function Test-EdgePortHeldByOwnEnvoy([int]$Port) {
+function Test-EdgePortHeldByOwnEnvoy([int]$Port, [object[]]$ListenerRecords = $null) {
     # 先按**进程映像路径**认自己人。免 Docker 路线的 Envoy 是宿主原生进程
     # (run/localinfra/dist/envoy/envoy.exe),`docker port` 永远查不到它 —— 上一轮没停干净时
     # 就会被当成「外人占端口」硬阻断一键启动,而 local_infra.ps1 起 Envoy 前本来就会把它停掉
     # 重建(见那边的 Stop-Component 'envoy' + Stop-OrphanPortHolder),纯属误报。
     $native = [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'run/localinfra/dist/envoy/envoy.exe'))
-    foreach ($c in @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)) {
+    if ($null -eq $ListenerRecords) {
+        try { $ListenerRecords = @(Get-PandoraTcpListenerRecords) }
+        catch { return $false }
+    }
+    $portListeners = @($ListenerRecords | Where-Object { [int]$_.LocalPort -eq $Port })
+    $nativeOwned = 0
+    $notNativeOwned = 0
+    foreach ($c in $portListeners) {
         $proc = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
-        if (-not $proc) { continue }
+        if (-not $proc) { $notNativeOwned++; continue }
         # 受保护进程读 .Path 会抛;认不出来就当外人,不能让它中断整个前置检查。
         $exe = $null
         try { $exe = $proc.Path } catch { $exe = $null }
-        if ($exe -and [IO.Path]::GetFullPath($exe) -eq $native) { return $true }
+        if ($exe -and [IO.Path]::GetFullPath($exe) -eq $native) { $nativeOwned++ }
+        else { $notNativeOwned++ }
+    }
+    # 一条自家记录不能替同端口上的外部/未知 blocker 背书；原生路线必须证明全部
+    # 真正会挡住目标 bind 的 listener 都来自这个工作区的 Envoy。
+    if ($nativeOwned -gt 0) {
+        return ($notNativeOwned -eq 0 -and $nativeOwned -eq $portListeners.Count)
     }
 
     # docker 分支放最后,且只在**确实有 docker** 时问:策划机压根没装 docker,而本文件是
@@ -3805,9 +3827,15 @@ function Assert-LocalEdgePortsFree {
         @{ Port = 8444; Host = $(if ($env:PANDORA_DS_EDGE_BIND_HOST) { $env:PANDORA_DS_EDGE_BIND_HOST } else { '127.0.0.1' }); Face = 'DS 面   ' }
     )
 
+    try { $allListeners = @(Get-PandoraTcpListenerRecords) }
+    catch {
+        Write-Err "无法确认本机边缘端口 listener；不会把未知状态当空闲:$($_.Exception.Message)"
+        return $false
+    }
+
     $ok = $true
     foreach ($t in $targets) {
-        $listens = @(Get-NetTCPConnection -State Listen -LocalPort $t.Port -ErrorAction SilentlyContinue)
+        $listens = @($allListeners | Where-Object { [int]$_.LocalPort -eq [int]$t.Port })
         if ($listens.Count -eq 0) { continue }
 
         # 宿主要绑 X,已有监听在 Y:仅当 X/Y 相同,或任一方是通配地址时才真正冲突。
@@ -3817,7 +3845,7 @@ function Assert-LocalEdgePortsFree {
             })
         if ($blocking.Count -eq 0) { continue }
 
-        if (Test-EdgePortHeldByOwnEnvoy -Port $t.Port) {
+        if (Test-EdgePortHeldByOwnEnvoy -Port $t.Port -ListenerRecords $blocking) {
             Write-Info ("Envoy {0} {1}:{2} 当前是本项目自己的 Envoy 占着(上一轮没停),会被直接重建,不算冲突。" -f $t.Face.Trim(), $t.Host, $t.Port)
             continue
         }
@@ -4217,6 +4245,7 @@ function Stop-LocalStackForK8s {
 
     Write-Info "检测到 local 模式的服务在跑(占着宿主 8443 / 20001-20022),k8s 模式与它互斥,先停掉..."
     & "$ScriptDir/dev_all.ps1" -Down
+    if ($LASTEXITCODE -ne 0) { throw 'local 模式未能完整停止；拒绝继续启动 k8s 形成端口/数据库混用。' }
     Write-Ok "local 模式已停止。"
 }
 
@@ -4314,7 +4343,7 @@ function Invoke-ConfigTableGen {
 
     $before = Get-ConfigTableDistVersion
 
-    & "$ScriptDir/configtable_gen.ps1"
+    & "$ScriptDir/configtable_gen.ps1" -SkipIfInputsUnchanged
     $rc = $LASTEXITCODE
     if ($rc -ne 0) {
         Write-Host ""
@@ -4464,6 +4493,46 @@ function Invoke-LocalDsOnly {
 
     Write-Step "只重启本机 DS(基础设施与其余 go 服务原样不动)"
 
+    $localMysqlPort = 3307
+    $mysqlEndpointHost = '127.0.0.1'
+    $expectedProfileFingerprint = ''
+    $plannerMysqlMode = if ($NoDocker) { Get-PandoraPlannerMysqlStartupMode -ProjectRoot $ProjectRoot } else { 'docker' }
+    if ($NoDocker) {
+        if ($plannerMysqlMode -ceq 'central-managed') {
+            try {
+                $profile = Get-PandoraMysqlRuntimeProfile -ProjectRoot $ProjectRoot
+                $localMysqlPort = [int]$profile.endpoint.port
+                $mysqlEndpointHost = "$($profile.endpoint.host)"
+                $expectedProfileFingerprint = "$($profile.fingerprint)"
+            } catch {
+                Write-Info "中心 MySQL profile 未就绪或已损坏；回落完整启动流程重新登记，不回退本机 MySQL。详情:$($_.Exception.Message)"
+                return $false
+            }
+        } else {
+            $mysqlState = Get-PandoraLocalInfraPortState $ProjectRoot
+            if (-not $mysqlState) {
+                Write-Info '免 Docker MySQL 尚无已验证身份状态；回落到完整启动流程。'
+                return $false
+            }
+            $localMysqlPort = [int]$mysqlState.MysqlPort
+            if (-not (Get-PandoraLocalMysqlOwnedProcess $ProjectRoot $mysqlState)) {
+                Write-Info "免 Docker MySQL :$localMysqlPort 当前 listener 未通过 PID + exe + my.ini 归属复核；回落完整启动，绝不复用外部 MySQL。"
+                return $false
+            }
+        }
+    }
+    $expectedRuntimeMode = if ($plannerMysqlMode -ceq 'central-managed') { 'central' } elseif ($NoDocker) { 'nodocker' } else { 'docker' }
+    $expectedSocialOnMysql = [bool]$NoDocker
+    $appliedRuntime = Get-PandoraServiceAppliedMysqlState $ProjectRoot
+    if (-not $appliedRuntime -or $appliedRuntime.Mode -ne $expectedRuntimeMode -or
+        [int]$appliedRuntime.MysqlPort -ne $localMysqlPort -or
+        [bool]$appliedRuntime.SocialOnMysql -ne $expectedSocialOnMysql -or
+        ($expectedRuntimeMode -ceq 'central' -and "$($appliedRuntime.ProfileFingerprint)" -cne $expectedProfileFingerprint)) {
+        $actualRuntime = if ($appliedRuntime) { "$($appliedRuntime.Mode)/:$($appliedRuntime.MysqlPort)/social_mysql=$($appliedRuntime.SocialOnMysql)" } else { '未登记/旧版' }
+        Write-Info "业务服务已应用运行态为 $actualRuntime，当前要求 $expectedRuntimeMode/:$localMysqlPort/social_mysql=$expectedSocialOnMysql；回落完整启动以统一刷新全部 DSN。"
+        return $false
+    }
+
     # 端口即判据(与 run_services.ps1 的探活口径一致)。login 是启动顺序里最后一个,
     # 它在听就说明 22 个 go 服务这一批已经起完了。
     $dsSpawners = @(
@@ -4472,7 +4541,7 @@ function Invoke-LocalDsOnly {
     )
     $required = @(
         @{ Name = 'Redis'; Port = 6380 }
-        @{ Name = 'MySQL'; Port = 3307 }
+        @{ Name = 'MySQL'; Host = $mysqlEndpointHost; Port = $localMysqlPort }
         @{ Name = 'Kafka'; Port = 9093 }
     )
     # etcd 只有 docker 路线才起:免 Docker 模式刻意不起它(dev 配置里 etcd_endpoints 全是
@@ -4484,7 +4553,11 @@ function Invoke-LocalDsOnly {
         @{ Name = 'login'; Port = 20001 }
     )
 
-    $missing = @($required | Where-Object { -not (Test-LocalTcpPort $_.Port) })
+    $missing = @($required | Where-Object {
+        if ($_.Host -and $_.Host -cne '127.0.0.1') {
+            -not (Test-NetConnection -ComputerName $_.Host -Port $_.Port -InformationLevel Quiet -WarningAction SilentlyContinue)
+        } else { -not (Test-LocalTcpPort $_.Port) }
+    })
     if ($missing.Count -gt 0) {
         Write-Info "后端还没跑起来(缺:$(($missing | ForEach-Object { "$($_.Name):$($_.Port)" }) -join ', '))。"
         Write-Info "那这次不是「重启 DS」而是「启动整套后端」,自动改走完整启动流程(会慢一些,属正常)。"
@@ -4510,12 +4583,16 @@ function Invoke-LocalDsOnly {
     # -NoBuild:go 代码没改是本入口的前提,跳过 go build 正是它比完整启动快的地方;
     #          二进制不存在时 run_services.ps1 仍会自己补编,不会静默起不来。
     Write-Warn "两个 allocator 会重启:本机正在进行的战斗 DS 会被一并终止(本地联调可接受)。"
+    $restartErrors = @()
     foreach ($svc in $dsSpawners) {
-        & "$ScriptDir/run_services.ps1" -Action restart -Service $svc.Name -NoBuild
+        & "$ScriptDir/run_services.ps1" -Action restart -Service $svc.Name -NoBuild -NoDocker:$NoDocker -MysqlPort $localMysqlPort
+        if ($LASTEXITCODE -ne 0) { $restartErrors += $svc.Name }
+    }
+    if ($restartErrors.Count -gt 0) {
+        throw "allocator 重启失败:$($restartErrors -join ', ')。已中止，不能用旧进程端口冒充新配置已生效。"
     }
 
-    # 复核端口:run_services.ps1 的 restart 起不来时只打印一行告警、不返回非零码,
-    # 淹在滚动输出里就成了"脚本说成功、客户端进不去"。这里按端口给出最终判据。
+    # 退出码证明生命周期动作本身成功；再按 listener 端口给出最终就绪判据，二者缺一不可。
     $failed = @($dsSpawners | Where-Object { -not (Test-LocalTcpPort $_.Port) })
     if ($failed.Count -gt 0) {
         $names = ($failed | ForEach-Object { "$($_.Name):$($_.Port)" }) -join ', '
@@ -4536,8 +4613,13 @@ function Invoke-LocalDsOnly {
         )
         Write-Host ""
         Write-Info "配置表这批有改动,顺带重启读表的 go 服务(它们只在启动时加载 dist)..."
+        $restartErrors = @()
         foreach ($svc in $tableReaders) {
-            & "$ScriptDir/run_services.ps1" -Action restart -Service $svc.Name -NoBuild
+            & "$ScriptDir/run_services.ps1" -Action restart -Service $svc.Name -NoBuild -NoDocker:$NoDocker -MysqlPort $localMysqlPort
+            if ($LASTEXITCODE -ne 0) { $restartErrors += $svc.Name }
+        }
+        if ($restartErrors.Count -gt 0) {
+            throw "读表服务重启失败:$($restartErrors -join ', ')。已中止，不能用旧进程端口冒充新配置已生效。"
         }
         $failedTables = @($tableReaders | Where-Object { -not (Test-LocalTcpPort $_.Port) })
         if ($failedTables.Count -gt 0) {
@@ -4559,7 +4641,7 @@ function Invoke-LocalDsOnly {
         Write-Warn "两个 allocator 已重启,但没能确认 Hub DS 就绪(原因见上)。"
         Write-Info "可以直接去客户端试;真进不去就按上面点名的日志排查。"
     }
-    Write-Info "改了 go 服务代码 / 换了 run/artifacts 里的二进制 → 请改走完整启动(策划一键启动-改资源即时生效.cmd)。"
+    Write-Info "改了 go 服务代码 / 换了 run/artifacts 里的二进制 → 请改走完整启动(策划一键启动-免Docker-测试版.cmd)。"
     return $true
 }
 
@@ -4568,8 +4650,10 @@ function Invoke-Docker {
     if ($Down) {
         Write-Step "停止 docker 业务服务"
         docker compose -f $ComposeServices down
+        if ($LASTEXITCODE -ne 0) { throw 'docker 业务服务未能完整停止；保留基础设施，避免残存服务突然断库。' }
         Write-Step "停止基础设施"
         & "$ScriptDir/dev_down.ps1"
+        if ($LASTEXITCODE -ne 0) { throw 'Docker 基础设施停止失败。' }
         return
     }
     Write-Step "docker 模式:基础设施 + 22 个 go 服务全部容器化"
@@ -4577,6 +4661,7 @@ function Invoke-Docker {
     # local 宿主进程会抢同一批端口,先停掉
     Write-Info "先停掉可能在跑的宿主 go 服务(避免端口冲突)..."
     & "$ScriptDir/run_services.ps1" -Action down 2>$null
+    if ($LASTEXITCODE -ne 0) { throw '宿主业务服务未能完整停止；拒绝继续启动 Docker 容器形成混合运行态。' }
 
     Write-Step "[1/3] 基础设施(建 pandora-net)"
     & "$ScriptDir/dev_up.ps1"
@@ -4713,8 +4798,11 @@ function Invoke-Battle {
     if ($Down) {
         Write-Step "停止含战斗版遗留环境(宿主 allocator + 业务容器 + 基础设施)"
         & "$ScriptDir/run_services.ps1" -Action down 2>$null
+        if ($LASTEXITCODE -ne 0) { throw '宿主业务服务未能完整停止；拒绝继续清理基础设施。' }
         docker compose -f $ComposeServices down
+        if ($LASTEXITCODE -ne 0) { throw '遗留业务容器未能完整停止；拒绝继续清理基础设施。' }
         & "$ScriptDir/dev_down.ps1"
+        if ($LASTEXITCODE -ne 0) { throw '遗留 Docker 基础设施停止失败。' }
         return
     }
 
@@ -7482,7 +7570,15 @@ function Invoke-Reset {
             Invoke-K8s
         }
         'local' {
-            & "$ScriptDir/dev_all.ps1" -Down 2>$null
+            if ($NoDocker) {
+                & "$ScriptDir/run_services.ps1" -Action down 2>$null
+                if ($LASTEXITCODE -ne 0) { throw '免 Docker 业务服务未能完整停止；拒绝 reset。' }
+                & "$ScriptDir/local_infra.ps1" -Action reset
+                if ($LASTEXITCODE -ne 0) { throw '免 Docker 基础设施 reset 失败；数据状态未确认，拒绝继续启动。' }
+            } else {
+                & "$ScriptDir/dev_all.ps1" -Down 2>$null
+                if ($LASTEXITCODE -ne 0) { throw 'local 旧环境未能完整停止；拒绝在残留进程上执行 reset/重启。' }
+            }
             Invoke-Local
         }
         'battle' {
@@ -7508,8 +7604,19 @@ function Invoke-Reset {
 
 # ===== 状态 =====
 function Show-Status {
+    $script:ShowStatusExitCode = 0
     switch ($Mode) {
-        'local'  { & "$ScriptDir/run_services.ps1" -Action status }
+        'local'  {
+            if ($NoDocker) {
+                Write-Step '免 Docker 本机基础设施'
+                & "$ScriptDir/local_infra.ps1" -Action status
+                if ($LASTEXITCODE -ne 0) { $script:ShowStatusExitCode = 1 }
+                Write-Step '业务服务'
+                & "$ScriptDir/run_services.ps1" -Action status -NoDocker
+            } else {
+                & "$ScriptDir/run_services.ps1" -Action status
+            }
+        }
         'battle' {
             Write-Warn "battle 模式已废弃(仅用于查看/清理遗留环境;真 DS 用 -Mode k8s)。"
             Write-Step "业务服务容器(遗留)"
@@ -7530,12 +7637,19 @@ function Show-Status {
 }
 
 # ===== 主流程 =====
+$orchestrationLockEntered = $false
+try {
+if ($Mode -ne 'online' -and -not $Status -and -not $Check -and -not $BuildOnly) {
+    $operation = if ($Down) { "$Mode 停止" } elseif ($Reset) { "$Mode reset" } elseif ($DsOnly) { "$Mode DS 快速刷新" } else { "$Mode 启动/恢复" }
+    Enter-PandoraOrchestrationLock -ProjectRoot $ProjectRoot -Operation $operation
+    $orchestrationLockEntered = $true
+}
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Magenta
 Write-Host " Pandora 后端一键启动器  ( $Mode )" -ForegroundColor Magenta
 Write-Host "============================================" -ForegroundColor Magenta
 
-if ($Status) { Show-Status; exit 0 }
+if ($Status) { Show-Status; exit $script:ShowStatusExitCode }
 
 # -GenTables:先把策划 xlsx 导成服务端配置表。必须排在起服务 / 重启服务之前 —— 读表的
 # go 服务是在进程启动时从 configtable/dist 加载的,表还没生成就把服务起起来,读到的是上一批。
@@ -7585,4 +7699,7 @@ switch ($Mode) {
     'battle'   { Invoke-Battle }
     'k8s'      { Invoke-K8s }
     'online'   { Invoke-Online }
+}
+} finally {
+    if ($orchestrationLockEntered) { Exit-PandoraOrchestrationLock }
 }

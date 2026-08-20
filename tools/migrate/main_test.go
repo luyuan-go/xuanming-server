@@ -23,6 +23,7 @@ func TestParseCommandConfigBootstrapDefaultsFalse(t *testing.T) {
 	t.Setenv("MIGRATE_BOOTSTRAP_DB", "")
 	t.Setenv("MIGRATE_TARGETS_FILE", "")
 	t.Setenv("MIGRATE_EXPECTED_TARGETS", "")
+	t.Setenv("MIGRATE_VERIFY_ONLY", "")
 	t.Setenv("PANDORA_ENV", "")
 	path := filepath.Join(t.TempDir(), "targets.json")
 	cfg, err := parseCommandConfig([]string{
@@ -34,6 +35,9 @@ func TestParseCommandConfigBootstrapDefaultsFalse(t *testing.T) {
 	}
 	if cfg.Bootstrap {
 		t.Fatal("bootstrap 默认值必须为 false")
+	}
+	if cfg.VerifyOnly {
+		t.Fatal("verify-only 默认值必须为 false")
 	}
 	if cfg.Environment != "production" {
 		t.Fatalf("environment = %q, want production", cfg.Environment)
@@ -57,6 +61,77 @@ func TestParseCommandConfigRejectsInvalidBootstrapEnv(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "必须是 true/false") {
 		t.Fatalf("error = %v, want strict bool error", err)
+	}
+}
+
+func TestParseCommandConfigValidatesWorkspaceGuard(t *testing.T) {
+	t.Setenv("MIGRATE_BOOTSTRAP_DB", "")
+	t.Setenv("MIGRATE_WORKSPACE_ID", "")
+	base := []string{
+		"-targets-file", "targets.json",
+		"-expected-targets", "account:pandora_account:pandora_account_w_" + testWorkspaceID,
+	}
+
+	cfg, err := parseCommandConfig(append(base, "-workspace-id", testWorkspaceID))
+	if err != nil {
+		t.Fatalf("valid workspace guard error = %v", err)
+	}
+	if cfg.WorkspaceID != testWorkspaceID {
+		t.Fatalf("workspace id = %q, want %q", cfg.WorkspaceID, testWorkspaceID)
+	}
+
+	if _, err := parseCommandConfig(append(base, "-workspace-id", "short")); err == nil ||
+		!strings.Contains(err.Error(), "workspace_id") {
+		t.Fatalf("invalid workspace id error = %v", err)
+	}
+
+	if _, err := parseCommandConfig(append(base,
+		"-workspace-id", testWorkspaceID,
+		"-bootstrap=true",
+		"-environment=dev",
+	)); err == nil || !strings.Contains(err.Error(), "bootstrap") {
+		t.Fatalf("workspace bootstrap error = %v", err)
+	}
+}
+
+func TestParseCommandConfigVerifyOnlyCLIOverridesEnvAndRejectsBootstrap(t *testing.T) {
+	t.Setenv("MIGRATE_BOOTSTRAP_DB", "")
+	t.Setenv("MIGRATE_WORKSPACE_ID", "")
+	t.Setenv("MIGRATE_VERIFY_ONLY", "true")
+	base := []string{
+		"-targets-file", "targets.json",
+		"-expected-targets", "account:pandora_account:pandora_account",
+	}
+
+	cfg, err := parseCommandConfig(append(append([]string{}, base...), "-verify-only=false"))
+	if err != nil {
+		t.Fatalf("CLI false override error = %v", err)
+	}
+	if cfg.VerifyOnly {
+		t.Fatal("explicit -verify-only=false must override MIGRATE_VERIFY_ONLY=true")
+	}
+
+	cfg, err = parseCommandConfig(base)
+	if err != nil {
+		t.Fatalf("env verify-only error = %v", err)
+	}
+	if !cfg.VerifyOnly {
+		t.Fatal("MIGRATE_VERIFY_ONLY=true should enable verify-only by default")
+	}
+
+	_, err = parseCommandConfig(append(append([]string{}, base...),
+		"-verify-only=true", "-bootstrap=true", "-environment=dev"))
+	if err == nil || !strings.Contains(err.Error(), "verify-only") || !strings.Contains(err.Error(), "bootstrap") {
+		t.Fatalf("verify-only/bootstrap conflict error = %v", err)
+	}
+
+	t.Setenv("MIGRATE_VERIFY_ONLY", "not-a-bool")
+	if _, err := parseCommandConfig(base); err == nil || !strings.Contains(err.Error(), "MIGRATE_VERIFY_ONLY") {
+		t.Fatalf("invalid verify-only env error = %v", err)
+	}
+	cfg, err = parseCommandConfig(append(append([]string{}, base...), "-verify-only=false"))
+	if err != nil || cfg.VerifyOnly {
+		t.Fatalf("explicit CLI must override even invalid verify env: cfg=%+v err=%v", cfg, err)
 	}
 }
 
@@ -315,6 +390,20 @@ func TestBootstrapEnvironmentAllowlist(t *testing.T) {
 	}
 }
 
+func TestWorkspaceTargetsAlwaysRequireVerifiedTLS(t *testing.T) {
+	for _, environment := range []string{"local", "dev", "development", "production"} {
+		if !requiresVerifiedTLS(environment, testWorkspaceID) {
+			t.Errorf("workspace environment %q must require verified TLS", environment)
+		}
+	}
+	if requiresVerifiedTLS("dev", "") {
+		t.Fatal("legacy local dev without workspace should keep plaintext compatibility")
+	}
+	if !requiresVerifiedTLS("production", "") {
+		t.Fatal("production must require verified TLS")
+	}
+}
+
 func TestRejectDirtyOrNewer(t *testing.T) {
 	if err := rejectDirtyOrNewer(stubVersionReader{version: 2, dirty: true}, 2); err == nil || !strings.Contains(err.Error(), "dirty=true") {
 		t.Fatalf("dirty error = %v", err)
@@ -351,6 +440,40 @@ func TestAdvisoryLockWrapperOutlivesDriverWait(t *testing.T) {
 	}
 	if got := advisoryLockTimeout(migrationTarget{LockWaitTimeoutSeconds: 20}); got != 20*time.Second {
 		t.Fatalf("configured advisory wrapper timeout = %s, want 20s", got)
+	}
+}
+
+func TestWorkerCommandArgsAuthoritativelyPropagateVerifyOnly(t *testing.T) {
+	t.Setenv("MIGRATE_BOOTSTRAP_DB", "")
+	t.Setenv("MIGRATE_WORKSPACE_ID", "")
+	t.Setenv("MIGRATE_VERIFY_ONLY", "true")
+	expected := []targetDescriptor{{
+		Name: "account-primary", MigrationSet: "pandora_account", Database: "pandora_account",
+	}}
+	target := migrationTarget{Name: "account-primary"}
+
+	args := workerCommandArgs("targets.json", "dev", "", false, expected, target)
+	cfg, err := parseCommandConfig(args)
+	if err != nil {
+		t.Fatalf("parse worker args: %v", err)
+	}
+	if cfg.VerifyOnly {
+		t.Fatal("worker args must carry explicit -verify-only=false over inherited true env")
+	}
+	if cfg.Bootstrap {
+		t.Fatal("worker must keep bootstrap disabled")
+	}
+	if cfg.WorkerTarget != target.Name {
+		t.Fatalf("worker target = %q, want %q", cfg.WorkerTarget, target.Name)
+	}
+
+	args = workerCommandArgs("targets.json", "production", testWorkspaceID, true, expected, target)
+	cfg, err = parseCommandConfig(args)
+	if err != nil {
+		t.Fatalf("parse verify worker args: %v", err)
+	}
+	if !cfg.VerifyOnly || cfg.WorkspaceID != testWorkspaceID {
+		t.Fatalf("worker verify/workspace = %v/%q", cfg.VerifyOnly, cfg.WorkspaceID)
 	}
 }
 

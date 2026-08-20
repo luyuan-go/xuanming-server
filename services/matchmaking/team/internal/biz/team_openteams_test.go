@@ -2,6 +2,8 @@ package biz
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -100,6 +102,61 @@ func TestListOpenTeams_LimitClampedToMax(t *testing.T) {
 				t.Fatalf("limit=%d 期望返回 %d 支,实际 %d 支", c.limit, c.want, len(teams))
 			}
 		})
+	}
+}
+
+func TestListOpenTeamsProjectsCaptainDisplayFieldsInOneBatch(t *testing.T) {
+	uc, _, cleanup := newPolicyUsecase(t, conf.JoinPolicyApproval)
+	defer cleanup()
+	mustCreateTeam(t, uc, 9051, 7051)
+	mustCreateTeam(t, uc, 9052, 7052)
+
+	names := &playerNameResolverFake{values: map[uint64]string{7051: "Alice"}}
+	numbers := &playerNoResolverFake{values: map[uint64]uint64{7051: 100051, 7052: 100052}}
+	uc.SetPlayerNameResolver(names)
+	uc.SetPlayerNoResolver(numbers)
+
+	teams, err := uc.ListOpenTeams(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("ListOpenTeams: %v", err)
+	}
+	if len(names.calls) != 1 || len(numbers.calls) != 1 {
+		t.Fatalf("display batches: names=%v numbers=%v, want one each", names.calls, numbers.calls)
+	}
+	if !reflect.DeepEqual(names.calls[0], numbers.calls[0]) || len(names.calls[0]) != 2 {
+		t.Fatalf("captain batches differ or contain duplicates: names=%v numbers=%v", names.calls, numbers.calls)
+	}
+
+	got := listedTeamIDs(teams)
+	if got[9051].GetCaptainNickname() != "Alice" || got[9051].GetCaptainPlayerNo() != 100051 {
+		t.Fatalf("team 9051 captain display=%+v", got[9051])
+	}
+	if got[9052].GetCaptainNickname() != "" || got[9052].GetCaptainPlayerNo() != 100052 {
+		t.Fatalf("team 9052 captain display=%+v", got[9052])
+	}
+	if got[9051].GetCaptainId() != 7051 || got[9052].GetCaptainId() != 7052 {
+		t.Fatalf("display projection changed captain identity: %+v", got)
+	}
+}
+
+func TestListOpenTeamsPropagatesParentCancellationDuringDisplayProjection(t *testing.T) {
+	uc, _, cleanup := newPolicyUsecase(t, conf.JoinPolicyApproval)
+	defer cleanup()
+	mustCreateTeam(t, uc, 9053, 7053)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	uc.SetPlayerNameResolver(playerNameResolverFunc(func(callCtx context.Context, _ []uint64) (map[uint64]string, error) {
+		cancel()
+		<-callCtx.Done()
+		return nil, callCtx.Err()
+	}))
+
+	teams, err := uc.ListOpenTeams(ctx, 0, 10)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ListOpenTeams error=%v, want context.Canceled", err)
+	}
+	if teams != nil {
+		t.Fatalf("teams=%v, want nil on cancellation", teams)
 	}
 }
 
@@ -732,7 +789,11 @@ func TestJoinPolicyProjectedIntoSnapshots(t *testing.T) {
 			ctx := context.Background()
 
 			rec := mustCreateTeam(t, uc, 9901, 7901)
-			if got := uc.TeamToProto(rec).GetJoinPolicy(); got != c.want {
+			teamView, err := uc.TeamToProto(context.Background(), rec)
+			if err != nil {
+				t.Fatalf("TeamToProto: %v", err)
+			}
+			if got := teamView.GetJoinPolicy(); got != c.want {
 				t.Fatalf("Team 快照 join_policy 应为 %v,实际 %v", c.want, got)
 			}
 			teams, err := uc.ListOpenTeams(ctx, 0, 0)

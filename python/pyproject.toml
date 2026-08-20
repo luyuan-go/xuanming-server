@@ -1,0 +1,115 @@
+[project]
+name = "pandora-py"
+version = "0.1.0"
+description = "Pandora 后端 Python 实现(strangler 迁移中,与 Go 版并存)"
+requires-python = ">=3.13"
+
+dependencies = [
+    # ── RPC / 协议 ──────────────────────────────────────────────
+    "grpcio>=1.71",              # 208 个 RPC 的服务端;Envoy/客户端零改动的前提
+    "grpcio-health-checking",
+    "grpcio-reflection",         # 对应 yaml 的 enable_reflection
+    # ★ 下界必须 >= **生成物自带的运行期断言**。gen/ 里每个 _pb2.py 头部都有
+    # ValidateProtobufRuntimeVersion(PUBLIC, 5, 29, 3, ...) —— 运行时低于它会在
+    # **import 时**直接抛。写 5.29 就允许装上 5.29.0/5.29.1/5.29.2 这些必炸的版本,
+    # 而 pip 解析成功、直到第一次 import proto 才报错。
+    # 改 buf 生成器版本后这个数字要跟着抬(生成物里的三元组即真源)。
+    "protobuf>=5.29.3",
+    # googleapis 公共 proto(google/api/annotations.proto)。login.proto 的 11 处 http 注解
+    # 依赖它:Go 侧由 google.golang.org/genproto 提供,Python 侧必须显式装,否则 login_pb2
+    # import 即 ModuleNotFoundError: No module named 'google.api'。
+    "googleapis-common-protos>=1.66",
+    # ── HTTP 面(/metrics + login 的 10 个 REST 端点)──────────────
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    # ── 配置 ────────────────────────────────────────────────────
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "pyyaml>=6.0",
+    # ── 可观测(字段口径必须对齐 pkg/log 的 zap)────────────────────
+    "structlog>=25.1",
+    "prometheus-client>=0.21",
+    # ── 鉴权 ────────────────────────────────────────────────────
+    # pandorapy/auth.py 顶层 import。Go 侧对应 pkg/auth(golang-jwt/jwt)。
+    "PyJWT>=2.10",
+    # login 账号密码哈希。Go 侧对应 pkg/passwd(golang.org/x/crypto/bcrypt)。
+    # ★ 不能用 hashlib 里的任何东西替代:库里既有的 password_hash 列全是
+    # bcrypt 的 $2a$/$2b$ 串,换算法 = 全服老账号一个都验不过(而且报的是
+    # "密码错误",查不到是算法换了)。缺这个包时 login 启动期 fail-fast
+    # (passwd_backend_required),绝不静默降级成"任何密码都放行"。
+    "bcrypt>=4.1",
+    # ── etcd / Redis(**核心依赖,不是可选**)──────────────────────
+    #
+    # 这两个曾经一个只列在 storage 可选组(redis)、一个干脆没声明(aetcd),而
+    # pandorapy/{etcdleader,writerlease,snowflake_etcd}.py 与 pandorapy/redisx.py
+    # 都是**模块顶层 import**。后果:照 README 装完 `.[dev]` 的干净机器上
+    # pytest 直接 3 个 collection error —— 本机 .venv 只是手工装过才绿。
+    #
+    # aetcd 的选型依据见 python/tools/verify_etcd.py 头注释与
+    # docs/design/python-migration.md:社区两个候选都不够格(python-etcd3 已 20 个月
+    # 未更新),aetcd 是**实测**跑通 lease / watch / txn CAS 三组语义后才定的,不是按星数选的。
+    "aetcd>=1.0",
+    "redis>=5.2",
+]
+
+[project.optional-dependencies]
+# 真实 MySQL / TiDB / Kafka 才需要的驱动。业务代码对连接是**鸭子类型**(理由见
+# pandorapy/mysqlx.py 头注释),所以顶层不 import 它们,不装也能 import 整个包。
+#
+# 原先这里列的 PyMySQL / SQLAlchemy / alembic **全仓一次都没被 import 过** ——
+# 照着装只会得到一份与代码无关的依赖,并让人以为这里有 ORM 和迁移框架(都没有,
+# 迁移是 Go 侧 tools/migrate 的职责)。
+storage = [
+    # 全 async 驱动。grpc.aio 下任何一个同步 DB 调用都会阻塞整个 event loop。
+    "asyncmy>=0.2.9",
+    # MySQL 8.x 默认 caching_sha2_password 认证需要它;缺了连不上,而报的是认证插件错。
+    "cryptography>=44.0",
+    "kafka-python>=3.0",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "grpcio-tools>=1.71",
+    # fakeredis 的 Lua 支持(trade 的原子脚本靠它)。缺 lupa 时
+    # tests/test_trade_biz.py 会 importorskip 掉**整个文件** —— 静默少测一个服务。
+    "fakeredis[lua]>=2.26",
+    # ★ dev 必须带上 storage:否则 friend / guild / owner_repo 三个数据层测试的
+    # `pytest.importorskip("asyncmy")` 会让它们**整体跳过**,而 pytest 仍打绿 ——
+    # 正是 tools/scripts/ci_backend.ps1 里「依赖门控跳过审计」那段写明要防的
+    # "跳过等于通过"。
+    "pandora-py[storage]",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+# 两个包根:
+#   .     → pandorapy(业务代码)
+#   gen   → pandora / proto2mysql(buf 生成的 protobuf 模块)
+#
+# 为什么必须这样声明,而不是靠 PYTHONPATH:
+#   protobuf 生成的模块用绝对导入(dialogue_pb2 里 `from pandora.common.v1 import ...`),
+#   所以 gen/ 必须直接在 sys.path 上。靠环境变量传会踩两个坑:
+#     1. Git Bash 里 $PWD 是 MSYS 路径(/f/work/...),Python 认不了 —— 实测报
+#        ModuleNotFoundError: No module named 'pandora'
+#     2. 每个入口(服务 / 测试 / 工具 / K8s 命令行)都得各自记得设,漏一个就炸
+#   在这里声明后 `pip install -e .` 会把两个根都写进 .pth,所有入口自动可用。
+where = [".", "gen"]
+include = ["pandorapy*", "pandora*", "proto2mysql*"]
+namespaces = true
+
+
+[tool.ruff]
+# ★ 只为了 F821(未定义名)这一类 —— 它抓的是"import 得动、但一构造就 NameError"
+# 的缺陷:模块级 import 检查碰不到函数体里的名字,单测也未必覆盖到那条构造路径。
+# 真实教训:给两个 Store 加 `self.reload_mutex = ReloadMutex()` 时漏了 import,
+# `import 模块` 全绿、4 个 inventory 用例在**构造 Store** 时才炸。
+#
+# 刻意**不**开全量 lint:这个仓库的风格已成型,批量改格式会淹掉真实 diff(§15)。
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["F821", "F811", "F841"]

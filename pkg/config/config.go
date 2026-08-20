@@ -158,7 +158,11 @@ type NodeConfig struct {
 //
 // W3 ⑥(2026-06-05):duration 字段改用 config.Duration 包装类型,yaml 可写 "30m"/"3s" 字符串。
 type MySQLConf struct {
-	DSN             string   `yaml:"dsn" json:"dsn"`
+	DSN string `yaml:"dsn" json:"dsn"`
+	// TLSCAFile / TLSServerName 必须成对配置。留空保持本地开发明文连接行为；
+	// 中心 MySQL 配置时由 mysqlx 用系统根证书 + 本文件 CA 做严格主机名校验。
+	TLSCAFile       string   `yaml:"tls_ca_file,omitempty" json:"tls_ca_file,omitempty"`
+	TLSServerName   string   `yaml:"tls_server_name,omitempty" json:"tls_server_name,omitempty"`
 	MaxOpenConns    int      `yaml:"max_open_conns,omitempty" json:"max_open_conns,omitempty"`
 	MaxIdleConns    int      `yaml:"max_idle_conns,omitempty" json:"max_idle_conns,omitempty"`
 	ConnMaxLifetime Duration `yaml:"conn_max_lifetime,omitempty" json:"conn_max_lifetime,omitempty"`

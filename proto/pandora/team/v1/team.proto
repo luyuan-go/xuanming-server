@@ -140,6 +140,10 @@ message TeamMember {
   uint32 hero_id   = 5;
   // 6-9 reserved
   reserved 6 to 9;
+  // player_no 是 login/account 权威分配的角色展示编号；0 表示仍在补号或本次投影查询失败。
+  // 它绝不能替代 player_id 参与身份、路由、外键、幂等或队伍成员关系判断，也不写入
+  // TeamMemberStorageRecord，避免在 team Redis 中形成会漂移的展示影子。
+  uint64 player_no = 10;
 }
 
 message Team {
@@ -420,9 +424,8 @@ message SetTeamMapResponse {
 // OpenTeamBrief 是"正在招募的队伍"在列表里的最小展示视图(§9.14 客户端只拿客户端可见结构)。
 //
 // 刻意不含成员数组:列表页只需要"哪支队、队长是谁、几个人、打哪张图、怎么加入";
-// 点进去要看成员再走 GetTeam。也刻意不含昵称——当前 TeamMemberStorageRecord.nickname
-// 全链没有任何写入方(建队/入队都只写 player_id),放一个恒为空的字段等于给客户端喂假字段;
-// 等昵称在组队域真正落地后再按 §9.21 加字段(只增不改号)。
+// 点进去要看成员再走 GetTeam。队长名字/编号在查询时分别从 player/login 权威批量投影，
+// 不读取 TeamMemberStorageRecord.nickname，也不写回组队存储。
 message OpenTeamBrief {
   uint64 team_id       = 1;
   uint64 captain_id    = 2;
@@ -431,6 +434,8 @@ message OpenTeamBrief {
   uint32 map_id        = 5;  // 目标关卡;0 = 队长未选图
   int64  created_at_ms = 6;
   TeamJoinPolicy join_policy = 7;  // 决定客户端渲染"申请入队"还是"加入队伍"
+  string captain_nickname = 8;     // player 权威角色名；空表示未设置或本次投影失败
+  uint64 captain_player_no = 9;    // login/account 权威展示编号；0 表示补号中或本次投影失败
 }
 
 // ListOpenTeams:列"开放招募"的队伍。开放 = state=FORMING 且未满员。
@@ -468,11 +473,14 @@ message ApplyToTeamResponse {
   int64  expires_at_ms = 4;  // joined=false 时申请令牌过期时间(unix ms),供客户端显示有界等待
 }
 
-// TeamApplication 是一份待处理入队申请的查询视图。
-// 同 OpenTeamBrief,不含昵称(组队域当前没有昵称写入方)。
+// TeamApplication 是一份待处理入队申请的客户端查询视图。
+// nickname/player_no 在查询时分别从 player/login 权威批量投影，不写入申请 Redis；
+// 两者都只是展示信息，审批、身份、路由和成员关系仍必须只使用 player_id。
 message TeamApplication {
   uint64 player_id     = 1;  // 申请人
   int64  expires_at_ms = 2;  // 申请过期时间(unix ms)
+  string nickname      = 3;  // player 权威角色名；空表示未设置或本次投影失败
+  uint64 player_no     = 4;  // login/account 权威展示编号；0 表示补号中或本次投影失败
 }
 
 // ListTeamApplications:队长查本队待处理入队申请(只读,拉取兜底)。

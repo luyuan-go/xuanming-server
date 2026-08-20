@@ -42,6 +42,8 @@ try {
         -PlacementBattleDepartureSecret 'prod-placement-battle-departure-0123456789abcdef-007' `
         -MatchResumeAuthSecret 'prod-match-resume-auth-0123456789abcdef-008' `
         -TeamResumeAuthSecret 'prod-team-resume-auth-0123456789abcdef-012' `
+        -PlayerNoResolveAuthSecret 'prod-player-no-resolve-auth-0123456789abcdef-013' `
+        -PlayerNameResolveAuthSecret 'prod-player-name-resolve-auth-0123456789abcdef-014' `
         -AllocationAbortAuthSecret 'prod-allocation-abort-auth-0123456789abcdef-009' `
         -DsAuthMode enforce -DsAuthorityMode redis `
         -DsFenceEtcdEndpoints 'https://etcd.pandora.svc:2379' `

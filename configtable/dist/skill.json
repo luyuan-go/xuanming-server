@@ -950,8 +950,8 @@
       "cd_duration": 1.5,
       "ability_path": "/Game/Test/Role/Hero/ParagonDekker/GA/GA_ParagonDekker_Attack01.GA_ParagonDekker_Attack01_C",
       "target_select_mode": 1,
-      "use_distance": 300,
-      "damage_rate": 0.5
+      "use_distance": 2000,
+      "damage_rate": 0.616
     },
     {
       "id": 101211,
@@ -963,8 +963,8 @@
       "cd_duration": 8,
       "ability_path": "/Game/Test/Role/Hero/ParagonDekker/GA/GA_ParagonDekker_Skill01.GA_ParagonDekker_Skill01_C",
       "target_select_mode": 1,
-      "use_distance": 500,
-      "damage_rate": 1
+      "use_distance": 2000,
+      "damage_rate": 7
     },
     {
       "id": 101221,
@@ -976,8 +976,8 @@
       "cd_duration": 10,
       "ability_path": "/Game/Test/Role/Hero/ParagonDekker/GA/GA_ParagonDekker_Skill02.GA_ParagonDekker_Skill02_C",
       "target_select_mode": 1,
-      "use_distance": 500,
-      "damage_rate": 1
+      "use_distance": 2200,
+      "damage_rate": 0.48
     },
     {
       "id": 101231,
@@ -989,8 +989,8 @@
       "cd_duration": 20,
       "ability_path": "/Game/Test/Role/Hero/ParagonDekker/GA/GA_ParagonDekker_Skill03.GA_ParagonDekker_Skill03_C",
       "target_select_mode": 1,
-      "use_distance": 500,
-      "damage_rate": 1
+      "use_distance": 3500,
+      "damage_rate": 7.504
     }
   ]
 }

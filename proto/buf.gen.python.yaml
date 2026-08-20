@@ -1,0 +1,38 @@
+# Pandora Proto Python 生成配置(2026-08-18,Python 迁移 strangler 第 0 批)。
+#
+# 用法:
+#   cd proto && buf generate --template buf.gen.python.yaml
+#
+# 产物路径:python/gen/pandora/<domain>/v1/*_pb2.py|*_pb2_grpc.py|*_pb2.pyi
+#
+# 为什么产物根是 python/gen 而不是 python/pandorapy 下:
+#   protobuf 生成的 Python 模块用**绝对导入**,且导入路径 = proto package 路径
+#   (dialogue_pb2 里会 `from pandora.common.v1 import errcode_pb2`)。所以生成根必须
+#   直接放在 sys.path 上,且其下第一级目录名固定是 `pandora`。业务代码因此改叫
+#   `pandorapy`,避免与生成包重名。这与 gen/go、gen/cpp 各自独立成树是同一规则。
+#
+# 3 个 plugin:
+#   1. protocolbuffers/python  生成 message(_pb2.py)
+#   2. protocolbuffers/pyi     生成类型存根(_pb2.pyi),让 mypy / IDE 能看见字段
+#   3. grpc/python             生成 servicer/stub(_pb2_grpc.py)
+#
+# 与 Go 侧的关系:同一份 .proto、同一个 buf module、同一份 buf.lock(googleapis)。
+# 契约唯一真源仍是 .proto,`buf breaking` 的 FILE 级向后兼容门对三端一视同仁。
+#
+# 注意:不配 managed.override —— Python 没有 go_package 这种文件选项需要托管,
+# 生成路径完全由 proto package 决定。
+
+version: v2
+
+plugins:
+  # 1) protobuf message
+  - remote: buf.build/protocolbuffers/python:v29.3
+    out: ../python/gen
+
+  # 2) 类型存根(.pyi):Go 有编译期类型检查,Python 靠它 + mypy 把一部分错误拉回静态期
+  - remote: buf.build/protocolbuffers/pyi:v29.3
+    out: ../python/gen
+
+  # 3) gRPC servicer / stub
+  - remote: buf.build/grpc/python:v1.69.0
+    out: ../python/gen

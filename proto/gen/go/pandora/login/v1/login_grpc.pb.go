@@ -32,16 +32,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	LoginService_Login_FullMethodName            = "/pandora.login.v1.LoginService/Login"
-	LoginService_Logout_FullMethodName           = "/pandora.login.v1.LoginService/Logout"
-	LoginService_IssueDSTicket_FullMethodName    = "/pandora.login.v1.LoginService/IssueDSTicket"
-	LoginService_GetPlayerNo_FullMethodName      = "/pandora.login.v1.LoginService/GetPlayerNo"
-	LoginService_GetRegisterNo_FullMethodName    = "/pandora.login.v1.LoginService/GetRegisterNo"
-	LoginService_ListAccountRoles_FullMethodName = "/pandora.login.v1.LoginService/ListAccountRoles"
-	LoginService_EnterRole_FullMethodName        = "/pandora.login.v1.LoginService/EnterRole"
-	LoginService_SelectRole_FullMethodName       = "/pandora.login.v1.LoginService/SelectRole"
-	LoginService_VerifyDSTicket_FullMethodName   = "/pandora.login.v1.LoginService/VerifyDSTicket"
-	LoginService_GetResumeContext_FullMethodName = "/pandora.login.v1.LoginService/GetResumeContext"
+	LoginService_Login_FullMethodName                 = "/pandora.login.v1.LoginService/Login"
+	LoginService_Logout_FullMethodName                = "/pandora.login.v1.LoginService/Logout"
+	LoginService_IssueDSTicket_FullMethodName         = "/pandora.login.v1.LoginService/IssueDSTicket"
+	LoginService_GetPlayerNo_FullMethodName           = "/pandora.login.v1.LoginService/GetPlayerNo"
+	LoginService_GetRegisterNo_FullMethodName         = "/pandora.login.v1.LoginService/GetRegisterNo"
+	LoginService_ListAccountRoles_FullMethodName      = "/pandora.login.v1.LoginService/ListAccountRoles"
+	LoginService_EnterRole_FullMethodName             = "/pandora.login.v1.LoginService/EnterRole"
+	LoginService_SelectRole_FullMethodName            = "/pandora.login.v1.LoginService/SelectRole"
+	LoginService_VerifyDSTicket_FullMethodName        = "/pandora.login.v1.LoginService/VerifyDSTicket"
+	LoginService_ResolvePlayerNosForDS_FullMethodName = "/pandora.login.v1.LoginService/ResolvePlayerNosForDS"
+	LoginService_GetResumeContext_FullMethodName      = "/pandora.login.v1.LoginService/GetResumeContext"
 )
 
 // LoginServiceClient is the client API for LoginService service.
@@ -80,7 +81,13 @@ type LoginServiceClient interface {
 	// account_id 取自账号态 JWT 的 sub(Envoy 注入 x-pandora-account-id),请求体不含
 	// account_id ——只能列自己的角色(§9.6 不信客户端自报身份)。
 	//
-	// 幂等只读。Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
+	// 幂等,但**不是纯读**:响应里的 effective_nickname 来自 player.EnsureProfile,
+	// 它对「档案不存在」的角色会顺带建档(INSERT IGNORE 语义,已存在则原样返回)。
+	// 之所以不换成看起来更"只读"的 GetProfile:player.GetProfile 内部同样先调
+	// repo.EnsureProfile,而且播的是默认名 Player_<id> —— 在 Login 播种之前先调它,
+	// 会把默认名抢先写死(INSERT IGNORE 先到先得),账号名就永远播不进去了。
+	//
+	// Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
 	// (比如创建角色功能上线后新建完角色回到列表)。
 	ListAccountRoles(ctx context.Context, in *ListAccountRolesRequest, opts ...grpc.CallOption) (*ListAccountRolesResponse, error)
 	// EnterRole 立即完成型,**选定角色进入游戏**(两步登录第二步,2026-08-18)。
@@ -115,6 +122,13 @@ type LoginServiceClient interface {
 	// VerifyDSTicket 立即完成型,DS 内部用(不暴露 HTTP path 给客户端)
 	// ⚠️ Envoy 应该用 ext_authz / route 限制此 path 只允许内网
 	VerifyDSTicket(ctx context.Context, in *VerifyDSTicketRequest, opts ...grpc.CallOption) (*VerifyDSTicketResponse, error)
+	// ResolvePlayerNosForDS 供 UE DS 按 player_id 单批读取账号域权威展示编号。
+	// 不加 HTTP annotation；客户端 listener 必须 exact 403，DS listener 才 exact allow。
+	// redis admission 模式下实现层还会强制 Bearer DS credential + active 权威。
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE DS 与 Team 入口共用同一 canonical batch messages。
+	// buf:lint:ignore RPC_REQUEST_STANDARD_NAME 避免复制同形 request 造成协议漂移。
+	// buf:lint:ignore RPC_RESPONSE_STANDARD_NAME 避免复制同形 response 造成协议漂移。
+	ResolvePlayerNosForDS(ctx context.Context, in *ResolvePlayerNosRequest, opts ...grpc.CallOption) (*ResolvePlayerNosResponse, error)
 	// GetResumeContext 让冷启动/前台恢复重新读取服务端权威路由；客户端不得继续相信
 	// 旧地址、旧票据或本地超时推导。match_stage 可由 matchmaker durable saga 后续补齐。
 	GetResumeContext(ctx context.Context, in *GetResumeContextRequest, opts ...grpc.CallOption) (*GetResumeContextResponse, error)
@@ -219,6 +233,16 @@ func (c *loginServiceClient) VerifyDSTicket(ctx context.Context, in *VerifyDSTic
 	return out, nil
 }
 
+func (c *loginServiceClient) ResolvePlayerNosForDS(ctx context.Context, in *ResolvePlayerNosRequest, opts ...grpc.CallOption) (*ResolvePlayerNosResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolvePlayerNosResponse)
+	err := c.cc.Invoke(ctx, LoginService_ResolvePlayerNosForDS_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *loginServiceClient) GetResumeContext(ctx context.Context, in *GetResumeContextRequest, opts ...grpc.CallOption) (*GetResumeContextResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetResumeContextResponse)
@@ -265,7 +289,13 @@ type LoginServiceServer interface {
 	// account_id 取自账号态 JWT 的 sub(Envoy 注入 x-pandora-account-id),请求体不含
 	// account_id ——只能列自己的角色(§9.6 不信客户端自报身份)。
 	//
-	// 幂等只读。Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
+	// 幂等,但**不是纯读**:响应里的 effective_nickname 来自 player.EnsureProfile,
+	// 它对「档案不存在」的角色会顺带建档(INSERT IGNORE 语义,已存在则原样返回)。
+	// 之所以不换成看起来更"只读"的 GetProfile:player.GetProfile 内部同样先调
+	// repo.EnsureProfile,而且播的是默认名 Player_<id> —— 在 Login 播种之前先调它,
+	// 会把默认名抢先写死(INSERT IGNORE 先到先得),账号名就永远播不进去了。
+	//
+	// Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
 	// (比如创建角色功能上线后新建完角色回到列表)。
 	ListAccountRoles(context.Context, *ListAccountRolesRequest) (*ListAccountRolesResponse, error)
 	// EnterRole 立即完成型,**选定角色进入游戏**(两步登录第二步,2026-08-18)。
@@ -300,6 +330,13 @@ type LoginServiceServer interface {
 	// VerifyDSTicket 立即完成型,DS 内部用(不暴露 HTTP path 给客户端)
 	// ⚠️ Envoy 应该用 ext_authz / route 限制此 path 只允许内网
 	VerifyDSTicket(context.Context, *VerifyDSTicketRequest) (*VerifyDSTicketResponse, error)
+	// ResolvePlayerNosForDS 供 UE DS 按 player_id 单批读取账号域权威展示编号。
+	// 不加 HTTP annotation；客户端 listener 必须 exact 403，DS listener 才 exact allow。
+	// redis admission 模式下实现层还会强制 Bearer DS credential + active 权威。
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE DS 与 Team 入口共用同一 canonical batch messages。
+	// buf:lint:ignore RPC_REQUEST_STANDARD_NAME 避免复制同形 request 造成协议漂移。
+	// buf:lint:ignore RPC_RESPONSE_STANDARD_NAME 避免复制同形 response 造成协议漂移。
+	ResolvePlayerNosForDS(context.Context, *ResolvePlayerNosRequest) (*ResolvePlayerNosResponse, error)
 	// GetResumeContext 让冷启动/前台恢复重新读取服务端权威路由；客户端不得继续相信
 	// 旧地址、旧票据或本地超时推导。match_stage 可由 matchmaker durable saga 后续补齐。
 	GetResumeContext(context.Context, *GetResumeContextRequest) (*GetResumeContextResponse, error)
@@ -338,6 +375,9 @@ func (UnimplementedLoginServiceServer) SelectRole(context.Context, *SelectRoleRe
 }
 func (UnimplementedLoginServiceServer) VerifyDSTicket(context.Context, *VerifyDSTicketRequest) (*VerifyDSTicketResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VerifyDSTicket not implemented")
+}
+func (UnimplementedLoginServiceServer) ResolvePlayerNosForDS(context.Context, *ResolvePlayerNosRequest) (*ResolvePlayerNosResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResolvePlayerNosForDS not implemented")
 }
 func (UnimplementedLoginServiceServer) GetResumeContext(context.Context, *GetResumeContextRequest) (*GetResumeContextResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetResumeContext not implemented")
@@ -524,6 +564,24 @@ func _LoginService_VerifyDSTicket_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LoginService_ResolvePlayerNosForDS_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolvePlayerNosRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LoginServiceServer).ResolvePlayerNosForDS(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LoginService_ResolvePlayerNosForDS_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LoginServiceServer).ResolvePlayerNosForDS(ctx, req.(*ResolvePlayerNosRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _LoginService_GetResumeContext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetResumeContextRequest)
 	if err := dec(in); err != nil {
@@ -586,8 +644,130 @@ var LoginService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _LoginService_VerifyDSTicket_Handler,
 		},
 		{
+			MethodName: "ResolvePlayerNosForDS",
+			Handler:    _LoginService_ResolvePlayerNosForDS_Handler,
+		},
+		{
 			MethodName: "GetResumeContext",
 			Handler:    _LoginService_GetResumeContext_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "pandora/login/v1/login.proto",
+}
+
+const (
+	LoginInternalService_ResolvePlayerNos_FullMethodName = "/pandora.login.v1.LoginInternalService/ResolvePlayerNos"
+)
+
+// LoginInternalServiceClient is the client API for LoginInternalService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// LoginInternalService 只供集群内服务读取账号域权威数据。
+//
+// 它刻意与客户端可见 LoginService 分开，且所有 RPC 均不加 google.api.http 注解：
+// 客户端 Envoy 只转发 /pandora.login.v1.LoginService/，不会暴露本服务。实现层还必须
+// 校验 request-bound internalrpcauth，不能把“没走 Envoy”误当成调用方身份。
+type LoginInternalServiceClient interface {
+	// ResolvePlayerNos 按 player_id 有界批量解析角色展示编号。
+	// 输入只接受身份键 player_id；player_no 仅出现在结果中，绝不反向作为业务查询键。
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE Team 与 DS 入口共用同一 canonical batch messages。
+	ResolvePlayerNos(ctx context.Context, in *ResolvePlayerNosRequest, opts ...grpc.CallOption) (*ResolvePlayerNosResponse, error)
+}
+
+type loginInternalServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewLoginInternalServiceClient(cc grpc.ClientConnInterface) LoginInternalServiceClient {
+	return &loginInternalServiceClient{cc}
+}
+
+func (c *loginInternalServiceClient) ResolvePlayerNos(ctx context.Context, in *ResolvePlayerNosRequest, opts ...grpc.CallOption) (*ResolvePlayerNosResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolvePlayerNosResponse)
+	err := c.cc.Invoke(ctx, LoginInternalService_ResolvePlayerNos_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// LoginInternalServiceServer is the server API for LoginInternalService service.
+// All implementations should embed UnimplementedLoginInternalServiceServer
+// for forward compatibility.
+//
+// LoginInternalService 只供集群内服务读取账号域权威数据。
+//
+// 它刻意与客户端可见 LoginService 分开，且所有 RPC 均不加 google.api.http 注解：
+// 客户端 Envoy 只转发 /pandora.login.v1.LoginService/，不会暴露本服务。实现层还必须
+// 校验 request-bound internalrpcauth，不能把“没走 Envoy”误当成调用方身份。
+type LoginInternalServiceServer interface {
+	// ResolvePlayerNos 按 player_id 有界批量解析角色展示编号。
+	// 输入只接受身份键 player_id；player_no 仅出现在结果中，绝不反向作为业务查询键。
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE Team 与 DS 入口共用同一 canonical batch messages。
+	ResolvePlayerNos(context.Context, *ResolvePlayerNosRequest) (*ResolvePlayerNosResponse, error)
+}
+
+// UnimplementedLoginInternalServiceServer should be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedLoginInternalServiceServer struct{}
+
+func (UnimplementedLoginInternalServiceServer) ResolvePlayerNos(context.Context, *ResolvePlayerNosRequest) (*ResolvePlayerNosResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResolvePlayerNos not implemented")
+}
+func (UnimplementedLoginInternalServiceServer) testEmbeddedByValue() {}
+
+// UnsafeLoginInternalServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to LoginInternalServiceServer will
+// result in compilation errors.
+type UnsafeLoginInternalServiceServer interface {
+	mustEmbedUnimplementedLoginInternalServiceServer()
+}
+
+func RegisterLoginInternalServiceServer(s grpc.ServiceRegistrar, srv LoginInternalServiceServer) {
+	// If the following call pancis, it indicates UnimplementedLoginInternalServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&LoginInternalService_ServiceDesc, srv)
+}
+
+func _LoginInternalService_ResolvePlayerNos_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolvePlayerNosRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LoginInternalServiceServer).ResolvePlayerNos(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LoginInternalService_ResolvePlayerNos_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LoginInternalServiceServer).ResolvePlayerNos(ctx, req.(*ResolvePlayerNosRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// LoginInternalService_ServiceDesc is the grpc.ServiceDesc for LoginInternalService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var LoginInternalService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "pandora.login.v1.LoginInternalService",
+	HandlerType: (*LoginInternalServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ResolvePlayerNos",
+			Handler:    _LoginInternalService_ResolvePlayerNos_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -89,6 +89,16 @@ artifacts/
 # 第三方下载缓存
 third_party/_cache/
 
+# 免 Docker 安装包目录:Git 只保留说明，真实第三方便携包只在策划 SVN 分发。
+# SVN 不读取 .gitignore；包名/哈希由 local_infra.ps1 与 pwsh_bootstrap.pin 固定。
+/installers/localinfra/*
+!/installers/localinfra/README.md
+
+# 策划中心 MySQL 信任 bundle：Git 只保留契约说明；SVN 正式目录放非秘密 endpoint
+# 配置与 CA。enrollment token、runtime/admin/migration 密码任何仓库都不允许出现。
+/installers/planner-db/*
+!/installers/planner-db/README.md
+
 # 私钥 / 证书
 *.pem
 *.key

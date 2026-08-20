@@ -285,8 +285,22 @@ COMMIT;                                                           -- 回滚则�
 4. **跨库**:编号在 `pandora_account`,流水在 inventory / trade / battle / social 各库
    (全部以 `player_id` 为键且有索引,已核)——业务库根本不该知道这个字段存在。
 
-review 判据改为:**`player_no` 出现在 `pandora_account` 以外的任何表定义、或出现在
-非运营工具的服务间参数里,直接拒**;运营工具里的 `WHERE player_no = ?` 是正当用法。
+review 判据改为:**`player_no` 出现在 `pandora_account` 以外的任何表定义、或作为
+非运营工具的服务间请求参数 / 身份键传播,直接拒**;运营工具里的
+`WHERE player_no = ?` 是正当用法。
+
+**只读展示投影例外(2026-08-20,组队成员编号需求)**:业务服务可以用一批
+`player_id` 向 login/account 权威读取对应 `player_no`,并把结果只放进客户端可见响应。
+这不是 `player_no → player_id` 反查,也不是拿 `player_no` 当服务参数或业务键。当前 team
+链路使用独立且不经客户端 Envoy 暴露的 `LoginInternalService.ResolvePlayerNos`:
+
+- 请求只含 `player_ids`,整包受 request-bound `internalrpcauth` 保护;原始批量最多 32 条,
+  team 必须一次提交整支队伍,禁止逐成员 N+1;
+- login 只做一次账号库 `IN` 查询;响应里的 `player_no` 只供 `TeamMember.player_no` 展示;
+- team 使用独立 250ms 预算;权威不可达、超时或编号仍在补号时 fail-soft 为 0,
+  不阻断组队核心读写;
+- `TeamMemberStorageRecord`、team Redis、成员判断、邀请、踢人、路由和幂等仍只使用
+  `player_id`,不得缓存这份展示投影。
 
 ### 3.4 变体评估:独立 ID 服务 + 逐个异步申请 + 映射表(2026-08-09 用户提案)
 
@@ -325,6 +339,7 @@ review 判据改为:**`player_no` 出现在 `pandora_account` 以外的任何表
 | 6 | 展示链路(A② 已拍板 2026-08-10:**客户端玩家可见**) | 服务端已落码:proto `LoginResponse.player_no = 13`、`AccountRepo.GetPlayerNo`(**fail-soft**:独立 250ms 查询预算,失败/超时置 0 且不取消登录父 ctx;刻意不并进 FindByAccount——列缺失不能打挂登录整链)、biz 主路径与 battle 重连路径都带出、service 组装 `PlayerNo`。0 = 补号中,客户端显示「生成中」 | ✅ 服务端 |
 | 7 | UE 展示与交付验证(Codex,2026-08-10) | 服务端 C++ pb 以 `[proto]` 提交 `bea78b83`,客户端通过官方 `GenClientProto.ps1 -UpdateLock` 同步并以 `-VerifyOnly` 复验;登录解码→会话态→RoleInfo 全链带出 `player_no`,0 显示「生成中」;login `go build/vet/test`、`Pandora` 与 `PandoraEditor` Development 编译全绿 | ✅ 生成/编译;PIE 与真实登录 E2E 未跑 |
 | 8 | 首次会话补拉闭环(2026-08-10 实测后补) | 服务端新增空请求 `LoginService.GetPlayerNo`、JWT 身份与 Envoy exact rule、`0/OK` 和错误分流;客户端以官方生成器同步协议,登录后用 CoreTicker 补拉并以 attempt / SessionGeneration / PlayerId 围栏保护写回;见 §3.7 | 🟡 服务端和 UE 客户端本地落码、`-UpdateLock` / `-VerifyOnly`、本任务源码编译及 PandoraTests DLL 链接已完成;完整 PandoraEditor 链接被无关 MyMainView 并行改动阻断,新测试 DLL 因旧主 DLL 缺本轮导出而加载失败,三组 Automation 未执行;Envoy 运行态与真实登录 E2E 未验收 |
+| 9 | 组队成员展示编号(2026-08-20) | `TeamMember` 增加只读 `player_no`;team 以一次受 internalrpcauth 保护的批量 RPC 从 login/account 权威投影,不写 `TeamMemberStorageRecord`;Go / Python / UE 三栈同构,昵称为空时优先显示编号,0 才兼容回退 `player_id` | 🟡 源码与回归测试落码;协议生成、全量编译、运行态与玩家 E2E 以本次验证记录为准 |
 
 ### 3.6 客服/运营按编号反查玩家(2026-08-10 用户提出,**待落地**)
 

@@ -18,8 +18,8 @@
     比如验证自己的表能不能导过,或者要把 configtable/dist 这批产物交给别人。
 
   导完之后:
-    后端已经在跑 → 双击 策划一键重启DS-读最新资源.cmd(重启读表的服务让新表生效);
-    后端没在跑   → 双击 策划一键启动-改资源即时生效.cmd。
+    后端已经在跑 → 双击 策划一键重启DS-免Docker-测试版.cmd(重启读表的服务让新表生效);
+    后端没在跑   → 双击 策划一键启动-免Docker-测试版.cmd。
     两者都会再导一次表(内容没变就是空跑),所以先跑本脚本也不冲突。
 
 .PARAMETER TableRoot
@@ -32,7 +32,8 @@
   按原名检出的 Client、文档里写的 Pandora-Client-SVN、策划自己取的名字,都能找到。
 
 .PARAMETER SourceRev
-  产物溯源标注。留空则从 SVN 读 Table 目录的最后改动版本,填成 svn-r<N>。
+  产物溯源标注。留空则从 SVN 读 Table 目录版本,填成 svn-r<N>。
+  显式值只给「程序已核实该导出快照的精确来源」的特殊流程用,不是新机绕过报错的办法。
 
 .PARAMETER Check
   只探测环境并报告将要用的参数,不真的生成。
@@ -45,7 +46,9 @@
 param(
     [string]$TableRoot = '',
     [string]$SourceRev = '',
-    [switch]$Check
+    [switch]$Check,
+    # 启动链使用：对全部 xlsx 内容和生成器 exe 做强哈希，完全一致才跳过导表。
+    [switch]$SkipIfInputsUnchanged
 )
 
 Set-StrictMode -Version Latest
@@ -91,28 +94,172 @@ if ($resolved.Others.Count -gt 0) {
 # ---------------------------------------------------------------------------
 # 2. 取 SVN 版本号当 -source-rev(生成器必填,且拒 unknown / 空白)
 # ---------------------------------------------------------------------------
-function Resolve-SourceRev([string]$Explicit, [string]$Root) {
-    if (-not [string]::IsNullOrWhiteSpace($Explicit)) { return $Explicit.Trim() }
-    $svn = Get-Command svn -ErrorAction SilentlyContinue
-    if ($null -eq $svn) { return '' }
-    # 不能取 Table 目录节点自身的 last-changed-revision:子文件提交后目录节点
-    # 可能仍是旧版本,会把新产物错标成旧 source_rev。递归取工作副本各节点
-    # revision 的最大值,兼容 SVN 混合版本工作副本。Table 根是纯 ASCII 路径,
-    # 避免直接把中文子路径传给某些 svn.exe(会 E155010)。
-    $raw = (& svn info --show-item revision --depth infinity $Root 2>$null | Out-String)
-    $revisions = @($raw -split "`r?`n" | ForEach-Object {
-        if ($_ -match '^\s*(\d+)(?:\s|$)') { [uint64]$Matches[1] }
-    })
-    if ($revisions.Count -eq 0) { return '' }
-    $rev = ($revisions | Measure-Object -Maximum).Maximum
-    return "svn-r$rev"
+function Resolve-SvnCommand {
+    # 明确指定是给旧版 / 多版本 SVN 机器的逃生口,应能覆盖 PATH 中的另一份 svn。
+    if (-not [string]::IsNullOrWhiteSpace($env:PANDORA_SVN_EXE)) {
+        try {
+            $explicit = [System.IO.Path]::GetFullPath($env:PANDORA_SVN_EXE.Trim())
+            if (Test-Path -LiteralPath $explicit -PathType Leaf) { return $explicit }
+        } catch { }
+    }
+
+    $pathCommand = Get-Command svn -CommandType Application -ErrorAction SilentlyContinue
+    if ($null -ne $pathCommand) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$pathCommand.Source)) {
+            return [string]$pathCommand.Source
+        }
+        return [string]$pathCommand.Name
+    }
+
+    # 策划新机常见现场:TortoiseSVN 能正常右键 update,但 svn.exe 没进 PATH。
+    # 从注册表读实际安装目录,不假定它在 C 盘;不改用户 PATH。
+    $registryKeys = @(
+        'HKLM:\SOFTWARE\TortoiseSVN',
+        'HKLM:\SOFTWARE\WOW6432Node\TortoiseSVN',
+        'HKCU:\SOFTWARE\TortoiseSVN',
+        'HKCU:\SOFTWARE\WOW6432Node\TortoiseSVN'
+    )
+    foreach ($key in $registryKeys) {
+        try { $install = Get-ItemProperty -LiteralPath $key -ErrorAction Stop } catch { continue }
+        $candidates = New-Object System.Collections.Generic.List[string]
+        $directoryProperty = $install.PSObject.Properties['Directory']
+        $procPathProperty = $install.PSObject.Properties['ProcPath']
+        if ($null -ne $directoryProperty -and
+            -not [string]::IsNullOrWhiteSpace([string]$directoryProperty.Value)) {
+            $candidates.Add((Join-Path ([string]$directoryProperty.Value) 'bin\svn.exe'))
+        }
+        if ($null -ne $procPathProperty -and
+            -not [string]::IsNullOrWhiteSpace([string]$procPathProperty.Value)) {
+            $candidates.Add((Join-Path (Split-Path -Parent ([string]$procPathProperty.Value)) 'svn.exe'))
+        }
+        foreach ($candidate in $candidates) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return [System.IO.Path]::GetFullPath($candidate)
+            }
+        }
+    }
+    return ''
 }
 
-$SourceRev = Resolve-SourceRev $SourceRev $TableRoot
+function Get-TortoiseWorkingCopyRevision([string]$Root, [object]$Probe = $null) {
+    # TortoiseSVN 的 GUI 默认带 SubWCRev COM,即使可选的 svn.exe 没安装也能读工作副本。
+    # MaxRev 是最大 update revision,与 svn info entry@revision 的语义一致;
+    # Revision / $WCREV$ 则是最大 last-changed revision,不能用。
+    $ownsProbe = $false
+    try {
+        $fullRoot = [System.IO.Path]::GetFullPath($Root)
+        # SubWCRev 会自动应用 Table / 工作副本根下的 .subwcrevignore。COM 接口
+        # 没有命令行 -F(忽略该文件)的等价参数,所以不能确认 MaxRev 是全量扫描时拒绝回退。
+        $cursor = Get-Item -LiteralPath $fullRoot -ErrorAction Stop
+        while ($null -ne $cursor) {
+            if (Test-Path -LiteralPath (Join-Path $cursor.FullName '.subwcrevignore') -PathType Leaf) {
+                return ''
+            }
+            $cursor = $cursor.Parent
+        }
+        if ($null -eq $Probe) {
+            $Probe = New-Object -ComObject 'SubWCRev.object' -ErrorAction Stop
+            $ownsProbe = $true
+        }
+        $Probe.GetWCInfo($fullRoot, $true, $false)
+        if (-not [bool]$Probe.IsSvnItem) { return '' }
+        $maxRevision = [uint64]0
+        if (-not [uint64]::TryParse([string]$Probe.MaxRev, [ref]$maxRevision) -or $maxRevision -eq 0) {
+            return ''
+        }
+        return "svn-r$maxRevision"
+    } catch {
+        return ''
+    } finally {
+        if ($ownsProbe -and $null -ne $Probe -and
+            [System.Runtime.InteropServices.Marshal]::IsComObject($Probe)) {
+            try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($Probe) } catch { }
+        }
+    }
+}
+
+function Resolve-SourceRev([string]$Explicit, [string]$Root, [string]$SvnCommand) {
+    if (-not [string]::IsNullOrWhiteSpace($Explicit)) {
+        $candidate = $Explicit.Trim()
+        if ($candidate -notmatch '^svn-r([1-9]\d*)$') { return '' }
+        $explicitRevision = [uint64]0
+        if (-not [uint64]::TryParse($Matches[1], [ref]$explicitRevision)) { return '' }
+        return "svn-r$explicitRevision"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SvnCommand)) {
+        # 不能取 Table 目录节点自身的 last-changed-revision:子文件提交后目录节点
+        # 可能仍是旧版本,会把新产物错标成旧 source_rev。递归取工作副本各节点
+        # revision 的最大值,兼容 SVN 混合版本工作副本。Table 根是纯 ASCII 路径,
+        # 避免直接把中文子路径传给某些 svn.exe(会 E155010)。
+        try {
+            $raw = (& $SvnCommand info --show-item revision --depth infinity -- $Root 2>$null | Out-String)
+            $showItemExit = $LASTEXITCODE
+        } catch {
+            $raw = ''
+            $showItemExit = -1
+        }
+        if ($showItemExit -eq 0) {
+            $revisions = @($raw -split "`r?`n" | ForEach-Object {
+                if ($_ -match '^\s*(\d+)(?:\s|$)') { [uint64]$Matches[1] }
+            })
+            if ($revisions.Count -gt 0) {
+                $rev = ($revisions | Measure-Object -Maximum).Maximum
+                return "svn-r$rev"
+            }
+        }
+
+        # SVN 1.8 等旧客户端不支持 --show-item;回退到长期稳定的 XML。
+        # 只读 entry@revision,不能读 commit@revision(后者是 last-changed,会错标旧版本)。
+        try {
+            $xmlText = (& $SvnCommand info --xml --depth infinity -- $Root 2>$null | Out-String)
+            $xmlExit = $LASTEXITCODE
+        } catch {
+            $xmlText = ''
+            $xmlExit = -1
+        }
+        if ($xmlExit -eq 0 -and -not [string]::IsNullOrWhiteSpace($xmlText)) {
+            try { $doc = [xml]$xmlText } catch { $doc = $null }
+            if ($null -ne $doc) {
+                $xmlRevisions = @($doc.SelectNodes('/info/entry') | ForEach-Object {
+                    $value = [uint64]0
+                    if ([uint64]::TryParse($_.GetAttribute('revision'), [ref]$value)) { $value }
+                })
+                if ($xmlRevisions.Count -gt 0) {
+                    $xmlRev = ($xmlRevisions | Measure-Object -Maximum).Maximum
+                    return "svn-r$xmlRev"
+                }
+            }
+        }
+    }
+
+    return Get-TortoiseWorkingCopyRevision $Root
+}
+
+$RequestedSourceRev = $SourceRev
+$SvnCommand = Resolve-SvnCommand
+$SourceRev = Resolve-SourceRev $SourceRev $TableRoot $SvnCommand
 if (-not $SourceRev) {
-    Write-Err '取不到 SVN 版本号,无法填写 -source-rev(生成器拒绝不可追溯的批次)。'
-    Write-Host '      要么装好 svn 命令行并保证 Table 是 SVN 工作副本,'
-    Write-Host '      要么手动指定,例如:-SourceRev svn-r1774'
+    if (-not [string]::IsNullOrWhiteSpace($RequestedSourceRev)) {
+        Write-Err "-SourceRev 格式无效: $RequestedSourceRev"
+        Write-Host '      只接受 svn-r<N>(N 为正整数),例如:svn-r1774。'
+        Write-Host '      该参数只限程序已核实导出快照来源时使用,不要用它猜版本。'
+    } elseif ([string]::IsNullOrWhiteSpace($SvnCommand)) {
+        Write-Err "无法从当前策划表目录读取 SVN 版本: $TableRoot"
+        Write-Host '      脚本没找到 svn.exe,TortoiseSVN SubWCRev 也无法读取该目录。'
+        Write-Host '      先确认 Table 来自 SVN checkout(不是普通复制 / export);'
+        Write-Host '      再补装 TortoiseSVN command-line client tools,或设 PANDORA_SVN_EXE 后重开窗口。'
+    } else {
+        Write-Err "SVN 无法从当前策划表目录读取完整版本: $TableRoot"
+        Write-Host "      已找到: $SvnCommand"
+        Write-Host '      该目录可能是普通复制 / 导出目录,不是 SVN 工作副本;也可能工作副本已损坏。'
+        if ($resolved.Others.Count -gt 0) {
+            Write-Host '      本机还有其他 Table 候选,如果那份才是 SVN 检出,请用 -TableRoot <路径> 明确选它。'
+        }
+    }
+    Write-Host '      不会沿用旧表:生成器拒绝不可追溯的批次。'
+    if ([string]::IsNullOrWhiteSpace($RequestedSourceRev)) {
+        Write-Host '      仅限程序已核实导出快照的精确来源时,才可用 -SourceRev svn-r1774 显式标注。'
+    }
     exit 1
 }
 Write-Ok "源表版本: $SourceRev"
@@ -177,6 +324,28 @@ if ($Check) {
     exit 0
 }
 
+$inputFingerprint = $null
+$inputFingerprintPath = Join-Path $ProjectRoot 'run\localinfra\cfg\configtable-input.sha256'
+if ($SkipIfInputsUnchanged -and $UseExe) {
+    $fingerprintLines = [Collections.Generic.List[string]]::new()
+    $fingerprintLines.Add("source=$SourceRev")
+    $fingerprintLines.Add("generator=$((Get-FileHash -LiteralPath $GenExe -Algorithm SHA256).Hash.ToLowerInvariant())")
+    foreach ($xlsx in @(Get-ChildItem -LiteralPath $TableRoot -Recurse -File -Filter '*.xlsx' | Sort-Object FullName)) {
+        $relative = [IO.Path]::GetRelativePath($TableRoot, $xlsx.FullName).Replace('\', '/')
+        $fingerprintLines.Add("$relative=$((Get-FileHash -LiteralPath $xlsx.FullName -Algorithm SHA256).Hash.ToLowerInvariant())")
+    }
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($fingerprintLines -join "`n"))
+    $inputFingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    $manifestPath = Join-Path $DistDir 'manifest.json'
+    $cachedFingerprint = if ([IO.File]::Exists($inputFingerprintPath)) {
+        ([IO.File]::ReadAllText($inputFingerprintPath)).Trim()
+    } else { '' }
+    if ([IO.File]::Exists($manifestPath) -and $cachedFingerprint -eq $inputFingerprint) {
+        Write-Ok '策划表内容与生成器均未变化，极速跳过导表。'
+        exit 0
+    }
+}
+
 # ---------------------------------------------------------------------------
 # 4. 记录旧批次行数,生成后做增减对比
 # ---------------------------------------------------------------------------
@@ -223,13 +392,14 @@ $outText = ($out -join "`n")
 # 会把别人的表和资源无声拉进来,故障更难查。代价是:同一句报错在两台机器上可能指向不同的表。
 # 所以报「表结构对不上」这类必须找程序的错时,顺带说清楚这一列到底在不在 SVN 里 ——
 # 差别是决定性的:未提交 = 程序 svn update 也复现不了,必须先提交或连文件一起发过去。
-function Get-TableWorkingCopyChanges([string]$Root) {
-    if ($null -eq (Get-Command svn -ErrorAction SilentlyContinue)) { return $null }
+function Get-TableWorkingCopyChanges([string]$Root, [string]$SvnCommand) {
+    if ([string]::IsNullOrWhiteSpace($SvnCommand)) { return $null }
     try {
         # --xml 的输出显式是 UTF-8,中文表名不会被控制台代码页糟蹋(纯文本 svn status 会)。
         # 仍然只把 ASCII 的 Table 根目录传给 svn.exe,不往下传中文子目录(会 E155010)。
-        $xmlText = (& svn status --xml $Root 2>$null | Out-String)
-        if ([string]::IsNullOrWhiteSpace($xmlText)) { return $null }
+        $xmlText = (& $SvnCommand status --xml -- $Root 2>$null | Out-String)
+        $statusExit = $LASTEXITCODE
+        if ($statusExit -ne 0 -or [string]::IsNullOrWhiteSpace($xmlText)) { return $null }
         $doc = [xml]$xmlText
     } catch { return $null }
     $changed = New-Object System.Collections.Generic.List[pscustomobject]
@@ -284,11 +454,11 @@ if ($genExit -ne 0) {
         Write-SyncHint '末尾加列'
 
         # 未提交 / 已提交,给程序的做法完全不同,这里替策划把话说清楚。
-        $wc = Get-TableWorkingCopyChanges $TableRoot
+        $wc = Get-TableWorkingCopyChanges $TableRoot $SvnCommand
         $dirty = @()
         if ($null -ne $wc) { $dirty = @($wc | Where-Object { $_.Path -like "*$leaf" }) }
         if ($null -eq $wc) {
-            Write-Host '      做法:把上面那行报错原文发给程序(本机没有 svn 命令,没法判断这张表是否已提交)。'
+            Write-Host '      做法:把上面那行报错原文发给程序(本机无法读取 svn status,没法判断这张表是否已提交)。'
         } elseif ($dirty.Count -gt 0) {
             Write-Host ''
             Write-Warn2 "  注意:$leaf 在你本机是**未提交**的改动(svn status: $($dirty[0].Item))。"
@@ -336,6 +506,12 @@ $after = Read-ManifestRows $DistDir
 if ($null -eq $after) {
     Write-Err "导表报成功,但 $DistDir 下读不到 manifest.json,请找程序看。"
     exit 1
+}
+
+if ($inputFingerprint) {
+    $fingerprintDir = Split-Path -Parent $inputFingerprintPath
+    New-Item -ItemType Directory -Force -Path $fingerprintDir | Out-Null
+    [IO.File]::WriteAllText($inputFingerprintPath, "$inputFingerprint`n", [Text.UTF8Encoding]::new($false))
 }
 
 Write-Host ''

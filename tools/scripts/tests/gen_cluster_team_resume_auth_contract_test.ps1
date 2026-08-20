@@ -80,6 +80,8 @@ function Get-ProdArgs([string]$TargetDir) {
         '-PlacementHubTransferSecret', 'prod-placement-hub-transfer-0123456789abcdef-006',
         '-PlacementBattleDepartureSecret', 'prod-placement-battle-departure-0123456789abcdef-007',
         '-MatchResumeAuthSecret', $ProdMatchResumeAuth,
+        '-PlayerNoResolveAuthSecret', 'prod-player-no-resolve-auth-0123456789abcdef-013',
+        '-PlayerNameResolveAuthSecret', 'prod-player-name-resolve-auth-0123456789abcdef-014',
         '-AllocationAbortAuthSecret', 'prod-allocation-abort-auth-0123456789abcdef-009',
         '-DsAuthMode', 'enforce', '-DsAuthorityMode', 'redis',
         '-DsFenceEtcdEndpoints', 'https://etcd.pandora.svc:2379',

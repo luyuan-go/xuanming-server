@@ -68,6 +68,19 @@ type MatchCommitmentReader interface {
 	IsPlayerCommittedToMatch(ctx context.Context, playerID uint64) (bool, error)
 }
 
+// PlayerNoResolver 是 team 组装客户端可见快照时读取 login/account 权威角色编号的窄端口。
+// 返回值以 player_id 为键；player_no 只用于展示，绝不能参与队伍身份或成员关系判断。
+// 实现必须把整支队伍一次批量解析，禁止按成员 N+1 调用。
+type PlayerNoResolver interface {
+	ResolvePlayerNos(ctx context.Context, playerIDs []uint64) (map[uint64]uint64, error)
+}
+
+// PlayerNameResolver 是 team 组装客户端可见快照时读取 player 权威角色名的窄端口。
+// 返回值以 player_id 为键；实现必须整队单批读取，禁止按成员 N+1 调用。
+type PlayerNameResolver interface {
+	ResolvePlayerNames(ctx context.Context, playerIDs []uint64) (map[uint64]string, error)
+}
+
 // ── 常量 ─────────────────────────────────────────────────────────────────────
 
 const (
@@ -103,6 +116,14 @@ type TeamUsecase struct {
 	// matchmaker_addr / 骨架联调)→ 跳过闸门;那种部署下根本没有匹配链路,不存在
 	// 被对局占住的队伍,与 matchCanceler 的弱依赖口径一致。nil-safe。
 	matchCommitment MatchCommitmentReader
+
+	// playerNos 是客户端展示投影的弱依赖。nil / 查询失败时 player_no 保持 0，
+	// 队伍 Redis 权威读写与 RPC 主流程不受影响。
+	playerNos PlayerNoResolver
+
+	// playerNames 是客户端展示投影的弱依赖。nil / 查询失败 / 缺行时 nickname 保持空；
+	// 绝不回退 TeamMemberStorageRecord.nickname，避免把历史影子或伪造输入重新暴露给客户端。
+	playerNames PlayerNameResolver
 
 	// presence 是「离线成员自动退队」的读路径兜底入口(见 offline_leave.go)。
 	// 可为 nil(功能关 / 未配 locator_addr)→ 读路径不做任何额外查询,行为与历史一致。nil-safe。
@@ -185,6 +206,18 @@ func (u *TeamUsecase) SetMatchCanceler(c MatchCanceler) {
 // 行为与历史一致。用 setter 而非构造参数,与 SetMatchCanceler 一致。
 func (u *TeamUsecase) SetMatchCommitmentReader(r MatchCommitmentReader) {
 	u.matchCommitment = r
+}
+
+// SetPlayerNoResolver 注入 login/account 权威角色编号批量读取端口。
+// nil-safe：未配置时客户端快照中的 player_no 为 0，不阻断组队核心操作。
+func (u *TeamUsecase) SetPlayerNoResolver(r PlayerNoResolver) {
+	u.playerNos = r
+}
+
+// SetPlayerNameResolver 注入 player 权威角色名批量读取端口。
+// nil-safe：未配置时客户端快照中的 nickname 为空，不阻断组队核心操作。
+func (u *TeamUsecase) SetPlayerNameResolver(r PlayerNameResolver) {
+	u.playerNames = r
 }
 
 // InviteTTLMs 返回邀请令牌 TTL 的毫秒数,供 service 层计算 expires_at_ms。
@@ -1347,6 +1380,31 @@ func (u *TeamUsecase) ListOpenTeams(ctx context.Context, mapID uint32, limit int
 			"map_id", mapID, "returned", len(out), "candidates", len(candidates),
 			"skipped_not_open", skippedNotOpen)
 	}
+
+	// 只富化最终会返回的队长，不对候选循环逐条调用，避免 N+1 和无效查询。
+	captainIDs := make([]uint64, 0, len(out))
+	seenCaptains := make(map[uint64]struct{}, len(out))
+	for _, brief := range out {
+		if brief == nil || brief.GetCaptainId() == 0 {
+			continue
+		}
+		if _, ok := seenCaptains[brief.GetCaptainId()]; ok {
+			continue
+		}
+		seenCaptains[brief.GetCaptainId()] = struct{}{}
+		captainIDs = append(captainIDs, brief.GetCaptainId())
+	}
+	display, err := u.resolvePlayerDisplays(ctx, 0, "open_team_captains", captainIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, brief := range out {
+		if brief == nil {
+			continue
+		}
+		brief.CaptainNickname = display.names[brief.GetCaptainId()]
+		brief.CaptainPlayerNo = display.nos[brief.GetCaptainId()]
+	}
 	return out, nil
 }
 
@@ -1681,7 +1739,10 @@ func (u *TeamUsecase) pushUpdate(
 	}
 
 	now := time.Now().UnixMilli()
-	protoTeam := u.teamToProto(team)
+	protoTeam, err := u.teamToProto(ctx, team)
+	if err != nil {
+		return
+	}
 
 	for _, pid := range toPlayerIDs {
 		event := &teamv1.TeamUpdateEvent{
@@ -1771,24 +1832,107 @@ func (u *TeamUsecase) refreshDisbandedTTL(ctx context.Context, teamID uint64, tt
 
 // ── 类型转换 ──────────────────────────────────────────────────────────────────
 
+type playerDisplayProjection struct {
+	names map[uint64]string
+	nos   map[uint64]uint64
+}
+
+// resolvePlayerDisplays 对一份客户端视图中的全部玩家做两次互不依赖的权威批量读取。
+// 两端都是展示弱依赖：任一端失败只让对应字段留空，不得阻断组队主流程或污染身份字段。
+func (u *TeamUsecase) resolvePlayerDisplays(
+	ctx context.Context,
+	teamID uint64,
+	projection string,
+	playerIDs []uint64,
+) (playerDisplayProjection, error) {
+	result := playerDisplayProjection{
+		names: make(map[uint64]string, len(playerIDs)),
+		nos:   make(map[uint64]uint64, len(playerIDs)),
+	}
+	if len(playerIDs) == 0 {
+		return result, nil
+	}
+
+	var displayWG sync.WaitGroup
+	if u.playerNos != nil {
+		displayWG.Add(1)
+		go func() {
+			defer displayWG.Done()
+			resolved, err := u.playerNos.ResolvePlayerNos(ctx, playerIDs)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				plog.With(ctx).Warnw("msg", "team_player_no_resolve_failed",
+					"reason", "display_dependency_unavailable", "team_id", teamID,
+					"projection", projection, "player_count", len(playerIDs), "err", err, "fail_soft", true)
+				return
+			}
+			result.nos = resolved
+		}()
+	}
+	if u.playerNames != nil {
+		displayWG.Add(1)
+		go func() {
+			defer displayWG.Done()
+			resolved, err := u.playerNames.ResolvePlayerNames(ctx, playerIDs)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				plog.With(ctx).Warnw("msg", "team_player_name_resolve_failed",
+					"reason", "display_dependency_unavailable", "team_id", teamID,
+					"projection", projection, "player_count", len(playerIDs), "err", err, "fail_soft", true)
+				return
+			}
+			result.names = resolved
+		}()
+	}
+	displayWG.Wait()
+	if err := ctx.Err(); err != nil {
+		return playerDisplayProjection{}, err
+	}
+	return result, nil
+}
+
 // teamToProto 把存储快照 TeamStorageRecord 转成客户端可见结构 Team(不变量 §9.14)。
 //
 // join_policy 不是存储字段,而是**每次组装时从服务端配置派生**(§9.11 派生字段服务端重算 /
 // §9.22 不重复影子状态):改配置即时对全服生效,也不存在"队伍里存的策略"与配置漂移的问题。
 // 因此本转换必须是 TeamUsecase 的方法而不是自由函数——离开 usecase 就拿不到权威配置,
 // 只能填 UNSPECIFIED,客户端就会一直按保守策略渲染。
-func (u *TeamUsecase) teamToProto(r *teamv1.TeamStorageRecord) *teamv1.Team {
+func (u *TeamUsecase) teamToProto(ctx context.Context, r *teamv1.TeamStorageRecord) (*teamv1.Team, error) {
 	if r == nil {
-		return nil
+		return nil, nil
+	}
+	playerIDs := make([]uint64, 0, len(r.Members))
+	seen := make(map[uint64]struct{}, len(r.Members))
+	for _, member := range r.Members {
+		if member == nil || member.GetPlayerId() == 0 {
+			continue
+		}
+		if _, ok := seen[member.GetPlayerId()]; ok {
+			continue
+		}
+		seen[member.GetPlayerId()] = struct{}{}
+		playerIDs = append(playerIDs, member.GetPlayerId())
+	}
+	display, err := u.resolvePlayerDisplays(ctx, r.GetTeamId(), "team_members", playerIDs)
+	if err != nil {
+		return nil, err
 	}
 	members := make([]*teamv1.TeamMember, 0, len(r.Members))
 	for _, m := range r.Members {
+		if m == nil {
+			continue
+		}
 		members = append(members, &teamv1.TeamMember{
 			PlayerId: m.PlayerId,
-			Nickname: m.Nickname,
+			Nickname: display.names[m.PlayerId],
 			Mmr:      m.Mmr,
 			Ready:    m.Ready,
 			HeroId:   m.HeroId,
+			PlayerNo: display.nos[m.PlayerId],
 		})
 	}
 	return &teamv1.Team{
@@ -1800,12 +1944,51 @@ func (u *TeamUsecase) teamToProto(r *teamv1.TeamStorageRecord) *teamv1.Team {
 		MaxSize:     r.MaxSize,
 		MapId:       r.MapId,
 		JoinPolicy:  u.joinPolicyProto(),
-	}
+	}, nil
 }
 
 // TeamToProto 导出供 service 层使用。
-func (u *TeamUsecase) TeamToProto(r *teamv1.TeamStorageRecord) *teamv1.Team {
-	return u.teamToProto(r)
+func (u *TeamUsecase) TeamToProto(ctx context.Context, r *teamv1.TeamStorageRecord) (*teamv1.Team, error) {
+	return u.teamToProto(ctx, r)
+}
+
+// TeamApplicationsToProto 把申请 Redis 记录投影为队长可见查询视图。
+// 名字和编号只在此处临时富化，绝不写回 ApplicationRecord；审批仍只使用 player_id。
+func (u *TeamUsecase) TeamApplicationsToProto(
+	ctx context.Context,
+	teamID uint64,
+	records []*data.ApplicationRecord,
+) ([]*teamv1.TeamApplication, error) {
+	playerIDs := make([]uint64, 0, len(records))
+	seen := make(map[uint64]struct{}, len(records))
+	for _, record := range records {
+		if record == nil || record.PlayerID == 0 {
+			continue
+		}
+		if _, ok := seen[record.PlayerID]; ok {
+			continue
+		}
+		seen[record.PlayerID] = struct{}{}
+		playerIDs = append(playerIDs, record.PlayerID)
+	}
+	display, err := u.resolvePlayerDisplays(ctx, teamID, "team_applications", playerIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	applications := make([]*teamv1.TeamApplication, 0, len(records))
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		applications = append(applications, &teamv1.TeamApplication{
+			PlayerId:    record.PlayerID,
+			ExpiresAtMs: record.ExpiresAtMs,
+			Nickname:    display.names[record.PlayerID],
+			PlayerNo:    display.nos[record.PlayerID],
+		})
+	}
+	return applications, nil
 }
 
 // ── 成员辅助函数 ──────────────────────────────────────────────────────────────

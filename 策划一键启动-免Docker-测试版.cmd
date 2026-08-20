@@ -21,9 +21,11 @@ rem  portable binaries unpacked under run\localinfra\ - nothing is
 rem  installed into Windows, nothing is registered as a service, and
 rem  removing that folder removes everything.
 rem
-rem  Ports, accounts and DB schema are IDENTICAL to the Docker path, so
-rem  the service configs (services\*\etc\*-dev.yaml) are not forked:
-rem    MySQL 127.0.0.1:3307   Redis 127.0.0.1:6380
+rem  Accounts and DB schema are identical to the Docker path. MySQL uses a
+rem  verified private port selected from 13307..13398, so an existing Docker
+rem  MySQL on 3307 is never reused, migrated, or stopped. Runtime config copies
+rem  are generated under run\localinfra; tracked service YAML stays unchanged:
+rem    MySQL 127.0.0.1:auto(13307..13398)   Redis 127.0.0.1:6380
 rem    Kafka 127.0.0.1:9093   Envoy :8443 (client) / 127.0.0.1:8444 (DS)
 rem
 rem  Differences you should know about:
@@ -66,6 +68,7 @@ if errorlevel 1 (
 )
 rem Quote it: with the portable build this is a full path, which can contain spaces.
 set "PS=%PANDORA_PWSH%"
+set "PANDORA_PLANNER_FAST_START=1"
 
 "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\scripts\start.ps1" -Mode local -NoDocker -DsLauncher editor -GenTables
 set "RC=%ERRORLEVEL%"

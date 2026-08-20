@@ -44,6 +44,7 @@ service PlayerService {
   //
   // 只读幂等。查不到的 player_id **不出现在响应里**(不返回空名字占位):
   // 「查不到」与「名字是空串」必须可区分,前者调用方应保留旧值 / 走兜底,后者是真数据。
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE DS 与 Team internal 入口共用 canonical name messages。
   rpc GetPlayerNames(GetPlayerNamesRequest) returns (GetPlayerNamesResponse);
   rpc ListHeroes(ListHeroesRequest) returns (ListHeroesResponse);
   rpc UnlockHero(UnlockHeroRequest) returns (UnlockHeroResponse);
@@ -94,6 +95,16 @@ service PlayerService {
   // pandora.player.experience(event_type=1)通知客户端刷新经验条 / 播升级表现
   // (不复用 pandora.player.update:旧 player 副本按 MMR 事件解码会被污染,§21 混跑安全)。
   rpc AddExperience(AddExperienceRequest) returns (AddExperienceResponse);
+}
+
+// PlayerInternalService 只供受信后端服务读取 player 域权威最小投影。
+// 不经客户端/DS Envoy 暴露；实现层仍强制 request-bound internalrpcauth，网络位置不是身份。
+service PlayerInternalService {
+  // ResolvePlayerNames 供 team 组装成员视图时按 player_id 有界批量读取角色显示名。
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE Team 与 DS 入口共用 canonical name messages。
+  // buf:lint:ignore RPC_REQUEST_STANDARD_NAME 避免复制同形 request 造成协议漂移。
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME 避免复制同形 response 造成协议漂移。
+  rpc ResolvePlayerNames(GetPlayerNamesRequest) returns (GetPlayerNamesResponse);
 }
 
 // ===== 玩家档案 =====

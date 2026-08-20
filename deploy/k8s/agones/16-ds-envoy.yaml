@@ -127,6 +127,9 @@ data:
                   # Hub/Battle DS 在线验玩家入场票；login 在消费 ticket jti 前校验调用 DS active。
                   - match: { path: "/pandora.login.v1.LoginService/VerifyDSTicket" }
                     route: { cluster: login_cluster, timeout: 15s, idle_timeout: 60s }
+                  # Hub/Battle DS 批量读取头顶展示编号；客户端 listener 精确拒绝。
+                  - match: { path: "/pandora.login.v1.LoginService/ResolvePlayerNosForDS" }
+                    route: { cluster: login_cluster, timeout: 15s, idle_timeout: 60s }
                   # Hub DS 心跳(Hub DS 每 5s 主动调)
                   - match: { path: "/pandora.hub.v1.HubAllocatorService/Heartbeat" }
                     route: { cluster: hub_allocator_cluster, timeout: 15s, idle_timeout: 60s }

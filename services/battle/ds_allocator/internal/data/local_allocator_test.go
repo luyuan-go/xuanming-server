@@ -439,9 +439,40 @@ func TestBuildArgs_EditorLauncherPutsProjectFirst(t *testing.T) {
 		`F:\work\Pandora-Client-SVN\Pandora\Pandora.uproject`,
 		"/Game/Maps/PVE",
 		"-server", "-log", "-port=7788",
+		conf.EditorLauncherCVarArg,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("editor args:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+// 锁死 MissingLevelPackage 开关的形态与作用域(2026-08-18 秒级无限重连事故)。
+//
+// 三条都是修复本体,任缺一条这次事故就会原样复发或波及生产:
+//   - editor 形态必须带,否则未 cook 的 DS 与 PIE 客户端的 WP cell 命名对不上就踢人,
+//     而客户端拿不到 close reason,只会当瞬态掉线一遍遍连回同一个 DS;
+//   - packaged 绝不能带,那里的 MissingLevelPackage 是真的内容不一致,要保留踢人保护;
+//   - 参数**不得含空格**:含空格的 -ExecCmds= 经 exec.Command 传到 Windows 会被引号
+//     转义打散,引擎解析不到,表现是"加了等于没加"且不报错。
+func TestBuildArgs_EditorSkipsMissingLevelDisconnectOnly(t *testing.T) {
+	if strings.ContainsAny(conf.EditorLauncherCVarArg, " \t\"") {
+		t.Fatalf("CVar 覆盖参数不得含空格/引号(会被 Windows 参数转义打散): %q",
+			conf.EditorLauncherCVarArg)
+	}
+	if !strings.Contains(conf.EditorLauncherCVarArg, "net.SkipMissingLevelDisconnect=1") {
+		t.Fatalf("CVar 覆盖参数必须关掉缺 level package 的踢人: %q", conf.EditorLauncherCVarArg)
+	}
+
+	l, _ := newLocalTestAllocator(t, conf.LocalDSConf{
+		Launcher:  conf.LauncherPackaged,
+		PortBase:  7777,
+		PortRange: 10,
+	})
+	for _, a := range l.buildArgs(7788, "/Game/Maps/PVE") {
+		if strings.Contains(a, "SkipMissingLevelDisconnect") {
+			t.Fatalf("packaged(cook 过的内容)不得关掉踢人保护: %v",
+				l.buildArgs(7788, "/Game/Maps/PVE"))
+		}
 	}
 }
 

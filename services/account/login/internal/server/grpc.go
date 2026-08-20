@@ -22,8 +22,11 @@ import (
 //   - login.Login 本身就没有 token(还没签出来),Required 会让 Login 全部 401
 //   - Envoy 已经按 path 强制 IssueDSTicket / Logout 必须带合法 JWT,业务层只需读 player_id
 //   - 直连 :20001 调试(绕过 Envoy)时,Login 仍可联调通过
-func NewGRPCServer(cfg *conf.Config, svc *service.LoginService) *kgrpc.Server {
+func NewGRPCServer(cfg *conf.Config, svc *service.LoginService, internal ...*service.LoginInternalService) *kgrpc.Server {
 	srv := grpcserver.MustNewServer(cfg.Server, pmw.AuthOptional())
 	loginv1.RegisterLoginServiceServer(srv, svc)
+	if len(internal) != 0 && internal[0] != nil {
+		loginv1.RegisterLoginInternalServiceServer(srv, internal[0])
+	}
 	return srv
 }

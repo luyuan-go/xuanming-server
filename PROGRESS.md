@@ -3625,6 +3625,47 @@ immutable;本次曾误改过它的 COMMENT,已回滚)。两条路径最终一致
   `configtable_gen.ps1 -Check`,仍正确定位实际 Table 并通过。截图那台无 F 盘机器的双击入口待更新脚本后复验。
 
 
+## 2026-08-19 追加:Python 迁移接线进 CI + 一轮对抗审计的修复批次
+
+Python 迁移线(分支 `python-migration`)此前在 `PROGRESS.md` 零记录,补登记。
+**完整交接见 [`docs/design/python-migration.md`](./docs/design/python-migration.md)**,
+本条只留索引与本轮结论。
+
+- **现状**:21 个服务全部有核心落码 + 26 个基础件,2 万余行 Python,
+  **629 条测试全绿且 0 skipped**。只有 `dialogue` 有 `main.py`,其余是逐块移植的
+  biz/data 等价实现,不能独立起进程。与 Go 版**并存**(同一份 proto / yaml / Envoy /
+  Grafana),按服务逐个灰度、逐个回滚。
+- **接进 CI 门禁**:`ci_backend.ps1` 新增「Python 侧门禁」段 —— `gen_errcode.py --check`
+  (errcode 跨语言一致)+ `pytest -rs`。此前这近 600 条测试对 CI 等于不存在:
+  Go 侧改 errcode 码值、重导 configtable dist,Python 侧都不会红。
+  依赖门控沿用同一套环境变量(`PANDORA_TEST_ETCD_ENDPOINTS` / `_MYSQL_DSN` / `_REDIS_ADDR`),
+  所以 `ci_db.ps1` 起的那套库对 Python 用例同样生效;数据库组的跳过在 `-RequireDbTests`
+  下**判失败**(口径对齐 `go_test_skip_audit`,防"跳过等于通过")。CI 机需 `uv`,
+  已进 `bootstrap-machine.ps1` 前置工具表。
+- **两条 P0(同一根因)**:`aetcd` 对**已失效 lease** 的 `refresh()` **不抛异常、只回 TTL=0**
+  (真 etcd 实测)。选主 / 单写者 / nodeID 抢占三处的续约循环都只看"有没有抛异常",
+  于是失主后会**永远**认为自己还持有 —— 后果分别是双 leader、两个写者同时推 fence 水位、
+  两个副本用同一 nodeID 发号(§9 不变量 11)。已收成共用件 `pandorapy/etcdlease.py`,
+  并把"连接层失败(可重试)"与"服务端回 TTL≤0(已确定失主,必须立即让位)"分开。
+- **另修 10 条**(逐条见交接文档 §5.2.1):nodeID 从 0 起扫会撞 UE DS 本地发号器与 static 号段;
+  `Holder.close()` 主动 revoke 会让秒级 snowflake 同秒重号;fencing token 用 lease id
+  (57 bit)导致 `source_revision` 一个号都铸不出来;owner 的来源版本门写成
+  `if source_revision > 0` = 见过版本后旧写者只要不带版本就能绕过整道门(INC-20260818-003
+  的形状本身);配置表 protojson 未开 `DiscardUnknown`,dist 加一列就让旧进程整批拒载;
+  panic 兜底把 `CancelledError` 也算 panic;日志级别读错环境变量名;Redis 锁少 `pandora:lock:`
+  前缀导致两栈互斥失效;etcdleader 每轮泄漏一个 Task;`godur` 用 `%g` 截断精度。
+- **两条工程接线**:`pyproject.toml` 少声明 `aetcd` / `PyJWT`(干净机器照 README 装完
+  **3 个 collection error**,本机 `.venv` 是手工装过才绿);三个 MySQL 数据层测试在 CI 上
+  **必然整体跳过**(CI 发无库名 DSN 而 ci-db 的 mysql 没有 init 脚本,测试却拿默认库名去连)
+  —— 已改成自建库,实测把两个库全删掉 + 无库名 DSN 仍 51 个用例全过。
+- **每条修复都补了会红的回归测试并做了变异验证**(把修复拆掉确认当场变红)。
+  新增 `tests/test_snowflake_etcd.py`(该模块此前**零测试**,而它承载 §9 不变量 11)。
+- **未修的确认缺口如实列在交接文档 §6.4**,其中三条(writerlease 的截止线锚点、
+  越线后可被"续活"、etcdleader 排队副本挂死)**接 allocator 之前必须先修**。
+- 并发协作:本轮与另一会话同时在改 `python/`,已知重叠已合并(`mysqlfixture` 的 DSN 解析
+  被对方下沉进 `pandorapy/mysqlx`,采用其版本;`errcode.py` 被手改 —— 生成器模板已同步,
+  使那份改动能在重跑生成器后存活)。
+
 ## 2026-08-19 本机基础设施起不来时只给日志路径 → 改成把现场打出来
 
 - **现场**:策划机(`D:\Pandora-Moba\Server`,即 `^/trunk` 整检出的 `Server` + `Client` 布局)
@@ -3660,3 +3701,234 @@ immutable;本次曾误改过它的 COMMENT,已回滚)。两条路径最终一致
   才发现它自己坏了。
 - **仍未定谳**:策划机那次 exit 1 的具体原因。需要那台机器上
   `run\localinfra\logs\mysql.log` 的末尾;装上本次改动后重跑一次,原因会直接打在窗口里。
+
+
+## 2026-08-19 追加(续):对抗审计 61 条确认发现全部处置到闭环
+
+接上条。上一轮只修了 P0/P1 与两条工程接线,其余按 `CLAUDE.md §14` 如实列在
+`docs/design/python-migration.md` §6.4。本轮把那份清单收口 —— 详细处置见该节,
+这里只留索引与三条**仍未做**的说明。
+
+- **两个 allocator 的前置阻断已全清**:①宣告持有前必须向 etcd 要一次 `RemainingTTL`
+  并以请求发出前的单调时刻为锚点(用"现在"会把陈旧 TTL 平移到未来,等于重新打开旧任期);
+  ②越线改为单调终态 `self_fenced`(迟到的续约不得续活同一任期);
+  ③排队副本的 key 消失后重新入队(原路径**零日志**永久挂死)。
+- **进程外壳层六项**:access log 四事件(字段 / 阈值环境变量与 Go 同名)、Kill-Switch
+  接进拦截器链并补 `*` / `<service>/*` / feature 三级匹配、`grpc.timeout` 真正生效、
+  `max_conn_age_grace` 建模并映射、`enable_rate_limit` 配了就 fail-fast(Python 没有 BBR,
+  配着 true 却没保护比没这功能糟)、RPC 指标改名到 `pandora_rpc_*` 并对齐 label 与分桶。
+- **接线六项**:snowflake etcd 抢占接进 dialogue main(并从零测试补到 8 条真 etcd 用例)、
+  trade 的 Noop 账本闸下沉到构造函数、移植 redisx 限流原语、`cell_route` 配了就拒启、
+  auth 补 TTL 闸 + 不停服密钥轮换 + 过期/非法错误码分离、`proto_gen.ps1` 加生成 Python stub。
+- **测试硬度五项**:`test_source_revision` 的"对拍"原先跑的是测试文件里**手抄的 Go 重实现**
+  (Go 改了照样绿),改成 import 真 `pkg/placement`;`test_inventory_settle` 的幂等键格式改为
+  从 Go 源码取;battle_result 的 reason/文案补集合相等断言;kafkax 的 `hash()` 哨兵原先在
+  同进程内比两个实例(抓不到),改成跨进程换 `PYTHONHASHSEED`;alloy 那条近乎恒真的断言
+  改成解析 `stage.labels` 块。
+- **依赖锁入库**:`python/requirements.lock`,CI 改用 `uv pip sync`。此前 CI 每轮按 `>=`
+  下界重装,上游发个新版就能在仓库零改动的情况下把流水线打红。`protobuf` 下界抬到 5.29.3
+  (生成物自带的运行期断言值,低于它 import 即抛)。
+- **验证**:`pytest tests/ -q` **753 passed / 0 skipped**;`ci_backend.ps1` 的 Python 门禁
+  在 `-RequireDbTests` 下端到端跑通(含锁文件安装路径)。每条修复都做了**变异验证**
+  (把修复拆掉确认测试当场变红);其中一轮变异实验推翻了自评 —— 3 条里 2 条最初没被抓住,
+  补了能分辨的用例之后才有牙齿。
+- **仍未做(三条)**:cellroute 装配本体(已不再静默出错,配了就拒启)、Grafana 面板 JSON
+  不入库(指标侧机制已补 `pandora_runtime_info{runtime="python"}`,面板本身需人拍板)、
+  snowflake etcd 只接了 dialogue(owner 的 main 由并发编辑者新写,其余 19 个服务还没有 main.py)。
+- **纪律**:变异实验**不得在共享工作区就地改文件** —— 本轮有一次改了 `writerlease.py`
+  跑变异,而同一时刻另一个会话正在跑全量测试,它会看到一堆我造出来的红。
+  后续改在 scratchpad 的隔离副本上做,或只证明机制(直接对真 etcd 演示)。
+
+
+## 2026-08-19 追加(续2):收口批次的自我复核又抓到 8 条,含两条 P1
+
+收口做完后又跑了一轮五维对抗复核,专门找"这一批新写的代码有没有引入新洞"。
+**新写的代码比它修掉的老代码更容易出问题** —— 两条 P1 都是在 720 个测试全绿的
+状态下活着的。详见 `docs/design/python-migration.md` §6.5,这里只记要点。
+
+- **P1 `grpc.aio.AbortError` 没有 `code()` / `details()`**(实测属性只有
+  add_note / args / with_traceback)。从异常上 getattr 恒得到 None →
+  `code_label(None)` = "ok" —— 每一次 401/403 都被记成**成功**、err 是空串。
+  `code_label` 本身没错,错的是喂给它的东西,所以"只把它当纯函数测"永远抓不到;
+  判据必须取**真实 abort 过的 RPC**。已改从 ServicerContext 读。
+- **P1 access log 四事件全都没有 trace_id**:绑定是 contextvars,作用域只在绑定它
+  的那层。原先绑在最内层的 Auth 拦截器,它的 finally 一 reset,**外层 access log
+  才开始打**。已拆出 `TraceInterceptor` 放到链首 —— 这正是 Go 把 `Trace()` 排在
+  `Logging()` 之前的原因。
+- **P2 四条**:`cell_route` 闸按"段是否存在"判(Go 的关闭态是 `mode` 为空,
+  我那个闸会误伤合法的单 Cell 配置,方向反了);`max_conn_age` 配了而 grace 没配时
+  缺 Go 的 30s 兜底(grpc core 默认**无限宽限**,不兜底等于这功能没开);
+  激活期一次瞬时续约失败就作废整届(恰好推翻了"续约从当选就跑"那条 ★ 的立论);
+  etcdleader 的**防御性**复查用会抛的 get_prefix,一次读失败就让位(权威是 lease)。
+- **P3 两条**:access log 的 op 比 Go 少一个前导斜杠且缺 transport 字段
+  (按 op 精确匹配的 LogQL 在 Python 副本上全部落空);redisx 惩罚窗吞异常
+  (写侧没有 fail-open 兜底,写失败就是真漏了一次罚)。
+- 顺带补齐两条**与 Go 的老差异**:`dbguard.check_payload` 的拒写边界是 `>` 而 Go 是
+  `>=`(恰好等于上限的 payload 两栈判定相反,放行的那条会被静默截断),且缺
+  "未设预算不校验"分支(max_bytes=0 会拒掉一切写入);`configtable.read_manifest`
+  缺 Go 的三道结构闸,其中 **file 名钉死 `<name>.json` 同时是路径逃逸防线** ——
+  pathlib 对绝对路径是整个替换基路径而不是拼接。
+- 并修掉本轮文档自己的多处不实断言(测试条数、基础件数量自相矛盾、"其余 20 个服务
+  没有 main.py"实为 19、§5.2.3 与 §6.4 互相矛盾、§4.3 声称三处租约都提前 TTL/3 而
+  writerlease 是固定 3s、README 行尾约定只点名 2 个文件而实测 15 个 CRLF)。
+  **文档说做了而其实没做,比不写更糟**。
+- **三条"假测试"**(720 全绿状态下守着空气,值得单独记):连接老化的两个 grpc option
+  零断言(用例拿"非法 option 名会报错"当间接判据,而**那句话是错的** —— grpcio 对
+  拼错的 option 名静默接受);跨语言对拍在 **Go 侧真改了**时静默 skip(rc!=0 与
+  "go 不在 PATH"走同一条路,唯一一道 parity 门恰好在最该响时不响);
+  `pandora_rpc_inband_total` / panics / canceled 三族零断言(`.inc()` 换成 `pass` 不会红,
+  而本仓业务失败是 in-band,灰度期"哪个业务码在涨"只有这一族能回答)。均已修并做变异验证。
+- **验证**:`pytest tests/ -q` **753 passed / 0 skipped**;每条修复都补了会红的用例,
+  两条 P1 的修复各做了变异验证(拆掉即红)。
+- **环境提示**:并发会话留下两个 4 小时前的僵死 pytest 进程(00:35 / 02:28),
+  它们与本会话抢 etcd,期间出现过一次"全量测试跑到一半挂住"和一次 CI 门禁跑 55 分钟
+  未完成。单独重跑均正常 —— 排查时先看有没有僵死进程占着 12379。
+
+
+## 2026-08-19 追加(续3):复核后自审两条,并把数据层测试改成进程独占库
+
+- **`provide_node` 的 on_lost 不能有缺省值**:自带续约之后,缺省成"退出进程"会让任何
+  忘了传的**测试**在一次续约抖动时 `os._exit(1)` —— pytest 当场消失且零报告;
+  缺省成"只打日志"则让生产进程毫不知情地继续发号 = 重号。两个方向都不安全,
+  改成**必填工厂** `on_lost(holder) -> 无参可调用`,忘了传即装配期 ValueError;
+  工厂抛异常还要收拾已抢到的 holder(否则留下永不续约、谁都看不见的 nodeID 占用)。
+- **数据层测试改用进程独占库**:此前共用固定库名 + 固定 player_id 且逐用例 TRUNCATE,
+  两个 pytest 同时跑必然互踩,表现为 1205 锁等待与"上限 5 被突破"这类**假红**。
+  实测定谳:共享库 6 failed/82s,独占库 18 passed/4.8s(同一份代码同一时刻)。
+  已按 Go 侧做法改成 `pandora_test_<pid>_<ts>` 独占库 + 会话结束删除;
+  验证**两份同时跑各自 33 passed**、跑完零残留库。DSN 显式写了库名的仍照用。
+- 顺带补 Go 的「dialogue 主键为 0 即拒批」闸,并修掉一条**恒真式断言**
+  (`_sample(...) == _sample(...)` 自己跟自己比)。
+- **Redis 侧同一形状**:`test_push_offline` 的 fixture 用 `db=0` 且 `flushdb()`,
+  两个 pytest 同时跑会把对方数据整个冲掉。已改成取第一个 `DBSIZE==0` 的逻辑库
+  (真独占,不是取模碰运气);16 个都被占就 skip 并说清原因。验证三份同时跑各 20 passed。
+  **一般纪律:共享的测试后端必须按进程隔离 —— 判据是"两个人同时跑会怎样"。**
+- **第 4 维复核(测试牙齿)又抓到两条,都在我自己新写的测试里**:
+  ①`test_run_emits_runtime_info` 的 finally 只 cancel 不停 server —— 真红时进程**卡住**,
+  CI 拿到的是 job 超时而不是 FAILED(变异实测 90s 超时 vs 修后 1.9s 干净红);
+  ②`test_provide_node_starts_keepalive_itself` 的判据"lost 未置位"是**反的** ——
+  lost 只由续约循环置位,循环死了反而更容易通过。已换成 etcd 侧事实 + 端到端 on_lost 断言,
+  两条变异复验均变红。教训:**本地状态证明不了远端事实**。
+- **验证**:`pytest tests/ -q` **1047 passed / 0 skipped**(不含并发编辑者此刻在改的
+  `test_trade_main.py`,其 2 条红是他们自己新加的 static node_id 闸与新测试 yaml 不匹配)。
+- **教训**:「环境问题」是最容易糊弄自己的结论。"并发跑当然会互相影响"既说不清是哪一格坏、
+  也给不出判据;换独占库跑一次才把它从猜测变成定谳 —— 也才发现它是**可以修掉**的。
+- 期间 Docker Desktop 重启过一次,三个 verify 容器同时 exit 255 → 整套测试会静默大批 skip。
+  排查顺序:先 `docker ps` 看容器,再看有没有僵死 pytest 占着 12379。
+
+## 2026-08-19 关卡表双端口径核对:走偏的不是服务端 + map 14 队伍人数改 1
+
+- **核对结论(逐件实测,不是从 dist 反推)**:权威源表 `Table\关卡\g_关卡.xlsx`(r2140,`svn status` 干净)
+  map 4~14 的「准备模式」**全是 1**;服务端 `configtable/dist/level.json`(v20260819002,svn-r2140)
+  与之逐字段一致。**服务端不是走偏那一端** —— 走偏的是客户端**已提交**的生成物
+  `Tool\Table\Cs\Temp\CfgLevel.json`(6/7 仍是 2)。`CfgLevel.uasset` 的 SVN 状态是**干净 @ r2140**
+  (此前记录的「停在 r2120」已过时),但**提交了 ≠ 值对了**:同 rev 的 CfgLevel.json 已提交版仍是 2,
+  uasset 若由它导出则同样是 2 —— uasset 里的真实值只能在 UE 里确认,别从 rev 推。
+- **抓到一个「拼一半提交」**:工作区那份未提交的 `CfgLevel.json` 除了把 6/7 修成 1,**还夹带了
+  map 14 `TeamSize` 3→1**。该值只存在于 `Tool\Table\Cs\Temp\Client\g_关卡.xlsx` 这份**受版本控制的
+  工具中间副本**(目录最后提交 r2115),权威源表写的是 3。照原样提交 = 修好 ready_mode 的同时
+  把 map 14 变成**新的**双端劈叉。
+- **⚠ 结构性隐患(值得单独记)**:`Tool\Table\Cs\Temp\Client\*.xlsx` 是版本化的工具中间副本,
+  在那儿私改一格,客户端生成物就跟着走,而服务端读的是 `Table\关卡\` —— **双源,且两边都不报错**。
+  以后核双端表必须两份 xlsx 一起看,只看 `Table\关卡\` 会漏。
+- **用户拍板 map 14 队伍人数 = 1**(单人可进 PVE)。已改**权威源表**而不是单端改:
+  `g_关卡.xlsx` 的 H18 由 3 改 1(数值格,只动 `<v>`,不涉 sharedStrings 计数);
+  改后逐格比对 **659 格只有 H18 变**。
+- **干运行验证**(`-out` / `-go-out` / `-bitindex-state` 全指向 scratch,真 dist 与 `pkg/configtable`
+  一个字节没动):31 张表里**只有 `level.json` 变,只有 `team_size` 一个字段**(3→1)。
+  这同时证明工作副本里没有混进别人未提交的表改动 —— 2026-08-18 那批就是被这个坑到(顺手带走了
+  role/role_level/skill 三张表)。
+- **`realdist_test.go` 的 `team_size=3` 只在注释里**,断言测的是 `BattleLaunchURL`(资产路径+GameMode),
+  所以重导 dist **不会**冲红。已把注释改对,并写明「注释不是守卫,真要钉人数得另立断言」。
+  `go build` + `go test ./pkg/configtable/ -run 'RealDist|Level'` 全绿。
+- **真 dist 刻意没重导**:xlsx 改动还没进 SVN,此刻重导只会写进假 `source_rev`(同 08-18 的理由)。
+  **待策划提交 xlsx 后**按真实 rev 各导一次:服务端 `pwsh tools\scripts\configtable_gen.ps1`,
+  客户端重导 `CfgLevel.json` + `CfgLevel.uasset`。客户端那份工作区 CfgLevel.json 建议**丢弃重导**,
+  别直接提交。
+
+## 2026-08-19 免 Docker MySQL 与机器既有 Docker/MySQL 完全隔离
+
+- **现场定谳**:策划机日志中的乱码是 Windows `WSAEACCES 10013`（bind 被拒），并不能证明真有
+  mysqld 正在 LISTEN；另一台开发机实时核验则确认 `:3307` 由 `com.docker.backend` 转发到
+  本项目健康的 `pandora-mysql`，11 个宿主服务保持 21 条连接。两种现场都不能靠“关掉占用者”处理。
+- **原实现有数据风险**:`Start-LocalMysql` 只要 TCP 3307 能连就直接报“已在运行”，不核协议、
+  进程、数据目录或工作区归属；随后 `dev_migrate.ps1` 会重放建库/授权/迁移。若别人的 Docker
+  MySQL 凭据碰巧一致，会被静默写入 Pandora schema。`mysql.pid` 也只存数字，PID 复用时 down
+  可能对外部 3307 发 shutdown 并 taskkill 无关进程。
+- **修复**:免 Docker MySQL 不再使用 Docker dev 的 3307，而从 `13307..13398` 中选择能真实
+  独占 bind 的端口（同时避开 listener、winnat 保留段与 bind 拒绝）。启动/复用/停止均核对
+  listener PID + mysqld 映像路径 + 本工作区 `my.ini` 命令行；账号探活通过后才原子写
+  `run/localinfra/cfg/ports.json`。外部实例一律不复用、不迁移、不 shutdown、不 taskkill。
+- **全链贯穿**:`dev_all.ps1` 把同一已验证端口显式传给强制迁移和 `run_services.ps1`；另以
+  `run/dev/mysql-port-applied.json` 记录最后成功应用的 `mode + port + social_on_mysql`，Docker/免 Docker、端口或社交库配置变化
+  都先停本项目登记的旧宿主服务，避免幂等 skip 后继续握旧 DSN。13 份 dev 配置的 14 条 MySQL
+  DSN 仅在 `run/localinfra/cfg/services/` 生成副本，仓库 YAML 不改；`-DsOnly` 的 allocator 与
+  读表服务 restart、基础设施预检同样读取该状态。迁移连接失败在一键链中改为非零退出。
+- **生命周期/发布闭环**:`start/dev_all/dev_up/dev_down/run_services/dev_migrate/local_infra` 的本机启动、迁移、停止和 reset 共用
+  可重入工作区编排锁，连续双击不会交错；基础设施内部 `up/down/reset/provision` 另共用互斥锁。未知活 PID 或停止失败会阻断
+  down/reset，PID 与数据保留，reset 另做 InnoDB 文件独占探针。发布构建补入
+  `pandora-migrate.exe`，缺 Go 的策划机不再静默跳过增量迁移。
+- **门禁**:新增 `localinfra_mysql_ownership_test.ps1`、`localinfra_mysql_port_flow_test.ps1` 与
+  `release_binaries_migrate_contract_test.ps1`；覆盖外部 listener、状态/PID/停机失败、候选选择、
+  禁止显式 3307、13 文件/14 DSN、跨模式切换以及迁移器打包。测试只用随机临时端口和临时目录，
+  不碰真实 3307、Docker、mysqld 或数据。
+
+## 2026-08-20 新电脑导表自动发现 SVN 工具
+
+- **现场复现**:另一台新电脑双击时，`Table` 是真实 SVN 工作副本，但 `svn.exe` 没进 PATH，导表把它
+  误报成“无 SVN 版本号”。脚本现按显式 `PANDORA_SVN_EXE` → PATH → TortoiseSVN 注册表自动发现
+  `svn.exe`；只有右键工具时回退同目录 `SubWCRev`，旧 CLI 的 `--show-item` 不可用时回退
+  `svn info --xml --depth infinity` 并取工作副本节点 revision 最大值。非工作副本、非零退出和不完整
+  XML 继续 fail-closed，不能靠手填 revision 绕过追溯闸。该修复已进策划 SVN r2161，并以移除 PATH
+  中 TortoiseSVN 的真实工作副本 `-Check` 验证仍能得到 `svn-r2147`。
+
+## 2026-08-20 免 Docker 第三方便携包随策划 SVN 分发
+
+- **用户拍板**:`D:\luyuan\Pandora-Server` 的 SVN 工作副本自带免 Docker 所需安装包；
+  `F:\work\XuanMing-Server` 的 Git 同路径不含二进制。目标机只需 `svn update` + 双击，不再手工
+  下载/安装 PowerShell、MySQL、Redis、Kafka、JRE、mkcert 或 Envoy。
+- **接线**:新增只读 `installers/localinfra`。`local_infra.ps1` 与 `bootstrap_pwsh.cmd` 复用现有
+  cache/镜像/公网 + 固定 SHA256 seam；显式 `PANDORA_LOCALINFRA_MIRROR` 优先，否则自动读仓库包。
+  目录空或某个版本文件缺失时逐项联网；同名包哈希错误硬失败。本机 SVN bundle 校验后直接只读
+  解包，不再额外复制 544.5 MiB；显式镜像/公网仍先落可变 cache，`-Force` 和坏缓存清理不触碰
+  SVN 源目录；本地 Envoy layer 命中时不先请求 Docker Hub token。
+- **范围**:当前 7 包合计 570,950,631 字节（544.50 MiB）。这是 2026-07-23“构建产物不进版本库”
+  的第三方工具白名单例外；Pandora 自建 exe、UE Packages、Docker/OCI 镜像仍必须走制品线。
+  设计复议、SVN 历史成本、许可证边界与 AI 更新门禁见
+  `docs/design/decision-revisit-localinfra-svn-bundle.md`。
+- **门禁**:新增 `localinfra_bundled_packages_contract_test.ps1`，覆盖 Git 空目录、SVN 完整目录、
+  cache/显式镜像/仓库/公网顺序、坏包 fail-closed、只读源保护与 Envoy 离线短路；
+  `pwsh_bootstrap_contract_test.ps1` 改为无环境变量真跑仓库包自举。
+- **提交前复核补洞**:旧实现只看 dist 里的 exe/probe 是否存在；以后即使 AI 更新了 pin 和 SVN 包，
+  已使用过的电脑仍会永久复用旧二进制。现给 PowerShell、MySQL、Redis、Kafka、JRE、mkcert、Envoy
+  七个 dist 都写固定包 SHA256 marker；旧/缺 marker 先在同盘 staging 完整解包、probe、写 marker，
+  再原子替换。下载/解包/swap 失败保留旧目录，运行中占用则要求先停本工作区，绝不强杀未知进程。
+  两份安装包契约新增旧 dist 自动刷新、当前 marker 快速复用、坏更新不误用/不毁旧版与路径注入回归。
+
+## 2026-08-20 策划一键启动 260 秒性能回归
+
+- **实测定谳**:一次真实启动中，21 个业务服务从 `02:18:22` 到 `02:22:42`，跨度
+  **260.065 秒**。`Get-NetTCPConnection` 单次耗时 3.232~4.248 秒，而 `run_services.ps1`
+  为安全核验每个服务会在清端口、MySQL 归属检查、ready 检查等位置重复调用，整批约 68 次；
+  按实测均值推算约 248 秒，与现场等待高度吻合。慢点是 2026-08-19 加入安全归属闸后的查询实现，
+  不是 7 个第三方安装包的压缩率。
+- **修复**:把 listener 查询下沉到 `local_infra_state.ps1` 的唯一共享 seam，使用绝对路径
+  `System32\netstat.exe -ano` 一次取 TCP 快照，严格解析 IPv4/IPv6 `LISTENING` 行；格式异常或
+  命令失败一律 fail-closed。`run_services.ps1` 与 MySQL 迁移仍保留 listener PID + exe 路径 +
+  本工作区 `my.ini` 的归属证明，没有退回“端口能连就算自己”。最终实现本机 20 次测量中位数从
+  4028.1 ms 降到 46.7 ms，约 **86.3 倍**；没有靠并行启动、缩短 ready 等方式降低安全性。
+  `local_infra.ps1` 的端口选择/状态/残留诊断与 `start.ps1` 的 8443/8444 入口预检也统一复用
+  单次快照，主一键链不再残留 `Get-NetTCPConnection`。
+- **首次准备减写**:SVN 仓库内置 bundle 经固定 SHA256 验证后由 `local_infra.ps1` 与
+  `bootstrap_pwsh.cmd` 直接只读解包，
+  不再先复制 544.50 MiB 到 `run/localinfra/cache`；显式共享盘镜像和公网来源仍先落本机 cache。
+- **明确拒绝无效压缩**:7 个上游归档本身已经是 zip/tgz/exe；再套一层 GZip 只从
+  544.49 MiB 降到 538.51 MiB，节省 5.98 MiB（1.098%），不值得增加解压链、杀软误报和维护面。
+  24 个 Windows Go exe 的 898.49 MiB 压成非 solid ZIP 可降到约 420.06 MiB（51.9%），但需要
+  与 manifest、不可变 release 目录、整批版本切换和回滚一起设计，不能只换一个压缩包留下混版风险；
+  作为下一阶段发布线优化，未冒充本轮已实现。
+- **门禁**:新增 `run_services_listener_query_contract_test.ps1`，覆盖 IPv4/IPv6、多 PID、邻近端口、
+  UDP/非 LISTENING、未知格式/命令失败、ready 必须匹配启动 PID，以及端口清理只处理 exact exe；
+  同时复跑 MySQL ownership/port-flow、bundle、PowerShell bootstrap、失败诊断和发布迁移契约。
+  完整样本、复现命令、验收边界和业务 exe 下一阶段方案见
+  `docs/ops/性能优化-策划一键启动-20260820.md`。

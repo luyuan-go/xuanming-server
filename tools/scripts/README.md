@@ -9,11 +9,12 @@
 | 脚本 | 用途 | 被谁调用 |
 |---|---|---|
 | `start.ps1` | 项目总入口,5 模式编排(local/docker/intranet/battle/k8s/online) | 根目录 `start.cmd` |
-| `play.ps1` | 策划友好入口(docker 模式,DS=mock;battle 启动已废弃,仅留 `-Battle -Stop/-Status` 清理遗留) | `策划一键停止.cmd` |
+| `play.ps1` | 策划友好入口(docker 模式,DS=mock;battle 启动已废弃；遗留环境用命令行 `-Battle -Stop/-Status` 清理) | 无双击入口 |
 | `dev_all.ps1` | 一键起基础设施 + 全业务 go 服务 | `start.ps1`(local) |
 | `dev_up.ps1` | 起 docker 基础设施(MySQL/Redis/Kafka/etcd/Prometheus) | `start.ps1`、`dev_all.ps1`、`play.ps1` |
 | `dev_down.ps1` | 停基础设施容器 | `start.ps1`、`dev_all.ps1`、`play.ps1` |
 | `dev_status.ps1` | 查看开发环境状态(容器 + 端口监听) | 手动 |
+| `local_infra.ps1` | 策划机免 Docker 原生基础设施；有 `installers/planner-db/central-mysql.json` 时对中心 MySQL 零本机生命周期动作，无时仍从 13307..13398 选本机独立端口；SVN 便携包校验后直接解包、缺包才联网 | `dev_all.ps1 -NoDocker` |
 | `run_services.ps1` | 宿主 go 服务编排(启/停/看日志) | `start.ps1`、`play.ps1`、`dev_all.ps1`、`dev_tools.ps1` |
 | `gen_cluster_config.ps1` | 生成集群版配置(容器地址 / allocator 模式；auction 强制 etcd Snowflake + 跨实例锁) | `start.ps1`(docker/battle 等) |
 | `tidb_up.ps1` | TiDB 集群一键起(社交库可选) | 手动(见 `deploy/tidb-init/README.md`) |
@@ -71,6 +72,10 @@ fail-closed、招募列表恒空）。生成器会拒绝公开 dev key、短 key
 | `release_preflight.ps1` | 发布前预检(配置安全 / 密码强度) | 手动(见 `docs/ops/release-checklist.md`) |
 | `http2_probe.ps1` | 探测 Envoy 客户端连接是否走 HTTP/2 | 手动(见 `docs/design/gateway-decision.md`) |
 | `lib/online_manifest_contract.ps1` | online 镜像 digest pin、writer/Fleet annotation 与渲染契约纯 helper(不访问远端) | `start.ps1`、静态测试 |
+| `build_release_binaries.ps1` | 仅从 clean Git commit 在唯一 staging 构建 exact 24（22 服务 + configtable-gen + pandora-migrate），全批核验后整目录发布 `bin+manifest`；`-Service` 只写开发目录且不改正式 manifest | 人工发布策划包 |
+| `lib/local_infra_state.ps1` | 免 Docker MySQL PID/exe/my.ini/listener 身份、快速 fail-closed netstat listener seam、业务服务已应用 mode+port+social 画像与可重入工作区编排锁 | `local_infra.ps1`、`dev_all.ps1`、`dev_up/down.ps1`、`dev_migrate.ps1`、`run_services.ps1`、`start.ps1` |
+| `lib/planner_mysql_startup.ps1` / `planner_mysql_enrollment.ps1` | 中心 MySQL 模式选择、202 有界登记、bind-once identity 与当前用户 DPAPI 凭据 | `dev_all.ps1`、`run_services.ps1`、`start.ps1` |
+| `lib/mysql_service_runtime_config.ps1` / `planner_mysql_preflight.ps1` | 按服务渲染私有临时 TLS DSN，读取后精确删；启动前验证十库/schema/权限/TLS | `run_services.ps1` |
 | `lib/dsticket_keyset_contract.ps1` | DSTicket 私钥/JWKS/K8s 对象严格对账（RFC 7638、顶层 active_kid、immutable/hash） | `start.ps1`、`dsticket_keyset.ps1`、静态测试 |
 | `lib/dsticket_rotation_contract.ps1` | DSTicket 三阶段材料、marker 时间链、controller/Pod owner、普通发布终态与共享操作锁契约 | `start.ps1`、`dsticket_rotate.ps1`、静态测试 |
 | `tests/online_manifest_contract_test.ps1` | online 镜像/Fleet 契约与 mutant 反例测试 | 手动/CI |
@@ -79,8 +84,18 @@ fail-closed、招募列表恒空）。生成器会拒绝公开 dev key、短 key
 | `tests/services_dsticket_secret_contract_test.ps1` | 四个 signer 私钥卷/非 root/fsGroup 与 Login-only public JWKS 契约 | 手动/CI |
 | `tests/gen_cluster_b1_contract_test.ps1` | B1 signer/verifier、Model-B callback、Stable/Canary allocator 配置生成契约 | 手动/CI |
 | `tests/gen_cluster_team_resume_auth_contract_test.ps1` | Team→Matchmaker 服务身份 key:两端成对、与 login 那把独立、-Prod 必填与跨域复用反例 | 手动/CI |
-| `tests/configtable_gen_svn_status_test.ps1` | 导表失败归因用的 SVN 判定(取版本号 / 未提交判定,含"干净副本 ≠ 没装 svn")行为测试 | 手动/CI |
+| `tests/configtable_gen_svn_status_test.ps1` | 导表的 SVN 发现 / 版本 / 状态行为测试:TortoiseSVN 未进 PATH 自动发现、无 CLI 时 SubWCRev 回退、旧 CLI XML 回退、非零退出 fail-closed、"干净副本 ≠ 没装 svn" | 手动/CI |
 | `tests/configtable_client_repo_resolve_test.ps1` | 客户端仓定位:SVN 原名 `Client` / 自定义仓名 / trunk 整检出 / `-TableRoot` / `PANDORA_CLIENT_REPO` / 空 Table 归类 / 多份检出必须报出来 / 不存在盘符只跳过 | 手动/CI |
 | `tests/oneclick_devenv_exitcode_contract_test.ps1` | 策划一键启动两条护栏:dev.env 自举三态(建/不覆盖/工作区不全硬失败)+ `Invoke-Local` 必须透传 dev_all 退出码 | 手动/CI |
+| `tests/localinfra_mysql_ownership_test.ps1` | 外部 listener 不复用、未知/陈旧 PID 不 shutdown/taskkill、down/reset 失败闭环 | 手动/CI |
+| `tests/localinfra_mysql_port_flow_test.ps1` | 身份状态、候选选择、14 条 DSN 改写、mode+port+social、编排锁与启动链贯穿 | 手动/CI |
+| `tests/run_services_listener_query_contract_test.ps1` | Windows netstat 快速 listener/PID seam；IPv4/IPv6、异常 fail-closed、就绪归属与残留 exact-exe 停止契约 | 手动/CI |
+| `tests/run_services_planner_fast_start_contract_test.ps1` | 仅策划免 Docker 入口启用的 Go 输入强指纹/二进制收据、非 login→login 两波启动、共享 listener 轮询、exact PID 与 secret cleanup 契约 | 手动/CI |
+| `tests/dev_migrate_planner_fast_contract_test.ps1` | 策划本机 MySQL init 强收据（SQL SHA-256 + server UUID + datadir + 实际库/表）、miss 时单进程批量重放，且不跳过正式迁移器 | 手动/CI |
+| `tests/localinfra_planner_parallel_start_contract_test.ps1` | 策划已安装基础设施批量 launch/统一 wait；首次/Force/收据 miss 串行回退，direct PID 与 Kafka Java 子进程双端口 exact owner | 手动/CI |
+| `tests/localinfra_bundled_packages_contract_test.ps1` | Git 空包目录联网、SVN 7 包零公网、显式镜像优先、坏包 SHA256 硬失败、Envoy token 离线短路、旧 dist marker 刷新/失败保留/运行中保护 | 手动/CI |
+| `tests/pwsh_bootstrap_contract_test.ps1` | PowerShell 便携包 cache/bundle/mirror/网络与 SHA 契约；旧/缺 marker 自动刷新、staging 提升失败不回退旧解释器、特殊路径防注入 | 手动/CI |
+| `tests/release_binaries_migrate_contract_test.ps1` | pandora-migrate 构建、manifest/zip 与运行时消费路径闭环 | 手动/CI |
+| `tests/release_artifact_publish_contract_test.ps1` | dirty/unknown 拒绝、失败保留旧批、exact 24、完整/短 SHA、逐文件 hash、唯一 staging 与 `-Service` 不混批的动态契约 | 手动/CI |
 | `tests/publish_to_minio_contract_test.ps1` | MinIO 分发错误传播、不可变内容先传/latest 指针后切、允许远端历史对象的单向完整性校验 | 手动/CI |
 | `tests/infra_etcd_persistence_contract_test.ps1` | 本地 etcd PVC/Recreate 持久化契约与反例 | 手动/CI |

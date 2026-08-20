@@ -35,6 +35,9 @@ param(
     # 留空 = 保持原有 docker 行为(CLAUDE.md §14.2:开关默认值不改现有行为)。
     # 连接地址 / 账号 / 端口两边完全一致,所以后面的迁移器调用一行都不用分叉。
     [string]$MysqlClient = '',
+    # 一键启动已经把 MySQL 当作强依赖；此时连接失败不能再“跳过并返回成功”，否则会让
+    # 后续服务拿旧 schema 启动。独立调用保持原有宽松行为。
+    [switch]$RequireMysql,
     [switch]$WhatIfOnly
 )
 
@@ -42,6 +45,8 @@ $ErrorActionPreference = 'Stop'
 $ScriptDir   = $PSScriptRoot
 $ProjectRoot = (Resolve-Path "$PSScriptRoot/../..").Path
 $MigrationsRoot = Join-Path $ProjectRoot 'tools/migrate/migrations'
+. (Join-Path $ScriptDir 'lib/local_infra_state.ps1')
+. (Join-Path $ScriptDir 'lib/planner_migrate_fast.ps1')
 
 function Write-MigInfo($m) { Write-Host "[INFO] $m" -ForegroundColor Cyan }
 function Write-MigOk($m)   { Write-Host "[ OK ] $m" -ForegroundColor Green }
@@ -50,15 +55,30 @@ function Write-MigWarn($m) { Write-Host "[WARN] $m" -ForegroundColor Yellow }
 Write-Host "===== 数据库结构升级(dev) =====" -ForegroundColor Cyan
 
 $UseLocalClient = [bool]$MysqlClient
+$PlannerFastStart = $UseLocalClient -and ($env:PANDORA_PLANNER_FAST_START -ceq '1')
 if ($UseLocalClient -and -not (Test-Path -LiteralPath $MysqlClient)) {
     Write-Host "[ERR] -MysqlClient 指向的文件不存在: $MysqlClient" -ForegroundColor Red
     exit 1
+}
+if ($UseLocalClient -and $MysqlHost -cne '127.0.0.1') {
+    Write-Host "[ERR] -MysqlClient 只允许连接已验证的本机 127.0.0.1；拒绝目标:$MysqlHost" -ForegroundColor Red
+    exit 1
+}
+
+function Assert-LocalMysqlOwned {
+    if (-not $UseLocalClient) { return }
+    $state = Get-PandoraLocalInfraPortState $ProjectRoot
+    if (-not $state -or [int]$state.MysqlPort -ne $MysqlPort -or
+        -not (Get-PandoraLocalMysqlOwnedProcess $ProjectRoot $state)) {
+        throw "免 Docker MySQL :$MysqlPort 当前 listener 未通过 PID + exe + my.ini 归属复核；拒绝把建库或迁移 SQL 发给未知实例。"
+    }
 }
 
 function Invoke-DevMysqlQuery {
     <# 拿库列表。docker 模式走容器内 mysql,免 Docker 模式走本机 mysql.exe。#>
     param([string]$Sql)
     if ($UseLocalClient) {
+        Assert-LocalMysqlOwned
         $old = $env:MYSQL_PWD
         try {
             $env:MYSQL_PWD = $MysqlPassword
@@ -73,6 +93,7 @@ function Invoke-DevMysqlScript {
     <# 以 root 身份执行一个 .sql 文件(mysql-init 重放)。#>
     param([string]$Path)
     if ($UseLocalClient) {
+        Assert-LocalMysqlOwned
         $old = $env:MYSQL_PWD
         try {
             $env:MYSQL_PWD = $MysqlRootPassword
@@ -85,13 +106,56 @@ function Invoke-DevMysqlScript {
         & docker exec -i $Container sh -c "MYSQL_PWD='$MysqlRootPassword' mysql -uroot" 2>&1
 }
 
-# 先确认 MySQL 能连。连不上就整个跳过(而不是报错中断):可能是没用 MySQL 的场景。
-$dbListRaw = Invoke-DevMysqlQuery 'SHOW DATABASES;'
-if ($LASTEXITCODE -ne 0) {
+function Invoke-DevMysqlScriptsBatch {
+    <# 策划 fast 未命中收据时，把已排序的 mysql-init 一次性送给同一个 mysql.exe。#>
+    param([Parameter(Mandatory)][object[]]$Files)
+    if (-not $UseLocalClient -or -not $PlannerFastStart) {
+        throw '批量 mysql-init 只允许策划本机 fast 路径调用。'
+    }
+    Assert-LocalMysqlOwned
+    # 全部读成功后才启 mysql；中途文件损坏时不会先执行半批 DDL。
+    $sql = Join-PandoraPlannerMysqlInitScripts -Files $Files
+    $old = $env:MYSQL_PWD
+    try {
+        $env:MYSQL_PWD = $MysqlRootPassword
+        $output = @($sql | & $MysqlClient '--protocol=TCP' "--host=$MysqlHost" "--port=$MysqlPort" '--user=root' `
+                '--default-character-set=utf8mb4' 2>&1)
+        $exitCode = $LASTEXITCODE
+        return [pscustomobject][ordered]@{ ExitCode = [int]$exitCode; Output = $output }
+    } finally {
+        $env:MYSQL_PWD = $old
+    }
+}
+
+Enter-PandoraOrchestrationLock -ProjectRoot $ProjectRoot -Operation '数据库结构迁移'
+$orchestrationLockEntered = $true
+try {
+# 先确认 MySQL 能连。策划 fast 同一次查询顺便取实例身份和库/表清单，
+# 供强收据 fail-closed 命中；普通模式仍只做原有 SHOW DATABASES。
+$plannerProbe = $null
+$probeSql = if ($PlannerFastStart) {
+    @"
+SELECT CONCAT('__PANDORA_UUID__=', @@server_uuid);
+SELECT CONCAT('__PANDORA_DATADIR__=', @@datadir);
+SELECT CONCAT('__PANDORA_DB__=', SCHEMA_NAME) FROM INFORMATION_SCHEMA.SCHEMATA;
+SELECT CONCAT('__PANDORA_TABLE__=', TABLE_SCHEMA, '.', TABLE_NAME)
+FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE';
+"@
+} else { 'SHOW DATABASES;' }
+$dbListRaw = Invoke-DevMysqlQuery $probeSql
+$probeExitCode = $LASTEXITCODE
+if ($probeExitCode -ne 0) {
     $whoRaw = if ($UseLocalClient) { "本机 MySQL ${MysqlHost}:${MysqlPort}" } else { "dev MySQL 容器『$Container』" }
     Write-MigWarn "连不上 $whoRaw,跳过结构升级(基础设施可能还没起完)。"
     Write-MigWarn "  详情:$($dbListRaw | Select-Object -First 3)"
+    if ($RequireMysql) { exit 1 }
     exit 0
+}
+if ($PlannerFastStart) {
+    $plannerProbe = ConvertFrom-PandoraPlannerMysqlProbe -Lines @($dbListRaw)
+    $initialExistingDbs = @($plannerProbe.Databases)
+} else {
+    $initialExistingDbs = @($dbListRaw | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
 }
 
 # ---------------------------------------------------------------------------
@@ -109,17 +173,68 @@ if ($LASTEXITCODE -ne 0) {
 # ---------------------------------------------------------------------------
 $initDir = Join-Path $ProjectRoot 'deploy/mysql-init'
 $initFiles = @(Get-ChildItem -LiteralPath $initDir -Filter '*.sql' -ErrorAction SilentlyContinue | Sort-Object Name)
+$initCreatedDbs = @($initFiles | ForEach-Object {
+    $sqlText = Get-Content -LiteralPath $_.FullName -Raw -Encoding utf8
+    [regex]::Matches($sqlText, '(?im)\bCREATE\s+DATABASE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(?<db>[a-z][a-z0-9_]*)`?') |
+        ForEach-Object { $_.Groups['db'].Value }
+} | Sort-Object -Unique)
+$initInventory = $null
+$initFingerprint = ''
+$initReceiptPath = Join-Path $ProjectRoot 'run/localinfra/cfg/mysql-init-receipt.json'
+$skipInitReplay = $false
+$initReplayExecuted = $false
+if ($PlannerFastStart -and $initFiles.Count -gt 0) {
+    $initInventory = Get-PandoraPlannerMysqlInitInventory -Files $initFiles
+    $initFingerprint = Get-PandoraPlannerMysqlInitFingerprint -Files $initFiles -ProjectRoot $ProjectRoot
+    $skipInitReplay = Test-PandoraPlannerMysqlInitReceipt -ReceiptPath $initReceiptPath `
+        -Fingerprint $initFingerprint -ServerUuid $plannerProbe.ServerUuid -DataDir $plannerProbe.DataDir `
+        -FileCount $initFiles.Count -ExpectedDatabases $initInventory.Databases -ExpectedTables $initInventory.Tables `
+        -ActualDatabases $plannerProbe.Databases -ActualTables $plannerProbe.Tables
+}
 if ($initFiles.Count -gt 0) {
-    Write-MigInfo "重放 mysql-init 建库建表脚本($($initFiles.Count) 个,全 IF NOT EXISTS,已存在则空跑)..."
-    foreach ($f in $initFiles) {
-        $sqlOut = Invoke-DevMysqlScript -Path $f.FullName
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[ERR] 重放 $($f.Name) 失败:" -ForegroundColor Red
-            $sqlOut | ForEach-Object { Write-Host "      $_" -ForegroundColor Red }
-            exit 1
+    if ($WhatIfOnly) {
+        Write-MigInfo "[WhatIf] 将重放 mysql-init 建库建表脚本($($initFiles.Count) 个)，本轮不执行。"
+    } elseif ($skipInitReplay) {
+        Write-MigOk "mysql-init 强收据命中(server_uuid + datadir + $($initInventory.Tables.Count) 张实表)，跳过重复 DDL。"
+    } else {
+        Write-MigInfo "重放 mysql-init 建库建表脚本($($initFiles.Count) 个,全 IF NOT EXISTS,已存在则空跑)..."
+        if ($PlannerFastStart) {
+            $batchResult = Invoke-DevMysqlScriptsBatch -Files $initFiles
+            if ($batchResult.ExitCode -ne 0) {
+                Write-Host '[ERR] 批量重放 mysql-init 失败:' -ForegroundColor Red
+                $batchResult.Output | ForEach-Object { Write-Host "      $_" -ForegroundColor Red }
+                exit 1
+            }
+        } else {
+            foreach ($f in $initFiles) {
+                $sqlOut = Invoke-DevMysqlScript -Path $f.FullName
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "[ERR] 重放 $($f.Name) 失败:" -ForegroundColor Red
+                    $sqlOut | ForEach-Object { Write-Host "      $_" -ForegroundColor Red }
+                    exit 1
+                }
+            }
+        }
+        $initReplayExecuted = $true
+        Write-MigOk "mysql-init 脚本已全部重放(建库 / 建表 / 授权已对齐仓库当前状态)。"
+        if ($PlannerFastStart) {
+            $postReplayFingerprint = Get-PandoraPlannerMysqlInitFingerprint -Files $initFiles -ProjectRoot $ProjectRoot
+            if (-not [string]::Equals($postReplayFingerprint, $initFingerprint, [StringComparison]::Ordinal)) {
+                Write-Host '[ERR] mysql-init 在执行期间发生变化，拒绝写入过期收据；请等同步完成后重试。' -ForegroundColor Red
+                exit 1
+            }
+            try {
+                Write-PandoraPlannerMysqlInitReceipt -ReceiptPath $initReceiptPath `
+                    -Fingerprint $initFingerprint -ServerUuid $plannerProbe.ServerUuid -DataDir $plannerProbe.DataDir `
+                    -FileCount $initFiles.Count -DatabaseCount $initInventory.Databases.Count -TableCount $initInventory.Tables.Count
+            } catch {
+                Write-MigWarn "mysql-init 已成功，但本地加速收据写入失败；本轮继续，下次会安全地重放:$($_.Exception.Message)"
+            }
         }
     }
-    Write-MigOk "mysql-init 脚本已全部重放(建库 / 建表 / 授权已对齐仓库当前状态)。"
+} elseif ($RequireMysql) {
+    Write-MigWarn "找不到任何 mysql-init SQL:$initDir"
+    exit 1
 }
 
 # ---------------------------------------------------------------------------
@@ -127,6 +242,7 @@ if ($initFiles.Count -gt 0) {
 # ---------------------------------------------------------------------------
 if (-not (Test-Path -LiteralPath $MigrationsRoot)) {
     Write-MigWarn "找不到 $MigrationsRoot,跳过增量迁移。"
+    if ($RequireMysql) { exit 1 }
     exit 0
 }
 
@@ -135,26 +251,47 @@ $sets = @(Get-ChildItem -LiteralPath $MigrationsRoot -Directory -ErrorAction Sil
     Select-Object -ExpandProperty Name | Sort-Object)
 if ($sets.Count -eq 0) {
     Write-MigWarn "$MigrationsRoot 下没有 migration set,跳过。"
+    if ($RequireMysql) { exit 1 }
     exit 0
 }
 
 # 2) 本机 dev MySQL 里实际存在哪些库。只升级「已存在」的库:建库是上面重放 mysql-init
 #    的职责,本步不越权建库,免得把拼错的库名凭空建出来。
-#    重新查一次 —— 重放可能刚建出了新库(如 pandora_owner)。
-$dbListRaw = Invoke-DevMysqlQuery 'SHOW DATABASES;'
-if ($LASTEXITCODE -ne 0) {
-    Write-MigWarn "重放后重查库列表失败,跳过增量迁移。"
-    exit 0
+#    只有真正重放过 init 才需再查；收据命中时复用首轮同一连接的库清单。
+if ($PlannerFastStart -and -not $initReplayExecuted) {
+    $existingDbs = @($initialExistingDbs)
+} else {
+    $dbListRaw = Invoke-DevMysqlQuery 'SHOW DATABASES;'
+    if ($LASTEXITCODE -ne 0) {
+        Write-MigWarn "重放后重查库列表失败,跳过增量迁移。"
+        if ($RequireMysql) { exit 1 }
+        exit 0
+    }
+    $existingDbs = @($dbListRaw | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
 }
-$existingDbs = @($dbListRaw | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
 
-$targets = @($sets | Where-Object { $existingDbs -contains $_ })
-$missing = @($sets | Where-Object { $existingDbs -notcontains $_ })
+$targets = if ($WhatIfOnly) {
+    @($sets | Where-Object { $existingDbs -contains $_ -or $initCreatedDbs -contains $_ })
+} else {
+    @($sets | Where-Object { $existingDbs -contains $_ })
+}
+$missing = @($sets | Where-Object { $targets -notcontains $_ })
+if ($WhatIfOnly) {
+    $willCreate = @($targets | Where-Object { $existingDbs -notcontains $_ -and $initCreatedDbs -contains $_ })
+    if ($willCreate.Count -gt 0) {
+        Write-MigInfo "[WhatIf] 这些库将先由 mysql-init 创建、再执行迁移:$($willCreate -join ', ')"
+    }
+}
 if ($missing.Count -gt 0) {
+    if ($RequireMysql -and -not $WhatIfOnly) {
+        Write-MigWarn "强制迁移要求的库不存在:$($missing -join ', ')。mysql-init、权限或分发包不完整，拒绝带着漏迁移的 schema 继续启动。"
+        exit 1
+    }
     Write-MigInfo "本机没有这些库,跳过(通常是该服务在本机不启用):$($missing -join ', ')"
 }
 if ($targets.Count -eq 0) {
     Write-MigWarn '本机 dev MySQL 里没有任何可升级的库,跳过。'
+    if ($RequireMysql -and -not $WhatIfOnly) { exit 1 }
     exit 0
 }
 Write-MigInfo "待检查的库($($targets.Count)):$($targets -join ', ')"
@@ -169,12 +306,13 @@ if (-not (Test-Path -LiteralPath $migrateExe) -and -not $hasGo) {
     Write-MigWarn '本机既没有 Go,也没有预编译的迁移器,无法自动升级数据库结构。'
     Write-MigWarn '  若稍后有服务报 Unknown column / Table doesn''t exist,就是结构没跟上,'
     Write-MigWarn '  请找后端同学跑一次 pwsh tools/scripts/dev_migrate.ps1(需要 Go)。'
+    if ($RequireMysql) { exit 1 }
     exit 0
 }
 
 # 4) 生成迁移器要的 targets 清单 + DSN 文件(它只接受文件形式的 DSN,且必须在清单同目录下)。
 #    放临时目录,用完即删。
-$tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "pandora-dev-migrate-$PID"
+$tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("pandora-dev-migrate-{0}-{1}" -f $PID, [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 try {
     $targetEntries = @()
@@ -214,6 +352,7 @@ try {
     # 迁移器的进度日志走 stderr(Go log 默认)。不合并的话 PowerShell 会把每行都渲染成
     # 红色 NativeCommandError,看着像出错了其实一切正常 —— 2>&1 合并成普通输出行。
     # 真正的成败只看退出码。
+    Assert-LocalMysqlOwned
     if (Test-Path -LiteralPath $migrateExe) {
         & $migrateExe @migArgs 2>&1 | ForEach-Object { "  $_" }
     } else {
@@ -229,4 +368,7 @@ try {
 }
 finally {
     Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+} finally {
+    if ($orchestrationLockEntered) { Exit-PandoraOrchestrationLock }
 }

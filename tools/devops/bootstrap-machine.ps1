@@ -119,6 +119,7 @@ $tools = @(
     @{ n = 'svn';      id = 'CollabNet.Subversion';    roles = @('Dev','Build','CI'); why = '版本戳靠 svnversion；Jenkins 的 Subversion 插件不提供命令行客户端' }
     @{ n = 'docker';   id = 'Docker.DockerDesktop';    roles = @('Dev','Build','CI'); why = '基础设施、业务镜像、CI 栈全在 docker 里' }
     @{ n = 'go';       id = 'GoLang.Go';               roles = @('Dev','Build');      why = '编后端二进制与镜像' }
+    @{ n = 'uv';       id = 'astral-sh.uv';            roles = @('Dev','Build','CI'); why = 'python/ 的虚拟环境与依赖装配；缺了 ci_backend.ps1 的 Python 门禁跑不起来' }
     @{ n = 'java';     id = 'Microsoft.OpenJDK.21';    roles = @('CI');               why = 'Jenkins 构建 agent 是 java 进程' }
     @{ n = 'git';      id = 'Git.Git';                 roles = @('Dev');              why = '个人开发用；CI 已不再需要' }
     @{ n = 'kubectl';  id = 'Kubernetes.kubectl';      roles = @('Dev');              why = 'start.ps1 -Mode k8s / online 需要' }

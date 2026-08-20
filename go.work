@@ -33,6 +33,8 @@ use ./proto
 
 use ./tools/migrate
 
+use ./tools/plannerdb-provisioner
+
 use ./tools/dsticketkeys
 
 use ./tools/configtable-gen

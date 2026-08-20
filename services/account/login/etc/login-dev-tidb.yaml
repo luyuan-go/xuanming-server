@@ -73,6 +73,9 @@ killswitch:
 login:
   session_token_ttl: "24h"      # W3 ⑥ 示范:此前靠 Defaults() 填,现可直写
   ds_ticket_ttl: "5m"           # 不变量 §3:DS 票据短时效
+  # team→login ResolvePlayerNos 入站鉴权；必须与 team-dev.yaml 的 resolver 凭据一致。
+  player_no_resolve_auth_secret: "pandora-dev-team-player-no-auth-key-v1!"
+  player_no_resolve_auth_audience: "login:player-no"
 
   # owner 迁移登出释放(owner-authority.md migrate ⑤):登出成功后弱 Query+Release。
   # dev 一键启动已含 owner 服务(:20017);弱依赖,owner 掉线仅告警不影响登出。

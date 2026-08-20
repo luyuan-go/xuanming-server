@@ -215,6 +215,12 @@ $contractTests = @(
     # deploy/k8s/agones/16-ds-envoy.yaml 各写一遍,加新身份头的人只会改自己在用的那份。
     # 集群那份漏剥 = 该头在生产上可被任意调用方伪造(实测曾漏 account-id 与 client-ip)。
     'tools/scripts/tests/envoy_ds_identity_header_strip_contract_test.ps1'
+    # 头顶编号只允许 DS 面精确调用；客户端 catch-all 前必须显式 403，两份 DS Envoy 同步白名单。
+    'tools/scripts/tests/envoy_login_ds_player_no_contract_test.ps1'
+    # Team→Player 名字解析只走集群内 gRPC 服务身份，不得进入客户端或 DS Envoy。
+    'tools/scripts/tests/envoy_player_internal_name_contract_test.ps1'
+    # Team→Player 名字解析的独立 key/audience/address 必须由生产生成器成对注入并与其它权限域隔离。
+    'tools/scripts/tests/gen_cluster_player_name_resolve_auth_contract_test.ps1'
     # 客户端仓 / 策划表根目录定位(2026-08-18):本地目录名和开发机不一样就找不到表 =
     # 一键启动在**第一步导表**就中止,整套后端起不来。这个回归没有任何 go test 能挡
     # (逻辑全在 ps1 里),而且开发机 F:\work\Pandora-Client-SVN 永远是绿的 ——
@@ -225,6 +231,28 @@ $contractTests = @(
     # 把一个可查的故障变成不可查的。首版就踩了空数组被拆成 +''+ 导致"日志是空的"
     # 与"日志读不到"两条相反结论撞成同一个值,是这个测试当场抓出来的。
     'tools/scripts/tests/localinfra_failure_diagnostics_test.ps1'
+    # 免 Docker MySQL 不能因 TCP 可连或陈旧 PID 就复用/停止机器上已有的 Docker/MySQL。
+    'tools/scripts/tests/localinfra_mysql_ownership_test.ps1'
+    # 独立端口必须贯穿状态、迁移、14 条服务 DSN 与 DsOnly restart，不能只改 mysqld 一端。
+    'tools/scripts/tests/localinfra_mysql_port_flow_test.ps1'
+    # 中心 MySQL 客户端：profile/CA 指纹、异步 enrollment+DPAPI/device、secret YAML 与一键生命周期。
+    'tools/scripts/tests/mysql_runtime_profile_contract_test.ps1'
+    'tools/scripts/tests/planner_mysql_enrollment_contract_test.ps1'
+    'tools/scripts/tests/mysql_service_runtime_config_contract_test.ps1'
+    'tools/scripts/tests/planner_mysql_oneclick_contract_test.ps1'
+    'tools/scripts/tests/planner_mysql_preflight_contract_test.ps1'
+    # Windows Get-NetTCPConnection 单次可阻塞数秒；快速 listener seam 仍须保留 PID/exe/my.ini 归属闸。
+    'tools/scripts/tests/run_services_listener_query_contract_test.ps1'
+    # 策划专用热启动：强指纹复用本机二进制，非 login/login 两波批量启动与 exact-PID 统一就绪。
+    'tools/scripts/tests/run_services_planner_fast_start_contract_test.ps1'
+    # 策划本机 MySQL 热启动：SQL 强收据跳过重复 init DDL，miss 时单 mysql 进程批量重放。
+    'tools/scripts/tests/dev_migrate_planner_fast_contract_test.ps1'
+    # 策划已安装基础设施的冷启动：批量 launch、共享 listener 轮询与 direct/Kafka-child exact owner。
+    'tools/scripts/tests/localinfra_planner_parallel_start_contract_test.ps1'
+    # SVN 带包时全程离线、Git 空目录时逐项联网；所有本地来源仍必须过固定 SHA256。
+    'tools/scripts/tests/localinfra_bundled_packages_contract_test.ps1'
+    # 免 Go 策划机必须随发布包拿到 pandora-migrate.exe；否则旧数据目录会跳过增量迁移。
+    'tools/scripts/tests/release_binaries_migrate_contract_test.ps1'
 )
 $contractFailed = @()
 foreach ($rel in $contractTests) {
@@ -240,3 +268,91 @@ if ($contractFailed.Count -gt 0) {
     exit 1
 }
 Write-Host "[ OK ] 契约测试全部通过($($contractTests.Count) 个)。" -ForegroundColor Green
+# ---- Python 侧门禁(2026-08-19)----
+#
+# 为什么必须进 CI:python/ 下已有约 2 万行实现 + 近 600 个测试,而在此之前 CI **一次都没跑过**。
+# 问题不是"Python 侧没有测试",是"有测试但不是门禁" —— 与上面那段集群配置生成器契约测试
+# 当初的处境完全一样。两条真实回归路径此前完全无人挡:
+#
+#   ① Go 侧改 pkg/errcode 的码值 / 加删错误码 → python/pandorapy/errcode.py 是**生成物**,
+#      不同步就是两栈对同一个失败返回不同的码,客户端按码分支即静默走错。
+#      python/tools/gen_errcode.py --check 正是为此写的门,没人跑等于白写。
+#   ② configtable/dist 重新导表 → Python 侧加载器与跨语言 parity 测试断言的是**真实批次**
+#      (checksum / 行数 / 起始节点唯一性),漂移只有跑测试才现形。
+#
+# 依赖门控沿用**同一套环境变量**(PANDORA_TEST_ETCD_ENDPOINTS / _MYSQL_DSN / _REDIS_ADDR),
+# 所以 ci_db.ps1 起的那套库对 Python 用例同样生效,不需要第二套 DSN 管道。
+#
+# 环境自举:优先用 python/.venv;没有就用 uv 现建(uv 已列进 tools/devops/bootstrap-machine.ps1
+# 的前置工具表)。**刻意不做**"没装 Python 就跳过" —— 那正是本文件反复在防的"跳过等于通过"。
+$pyRoot = Join-Path $ProjectRoot 'python'
+$pyExe = Join-Path $pyRoot '.venv\Scripts\python.exe'
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+    Write-Host "`n[ERR ] 本机没有 uv —— Python 侧门禁无法执行。" -ForegroundColor Red
+    Write-Host '       装 uv:winget install --id astral-sh.uv  (或 pwsh tools/devops/bootstrap-machine.ps1 -Install)' -ForegroundColor Red
+    exit 1
+}
+if (-not (Test-Path -LiteralPath $pyExe)) {
+    Write-Host "`n===== Python 环境自举(uv venv)=====" -ForegroundColor Magenta
+    & uv venv --python 3.13 (Join-Path $pyRoot '.venv')
+    if ($LASTEXITCODE -ne 0) { Write-Host '[ERR ] uv venv 失败。' -ForegroundColor Red; exit 1 }
+}
+# ★ 依赖同步**每轮都跑**,不能只在 .venv 缺失时跑。
+# 只在首次建环境时装的话,pyproject.toml 加了依赖之后 CI 机上那个旧 .venv 永远不会更新 ——
+# 表现是「本机绿、CI 红」或更糟的「CI 用着旧依赖打绿」。uv 是幂等的且命中缓存时是秒级。
+#
+# ★ 按**锁文件**装,不按 pyproject 的 `>=` 下界装:后者意味着上游随便发一个新版
+# 就能在仓库零改动的情况下把流水线打红(或悄悄换掉一个行为不同的实现)。
+# `uv pip sync` 会把环境**收敛**到锁文件(多装的也卸掉),CI 机上因此不会攒出
+# 与锁文件不一致的历史环境。改了依赖要重新 compile —— 见 requirements.lock 头注释。
+$pyLock = Join-Path $pyRoot 'requirements.lock'
+Write-Host "`n===== Python 依赖同步(uv pip sync requirements.lock)=====" -ForegroundColor Magenta
+if (-not (Test-Path -LiteralPath $pyLock)) {
+    Write-Host "[ERR ] 缺 $pyLock —— 依赖锁是入库文件,不该缺。" -ForegroundColor Red
+    Write-Host '       重新生成:cd python && uv pip compile pyproject.toml --extra dev --extra storage --output-file requirements.lock' -ForegroundColor Red
+    exit 1
+}
+& uv pip sync --python $pyExe $pyLock
+if ($LASTEXITCODE -ne 0) { Write-Host '[ERR ] uv pip sync 失败。' -ForegroundColor Red; exit 1 }
+# 本包自身用 --no-deps 接进去:依赖已由 sync 收敛,这一步只做 editable 安装。
+& uv pip install --python $pyExe -e $pyRoot --no-deps
+if ($LASTEXITCODE -ne 0) { Write-Host '[ERR ] uv pip install -e 失败。' -ForegroundColor Red; exit 1 }
+
+$pyFailed = @()
+$env:PYTHONUTF8 = '1'   # Windows stdout 默认 cp1252,中文日志会整条丢(见 python/README.md)
+Push-Location $pyRoot
+try {
+    Write-Host "`n===== Python 门禁 1/2:errcode 与 Go 侧一致(tools/gen_errcode.py --check)=====" -ForegroundColor Magenta
+    & $pyExe tools/gen_errcode.py --check
+    if ($LASTEXITCODE -ne 0) { $pyFailed += 'gen_errcode.py --check' }
+
+    Write-Host "`n===== Python 门禁 2/2:pytest =====" -ForegroundColor Magenta
+    # -rs 打出全部跳过原因。Python 侧同样有依赖门控用例:实测**缺 etcd/MySQL/Redis 时
+    # 592 个用例里有 83 个静默跳过**(14%),而 pytest 照样打绿 —— 与上面 go_test_skip_audit
+    # 防的是同一件事,所以这里也按同一口径分组:数据库组随 -RequireDbTests 硬门禁,
+    # 其余(etcd / Redis / go 可执行)只告警为"本轮未验证"。
+    $pyOut = & $pyExe -m pytest tests/ -q -rs 2>&1
+    $pyTestExit = $LASTEXITCODE
+    $pyOut | ForEach-Object { Write-Host $_ }
+    if ($pyTestExit -ne 0) { $pyFailed += 'pytest' }
+
+    $pySkips = @($pyOut | Where-Object { $_ -match '^SKIPPED' })
+    $pyDbSkips = @($pySkips | Where-Object { $_ -match 'MySQL|TiDB' })
+    if ($pySkips.Count -gt 0) {
+        Write-Host ("`n[WARN] Python 用例跳过 {0} 条 —— 本轮绿灯**不覆盖**这些范围:" -f $pySkips.Count) -ForegroundColor Yellow
+        $pySkips | Select-Object -Unique | ForEach-Object { Write-Host "  ! $_" -ForegroundColor Yellow }
+    }
+    if ($RequireDbTests -and $pyDbSkips.Count -gt 0) {
+        Write-Host "`n[ERR ] -RequireDbTests 已开,但下列 Python 数据库用例仍被跳过:" -ForegroundColor Red
+        $pyDbSkips | Select-Object -Unique | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+        $pyFailed += 'pytest 数据库门控用例被跳过'
+    }
+} finally {
+    Pop-Location
+}
+if ($pyFailed.Count -gt 0) {
+    Write-Host "`n[ERR ] Python 侧门禁未通过:" -ForegroundColor Red
+    $pyFailed | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+    exit 1
+}
+Write-Host '[ OK ] Python 侧门禁通过(errcode 一致 + pytest 全绿)。' -ForegroundColor Green

@@ -85,10 +85,14 @@ func (s *TeamService) CreateTeam(ctx context.Context, _ *teamv1.CreateTeamReques
 	if err != nil {
 		return &teamv1.CreateTeamResponse{Code: toProtoCode(err)}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.CreateTeamResponse{
 		Code:   commonv1.ErrCode_OK,
 		TeamId: rec.TeamId,
-		Team:   s.uc.TeamToProto(rec),
+		Team:   teamView,
 	}, nil
 }
 
@@ -120,9 +124,13 @@ func (s *TeamService) Invite(ctx context.Context, req *teamv1.InviteRequest) (*t
 	// expires_at_ms 以"现在"为锚点,与 biz.SetInvite 写 redis 的 TTL 起算点一致;
 	// 不能用 rec.UpdatedAtMs(那是队伍上次变更时间,Invite 不改队伍,会偏早过期)。
 	expiresAtMs := time.Now().UnixMilli() + s.uc.InviteTTLMs()
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.InviteResponse{
 		Code:        commonv1.ErrCode_OK,
-		Team:        s.uc.TeamToProto(rec),
+		Team:        teamView,
 		InviteId:    inviteID,
 		ExpiresAtMs: expiresAtMs,
 	}, nil
@@ -145,9 +153,13 @@ func (s *TeamService) AcceptInvite(ctx context.Context, req *teamv1.AcceptInvite
 	if err != nil {
 		return &teamv1.AcceptInviteResponse{Code: toProtoCode(err)}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.AcceptInviteResponse{
 		Code: commonv1.ErrCode_OK,
-		Team: s.uc.TeamToProto(rec),
+		Team: teamView,
 	}, nil
 }
 
@@ -168,9 +180,13 @@ func (s *TeamService) LeaveTeam(ctx context.Context, req *teamv1.LeaveTeamReques
 	if err != nil {
 		return &teamv1.LeaveTeamResponse{Code: toProtoCode(err)}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.LeaveTeamResponse{
 		Code: commonv1.ErrCode_OK,
-		Team: s.uc.TeamToProto(rec),
+		Team: teamView,
 	}, nil
 }
 
@@ -196,9 +212,13 @@ func (s *TeamService) Kick(ctx context.Context, req *teamv1.KickRequest) (*teamv
 	if err != nil {
 		return &teamv1.KickResponse{Code: toProtoCode(err)}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.KickResponse{
 		Code: commonv1.ErrCode_OK,
-		Team: s.uc.TeamToProto(rec),
+		Team: teamView,
 	}, nil
 }
 
@@ -219,9 +239,13 @@ func (s *TeamService) SetReady(ctx context.Context, req *teamv1.SetReadyRequest)
 	if err != nil {
 		return &teamv1.SetReadyResponse{Code: toProtoCode(err)}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.SetReadyResponse{
 		Code: commonv1.ErrCode_OK,
-		Team: s.uc.TeamToProto(rec),
+		Team: teamView,
 	}, nil
 }
 
@@ -237,9 +261,13 @@ func (s *TeamService) GetTeam(ctx context.Context, req *teamv1.GetTeamRequest) (
 	if err != nil {
 		return &teamv1.GetTeamResponse{Code: toProtoCode(err)}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.GetTeamResponse{
 		Code: commonv1.ErrCode_OK,
-		Team: s.uc.TeamToProto(rec),
+		Team: teamView,
 	}, nil
 }
 
@@ -259,10 +287,14 @@ func (s *TeamService) GetMyTeam(ctx context.Context, _ *teamv1.GetMyTeamRequest)
 	if !hasTeam {
 		return &teamv1.GetMyTeamResponse{Code: commonv1.ErrCode_OK, HasTeamMsg: false}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.GetMyTeamResponse{
 		Code:       commonv1.ErrCode_OK,
 		HasTeamMsg: true,
-		Team:       s.uc.TeamToProto(rec),
+		Team:       teamView,
 	}, nil
 }
 
@@ -316,9 +348,13 @@ func (s *TeamService) SetTeamMap(ctx context.Context, req *teamv1.SetTeamMapRequ
 	if err != nil {
 		return &teamv1.SetTeamMapResponse{Code: toProtoCode(err)}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.SetTeamMapResponse{
 		Code: commonv1.ErrCode_OK,
-		Team: s.uc.TeamToProto(rec),
+		Team: teamView,
 	}, nil
 }
 
@@ -336,6 +372,9 @@ func (s *TeamService) ListOpenTeams(ctx context.Context, req *teamv1.ListOpenTea
 
 	teams, err := s.uc.ListOpenTeams(ctx, req.GetMapId(), int(req.GetLimit()))
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return &teamv1.ListOpenTeamsResponse{Code: toProtoCode(err)}, nil
 	}
 	return &teamv1.ListOpenTeamsResponse{
@@ -368,7 +407,10 @@ func (s *TeamService) ApplyToTeam(ctx context.Context, req *teamv1.ApplyToTeamRe
 		ExpiresAtMs: expiresAtMs,
 	}
 	if joined {
-		resp.Team = s.uc.TeamToProto(rec)
+		resp.Team, err = s.uc.TeamToProto(ctx, rec)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return resp, nil
 }
@@ -391,12 +433,9 @@ func (s *TeamService) ListTeamApplications(ctx context.Context, req *teamv1.List
 	if err != nil {
 		return &teamv1.ListTeamApplicationsResponse{Code: toProtoCode(err)}, nil
 	}
-	applications := make([]*teamv1.TeamApplication, 0, len(recs))
-	for _, r := range recs {
-		applications = append(applications, &teamv1.TeamApplication{
-			PlayerId:    r.PlayerID,
-			ExpiresAtMs: r.ExpiresAtMs,
-		})
+	applications, err := s.uc.TeamApplicationsToProto(ctx, req.GetTeamId(), recs)
+	if err != nil {
+		return nil, err
 	}
 	return &teamv1.ListTeamApplicationsResponse{
 		Code:         commonv1.ErrCode_OK,
@@ -427,9 +466,13 @@ func (s *TeamService) HandleTeamApplication(ctx context.Context, req *teamv1.Han
 	if err != nil {
 		return &teamv1.HandleTeamApplicationResponse{Code: toProtoCode(err)}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.HandleTeamApplicationResponse{
 		Code: commonv1.ErrCode_OK,
-		Team: s.uc.TeamToProto(rec),
+		Team: teamView,
 	}, nil
 }
 
@@ -492,9 +535,13 @@ func (s *TeamService) BeginTeamMatch(ctx context.Context, req *teamv1.BeginTeamM
 	if err != nil {
 		return &teamv1.BeginTeamMatchResponse{Code: toProtoCode(err)}, nil
 	}
+	teamView, err := s.uc.TeamToProto(ctx, team)
+	if err != nil {
+		return nil, err
+	}
 	return &teamv1.BeginTeamMatchResponse{
 		Code:             commonv1.ErrCode_OK,
-		Team:             s.uc.TeamToProto(team),
+		Team:             teamView,
 		LeaseExpiresAtMs: expiresAtMs,
 		// 冻结这份名单那一刻的 ready 代际。matchmaker 必须原样带进 match 记录,
 		// 并在 EndTeamMatch 回传 —— 它是「这次复位对应的正是这一局」的唯一凭据。

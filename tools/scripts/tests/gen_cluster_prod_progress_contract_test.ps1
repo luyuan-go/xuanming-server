@@ -28,6 +28,8 @@ try {
         -PlacementBattleDepartureSecret 'prod-placement-battle-departure-0123456789abcdef-007' `
         -MatchResumeAuthSecret 'prod-match-resume-auth-0123456789abcdef-008' `
         -TeamResumeAuthSecret 'prod-team-resume-auth-0123456789abcdef-012' `
+        -PlayerNoResolveAuthSecret 'prod-player-no-resolve-auth-0123456789abcdef-013' `
+        -PlayerNameResolveAuthSecret 'prod-player-name-resolve-auth-0123456789abcdef-014' `
         -AllocationAbortAuthSecret 'prod-allocation-abort-auth-0123456789abcdef-009' `
         -OwnerStoreDsn 'prod_owner:prod-owner-pwd-010@tcp(tidb.pandora.svc:4000)/pandora_owner?parseTime=true&loc=UTC' `
         -AccountStoreDsn 'prod_login:prod-acct-pwd-011@tcp(tidb.pandora.svc:4000)/pandora_account?parseTime=true&loc=UTC' `

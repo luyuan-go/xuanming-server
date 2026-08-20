@@ -17,8 +17,11 @@ $EnvFile     = "$ProjectRoot/deploy/env/dev.env"
 # 停机也吃 --env-file:dev.env 缺失(新机器没跑过启动就先双击了停止)会让 compose 直接报错,
 # 于是「一键停止」也失败。与 dev_up 用同一份自举逻辑。
 . "$PSScriptRoot/dev_env_file.ps1"
-Confirm-DevEnvFile -ProjectRoot $ProjectRoot
+. "$PSScriptRoot/lib/local_infra_state.ps1"
 
+Enter-PandoraOrchestrationLock -ProjectRoot $ProjectRoot -Operation 'Docker 基础设施停止'
+try {
+Confirm-DevEnvFile -ProjectRoot $ProjectRoot
 Write-Host "===== Pandora dev infra down =====" -ForegroundColor Cyan
 
 if ($Volumes) {
@@ -31,4 +34,8 @@ if ($Volumes) {
     docker compose -f $ComposeFile --env-file $EnvFile down -v
 } else {
     docker compose -f $ComposeFile --env-file $EnvFile down
+}
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+} finally {
+    Exit-PandoraOrchestrationLock
 }

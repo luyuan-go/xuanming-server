@@ -1,0 +1,12 @@
+# venv 与字节码不进版本库
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# gen/ **刻意不忽略** —— 与 Go 侧 proto/gen/go 一致:生成产物进版本库,
+# 这样没装 buf 的机器也能直接跑,且 review 时能看到协议改动的实际影响面。
+# 重新生成:cd proto && buf generate --template buf.gen.python.yaml
