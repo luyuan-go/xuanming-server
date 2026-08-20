@@ -21,7 +21,9 @@ from typing import Protocol
 from pandora.chat.v1 import chat_pb2
 from redis.asyncio.client import Redis
 
-from pandorapy import dbguard, errcode
+from pandorapy import dbguard, errcode, redisx
+
+DEFAULT_DB = "pandora_social"
 
 
 class PrivateRepo(Protocol):
@@ -43,10 +45,11 @@ class MySQLPrivateRepo:
     列顺序也保持一致,避免 scan 时错位。
     """
 
-    __slots__ = ("_pool",)
+    __slots__ = ("_pool", "_db")
 
-    def __init__(self, pool) -> None:  # noqa: ANN001
+    def __init__(self, pool, db: str = DEFAULT_DB) -> None:  # noqa: ANN001
         self._pool = pool
+        self._db = db
 
     async def save_private(self, msg) -> None:
         """落一条私聊消息。message_id 由 biz 用 snowflake 预生成。"""
@@ -121,7 +124,7 @@ class MySQLPrivateRepo:
                 return await dbguard.sweep_table(
                     conn,
                     mode,
-                    "pandora_social",
+                    self._db,
                     "chat_private_messages",
                     "message_id < %s",
                     limit,
@@ -131,6 +134,17 @@ class MySQLPrivateRepo:
                 raise errcode.PandoraError(
                     errcode.ErrInternal, "sweep private history: %s", exc
                 ) from exc
+
+
+def _world_cooldown_key(player_id: int) -> str:
+    """世界频道冷却 key,与 Go 的 data.worldCooldownKey 逐字一致。
+
+    **刻意不走 pandora:rl:* 规范**:这是先于该规范存在的历史 key,Go 侧保留原样以避免
+    滚动升级窗口内新旧进程双键并行。迁移期 Go 副本与 Python 副本同时在线,key 只要有一
+    个字符不同,同一玩家就在两侧各占一个窗 —— 实际冷却被放宽一倍,而两边日志都显示
+    "限流生效中";按 pandora:chat:world:cd:* 建的巡检也会对 Python 副本整体失明。
+    """
+    return f"pandora:chat:world:cd:{player_id}"
 
 
 class RedisRateLimiter:
@@ -151,13 +165,15 @@ class RedisRateLimiter:
         self._rdb = rdb
 
     async def allow_world(self, player_id: int, cooldown: _dt.timedelta) -> bool:
-        return await self._occupy(f"pandora:chat:cd:world:{player_id}", cooldown)
+        return await self._occupy(_world_cooldown_key(player_id), cooldown)
 
     async def allow_channel(
         self, channel: str, player_id: int, cooldown: _dt.timedelta
     ) -> bool:
         # 按频道独立占窗:队聊不占私聊的窗(与 Go 侧一致)。
-        return await self._occupy(f"pandora:chat:cd:{channel}:{player_id}", cooldown)
+        # key 走 redisx.rl_key 而不是手拼字面量 —— Go 侧同样调 redisx.RLKey,
+        # 共用同一个构造器才能保证规范以后调整时两栈一起动,不会只改一边。
+        return await self._occupy(redisx.rl_key("chat", channel, player_id), cooldown)
 
     async def _occupy(self, key: str, cooldown: _dt.timedelta) -> bool:
         ms = int(cooldown.total_seconds() * 1000)

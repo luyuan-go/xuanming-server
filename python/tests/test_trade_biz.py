@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import datetime as _dt
 
 import pytest
 from pandora.trade.v1 import trade_pb2
@@ -351,8 +350,8 @@ async def test_rate_quota_rejects_before_side_effects(rdb) -> None:
     """★ 配额拒绝必须发生在任何副作用之前 —— 不能先写订单再拒。"""
 
     class DenyAll:
-        async def allow(self, action: str, subject: int) -> bool:
-            return False
+        async def allow(self, action: str, subject: int) -> tuple[bool, Exception | None]:
+            return False, None
 
     _repo, uc = await _make(rdb)
     uc.set_rate_quota(DenyAll())
@@ -367,8 +366,9 @@ async def test_rate_quota_failure_is_fail_open(rdb) -> None:
     """配额判定失败 fail-open 放行 —— 它是背压门不是权威门。"""
 
     class Broken:
-        async def allow(self, action: str, subject: int) -> bool:
-            raise RuntimeError("quota store down")
+        # 契约是 `(ok, exc)`:真实的 ActionQuota 从不抛,故障走返回值。
+        async def allow(self, action: str, subject: int) -> tuple[bool, Exception | None]:
+            return True, RuntimeError("quota store down")
 
     _repo, uc = await _make(rdb)
     uc.set_rate_quota(Broken())
@@ -414,3 +414,123 @@ def test_redis_keys_match_go_format() -> None:
     """
     assert tdata.order_key(12345) == "pandora:trade:order:{12345}"
     assert tdata.player_key(1001) == "pandora:trade:player:1001"
+
+
+# ── ★ 没有真实账本时必须拒绝构造 ────────────────────────────────────────────
+
+
+async def test_missing_ledger_is_rejected_at_construction(rdb) -> None:
+    """★ 不注入 ResourceLedger 且未显式授权 → **构造就失败**。
+
+    Noop 账本会让成交"不真实扣转"背包 / 货币,而订单状态、审计流水、客户端提示
+    全都显示成功 —— 这是审计点名过的降级风险,且没有任何运行期信号。
+
+    这道闸原先只写在 Go 的 main.go 里,Python 侧 trade **没有 main**,
+    docstring 却声称"生产由 main 强制 fail-fast"。闸下沉到构造函数之后,
+    "忘记接账本"在结构上不可能通过 —— 不依赖任何人记得。
+    """
+    from pandorapy import errcode
+
+    repo = tdata.RedisTradeRepo(rdb)
+    with pytest.raises(errcode.PandoraError) as exc:
+        tbiz.TradeUsecase(repo, None, None, FakeSnowflake(), _cfg())
+    assert exc.value.code == errcode.ErrInvalidState
+    assert "allow_noop_ledger" in str(exc.value)
+
+
+async def test_noop_ledger_allowed_only_when_explicitly_enabled(rdb) -> None:
+    """显式开 allow_noop_ledger 才放行(联调 / 单测路径仍可用)。"""
+    cfg = _cfg(allow_noop_ledger=True)
+    uc = tbiz.TradeUsecase(tdata.RedisTradeRepo(rdb), None, None, FakeSnowflake(), cfg)
+    assert isinstance(uc._ledger, tbiz.NoopResourceLedger)  # noqa: SLF001
+
+
+async def test_real_action_quota_plugs_into_the_rate_seam(rdb) -> None:
+    """★ `redisx.ActionQuota` 必须能直接插进 trade 的频率配额接缝。
+
+    这个接缝(`set_rate_quota`)一直存在,但**没有任何可注入的实现** ——
+    `rate_quota_per_min` 配了也不生效,而配置看起来是有频率限制的。
+    本用例同时钉住两件事:协议形状对得上、且真的会拒。
+
+    总量闸(max_orders_per_player)只限「同时挂多少」,挡不住
+    「下单-撤单-再下单」的循环 —— 每轮都产生托管写 + 流水行,频率闸补的正是这一维。
+    """
+    from pandorapy import errcode, redisx
+
+    _repo, uc = await _make(rdb)
+    uc.set_rate_quota(redisx.ActionQuota(rdb, "trade", limit=2, window_sec=60))
+
+    seller, buyer = 7001, 7002
+    ok1 = await uc.create_order(seller, buyer, _items((5001, 1)), [], price=10)
+    ok2 = await uc.create_order(seller, buyer, _items((5001, 1)), [], price=10)
+    assert ok1 > 0 and ok2 > 0
+
+    with pytest.raises(errcode.PandoraError) as exc:
+        await uc.create_order(seller, buyer, _items((5001, 1)), [], price=10)
+    assert exc.value.code == errcode.ErrRateLimited
+
+
+# ── 失败路径必须回传"订单现在停在哪"(与 Go 逐路径一致)─────────────────────
+#
+# Go 的 biz.ConfirmOrder 是 `(state, err)` 双返回,**失败时 state 仍然有效**,
+# service 层原样透传(service/trade.go:61-62)。Python 用异常传播,不显式挂上就丢成 0,
+# 而 0 = ORDER_STATE_UNSPECIFIED,与"服务端不知道"无法区分 —— 这两件事对客户端
+# 却是相反的指令:SELLER_CONFIRMED 必须重试(钱货可能已过户),FAILED/EXPIRED 别重试。
+#
+# 拆掉 biz.py 里的 _with_state(...) 这几条会当场红。
+
+
+async def test_transient_failure_reports_seller_confirmed(rdb) -> None:
+    """★ 结算在途(可能已生效)—— 必须回 SELLER_CONFIRMED,客户端据此重试。
+
+    对应 Go trade.go:403。
+    """
+    ledger = RecordingLedger(fail_with=RuntimeError("net timeout"))
+    _repo, uc = await _make(rdb, ledger=ledger)
+    order_id = await uc.create_order(1001, 2002, _items((5001, 1)), [], 10)
+    await uc.confirm_order(2002, order_id)
+    with pytest.raises(errcode.PandoraError) as exc:
+        await uc.confirm_order(1001, order_id)
+    assert exc.value.order_state == _S.ORDER_STATE_SELLER_CONFIRMED, (
+        "结算在途却回了 UNSPECIFIED —— 客户端会当订单没动而放弃,而资产可能已经过户"
+    )
+
+
+async def test_insufficient_reports_failed(rdb) -> None:
+    """资产未动的终态 —— 回 FAILED,客户端不该重试。对应 Go trade.go:398。"""
+    ledger = RecordingLedger(
+        fail_with=errcode.PandoraError(errcode.ErrTradeInsufficient, "not enough")
+    )
+    _repo, uc = await _make(rdb, ledger=ledger)
+    order_id = await uc.create_order(1001, 2002, _items((5001, 1)), [], 10)
+    await uc.confirm_order(2002, order_id)
+    with pytest.raises(errcode.PandoraError) as exc:
+        await uc.confirm_order(1001, order_id)
+    assert exc.value.order_state == _S.ORDER_STATE_FAILED
+
+
+async def test_expired_reports_expired(rdb) -> None:
+    """惰性过期 —— 回 EXPIRED。对应 Go trade.go:351。"""
+    _repo, uc = await _make(rdb, cfg=_cfg(order_expire="1ms"))
+    order_id = await uc.create_order(1001, 2002, _items((5001, 1)), [], 10)
+    with pytest.raises(errcode.PandoraError) as exc:
+        await uc.confirm_order(2002, order_id)
+    assert exc.value.code == errcode.ErrTradeOrderExpired
+    assert exc.value.order_state == _S.ORDER_STATE_EXPIRED
+
+
+async def test_pandora_error_order_state_is_declared_and_defaulted() -> None:
+    """order_state 必须是**声明并初始化**的字段,读的那侧不用 getattr(..., 默认值)。
+
+    注意这道保护的方向:`PandoraError` 继承 `Exception`,而 Exception 自带 `__dict__`,
+    所以 `__slots__` **拦不住写侧拼错**(`exc.oder_state = 3` 照样成功)。
+    它拦的是**读侧** —— 字段在 `__init__` 里初始化过,读的地方可以直接写
+    `exc.order_state`;一旦读侧拼错就当场 AttributeError,而不是像
+    `getattr(exc, "oder_state", 0)` 那样永远悄悄返回 0。
+    service.py 正是因此从 getattr 改成了直接属性访问。
+    """
+    assert "order_state" in errcode.PandoraError.__slots__
+    err = errcode.PandoraError(errcode.ErrUnavailable, "x")
+    assert err.order_state == 0, "没初始化的话读侧就只能退回 getattr + 默认值"
+    with pytest.raises(AttributeError):
+        _ = err.oder_state  # 读侧拼错 → 当场炸

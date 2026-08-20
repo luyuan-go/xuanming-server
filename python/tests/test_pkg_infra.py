@@ -11,10 +11,11 @@
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
-from pandorapy import cellroute, dbguard, killswitch, mysqlx
+from pandorapy import cellroute, configtable, dbguard, killswitch, mysqlx
 
 
 # ── cellroute ────────────────────────────────────────────────────────────────
@@ -212,6 +213,125 @@ def test_check_payload_warns_at_80_percent() -> None:
     dbguard.check_payload("bag_items", b"x" * 80, max_bytes=100)  # 放行,只 WARN
 
 
+# ── dbguard.sweep_table:Outcome 的形状契约 ───────────────────────────────────
+#
+# 这一组钉的是"调用方能从 Outcome 里读出什么"。曾经出过的事故:Outcome 少了
+# truncated 这一位,调用方(player 保留期清理循环)只好从 matched/deleted 推,
+# 而 DELETE 档下这两个字段携带的是同一个数 —— 推出来的判据恒真,循环每轮只删
+# 一批就退出,只增表积压永远追不平。用手搓 Outcome 的假件测不出这一条:假件想
+# 编什么形状就编什么形状,而真 sweep_table 产不出那种形状。
+
+
+class _FakeCursor:
+    """够 dbguard.sweep_table 用的最小 cursor:execute / rowcount / fetchone。"""
+
+    def __init__(self, rowcount: int = 0, count: int = 0) -> None:
+        self.rowcount = rowcount
+        self._count = count
+        self.executed: list[tuple[str, object]] = []
+
+    async def __aenter__(self) -> "_FakeCursor":
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def execute(self, sql: str, params: object = None) -> None:
+        self.executed.append((sql, params))
+
+    async def fetchone(self) -> tuple[int]:
+        return (self._count,)
+
+
+class _FakeConn:
+    def __init__(self, cur: _FakeCursor) -> None:
+        self._cur = cur
+
+    def cursor(self) -> _FakeCursor:
+        return self._cur
+
+
+async def test_sweep_rejects_schema_injection_before_sql() -> None:
+    cur = _FakeCursor(rowcount=1)
+    with pytest.raises(ValueError, match="schema"):
+        await dbguard.sweep_table(
+            _FakeConn(cur),
+            dbguard.Mode.DELETE,
+            "physical_db`.`canonical_db",
+            "exp_history",
+            "created_at < %s",
+            1000,
+            "t",
+        )
+    assert cur.executed == []
+
+
+async def test_capacity_check_rejects_invalid_schema_before_query() -> None:
+    cur = _FakeCursor()
+    with pytest.raises(ValueError, match="schema"):
+        await dbguard.check_budgets(
+            _FakeConn(cur),
+            "physical-db",
+            [dbguard.TableBudget(table="exp_history", max_rows=1)],
+        )
+    assert cur.executed == []
+
+
+async def test_sweep_delete_full_batch_is_truncated() -> None:
+    """DELETE 打满 limit → truncated=True(还有积压,调用方必须继续下一批)。"""
+    cur = _FakeCursor(rowcount=1000)
+    out = await dbguard.sweep_table(
+        _FakeConn(cur), dbguard.Mode.DELETE, "db", "exp_history", "created_at < %s", 1000, "t"
+    )
+    assert out.deleted == 1000
+    assert out.truncated is True
+
+
+async def test_sweep_delete_short_batch_is_not_truncated() -> None:
+    """DELETE 没打满 limit → truncated=False(追平了,可以收工)。"""
+    cur = _FakeCursor(rowcount=500)
+    out = await dbguard.sweep_table(
+        _FakeConn(cur), dbguard.Mode.DELETE, "db", "exp_history", "created_at < %s", 1000, "t"
+    )
+    assert out.deleted == 500
+    assert out.truncated is False
+
+
+@pytest.mark.parametrize("rowcount", [0, 1, 500, 999, 1000])
+async def test_sweep_delete_matched_always_equals_deleted(rowcount: int) -> None:
+    """★ DELETE 档 matched == deleted **恒成立**,所以 truncated 无法从两者推回来。
+
+    这正是 Go 必须单独留 `Truncated bool` 的原因(sweep.go:181-182 是
+    `out.Matched, out.Deleted = n, n` 紧跟 `out.Truncated = limit > 0 && n >= limit`)。
+    谁想省掉这一位、改用 `matched > deleted` 之类的替代判据,得到的必然是个恒假的式子。
+    """
+    cur = _FakeCursor(rowcount=rowcount)
+    out = await dbguard.sweep_table(
+        _FakeConn(cur), dbguard.Mode.DELETE, "db", "exp_history", "created_at < %s", 1000, "t"
+    )
+    assert out.matched == out.deleted == rowcount
+    assert (out.matched > out.deleted) is False
+
+
+async def test_sweep_report_only_is_never_truncated() -> None:
+    """report_only 的 COUNT 不受 limit 截断,truncated 恒 False(对齐 Go 的零值)。
+
+    注意 report_only 档 matched(=待清理总量)可以远大于 deleted(=0)—— 一个只在
+    这一档为真、而这一档根本不需要循环的形状。把它当"被截断"用就会把语义搬错档位。
+    """
+    cur = _FakeCursor(count=10_000)
+    out = await dbguard.sweep_table(
+        _FakeConn(cur), dbguard.Mode.REPORT_ONLY, "db", "exp_history", "created_at < %s", 1000, "t"
+    )
+    assert (out.matched, out.deleted, out.truncated) == (10_000, 0, False)
+
+
+def test_truncated_formula_matches_go(repo_root: pathlib.Path) -> None:
+    """公式取自 Go 源码:Go 改了口径这条必须红,而不是等生产上积压追不平才发现。"""
+    src = (repo_root / "pkg" / "dbguard" / "sweep.go").read_text(encoding="utf-8")
+    assert "out.Truncated = limit > 0 && n >= int64(limit)" in src
+
+
 # ── mysqlx ───────────────────────────────────────────────────────────────────
 
 
@@ -260,3 +380,263 @@ def test_map_db_error_does_not_swallow_deadlock() -> None:
     assert mysqlx.map_db_error(FakeDBError(1062, "dup")) == errcode.ErrAlreadyExists
     assert mysqlx.map_db_error(FakeDBError(1406, "long")) == errcode.ErrInvalidArg
     assert mysqlx.map_db_error(FakeDBError(1213, "deadlock")) == errcode.ErrInternal
+
+
+# ── redisx:分布式锁的 key 空间必须与 Go 侧同一个 ─────────────────────────────
+
+
+def test_lock_prefix_matches_go_source(repo_root: pathlib.Path) -> None:
+    """★ 锁 key 前缀必须与 Go 的 pkg/redislock.DefaultPrefix **逐字一致**。
+
+    判据直接从 **Go 源码**取,不是抄一份字面量到测试里 —— 抄一份的话
+    Go 改了前缀这条测试照样绿,而那恰恰是要防的事。
+
+    为什么这条重要:迁移期两栈并存,同一把业务锁会被 Go 副本和 Python 副本分别去拿。
+    前缀不一致 = 两边落在**两个不同的 key** 上,双方都能"拿到锁",互斥当场失效,
+    而且两边日志都显示加锁成功 —— 没有任何运行期信号。
+    """
+    from pandorapy import redisx
+
+    src = (repo_root / "pkg" / "redislock" / "redislock.go").read_text(encoding="utf-8")
+    m = re.search(r'const\s+DefaultPrefix\s*=\s*"([^"]+)"', src)
+    assert m, "没在 pkg/redislock/redislock.go 里找到 DefaultPrefix —— Go 侧改名了?"
+    assert redisx.LOCK_KEY_PREFIX == m.group(1), (
+        f"锁前缀与 Go 不一致:Python={redisx.LOCK_KEY_PREFIX!r} Go={m.group(1)!r}"
+    )
+
+
+def test_lock_key_is_prefixed_and_idempotent() -> None:
+    """业务名自动补前缀;已经是全名的原样返回(不叠加)。"""
+    from pandorapy import redisx
+
+    assert redisx.lock_key("team:1001") == "pandora:lock:team:1001"
+    assert redisx.lock_key("pandora:lock:team:1001") == "pandora:lock:team:1001"
+
+
+def test_check_payload_boundary_matches_go(repo_root: pathlib.Path) -> None:
+    """★ 拒写边界必须与 Go 一致:`size >= max` 而不是 `>`,判据取自 Go 源码。
+
+    差这一格的后果是"恰好等于上限"的 payload 两栈判定**相反**:Go 拒、Python 放行。
+    而列宽本身就是上限 —— 放行的那条要么被 MySQL 报错,要么在非严格模式下被
+    **静默截断**(§9.24 点名的那种数据损坏)。
+    """
+    src = (repo_root / "pkg" / "dbguard" / "payload.go").read_text(encoding="utf-8")
+    assert "size >= limit.Max" in src, "Go 的拒写边界变了?请同步 Python 侧"
+
+    with pytest.raises(dbguard.PayloadTooLargeError):
+        dbguard.check_payload("bag_items", b"x" * 100, max_bytes=100)  # 恰好等于
+    dbguard.check_payload("bag_items", b"x" * 99, max_bytes=100)  # 差一个字节:放行
+
+
+def test_check_payload_skips_when_no_budget_configured(repo_root: pathlib.Path) -> None:
+    """★ 未设预算(max<=0)= **不校验**,不是"拒掉一切"。
+
+    Go 侧是 `if limit.Max <= 0 { return nil }`。少这一分支的话,任何还没定阈值的列
+    都会因为 max_bytes=0 而拒掉所有写入 —— 一个容量守护把正常业务全挡了。
+    """
+    src = (repo_root / "pkg" / "dbguard" / "payload.go").read_text(encoding="utf-8")
+    assert "limit.Max <= 0" in src, "Go 不再有「未设预算不校验」分支?"
+
+    dbguard.check_payload("unbudgeted", b"x" * 10_000, max_bytes=0)
+    dbguard.check_payload("unbudgeted", b"x" * 10_000, max_bytes=-1)
+
+
+# ── ★ configtable manifest 的三道结构闸 ────────────────────────────────────
+
+
+def _manifest_dir(tmp_path: pathlib.Path, **overrides) -> pathlib.Path:
+    """造一份最小可读 manifest;overrides 用来逐条破坏某一格。"""
+    import json
+
+    table = {
+        "name": "level",
+        "file": "level.json",
+        "proto": "pandora.config.v1.LevelTableData",
+        "checksum": "sha256:" + "0" * 64,
+        "rows": 1,
+    }
+    table.update(overrides.pop("table", {}))
+    doc = {"version": 1, "tables": [table]}
+    doc.update(overrides)
+    (tmp_path / "manifest.json").write_text(json.dumps(doc), encoding="utf-8")
+    return tmp_path
+
+
+def test_manifest_rejects_file_name_drift(tmp_path: pathlib.Path) -> None:
+    """★ file 必须恰为 `<name>.json` —— 名字漂移会**加载到另一张表的内容**。"""
+    d = _manifest_dir(tmp_path, table={"file": "level_v2.json"})
+    with pytest.raises(configtable.ConfigTableError, match="file 必须是"):
+        configtable.read_manifest(d)
+
+
+@pytest.mark.parametrize(
+    "evil",
+    ["../../../etc/passwd", "/etc/passwd", "C:/Windows/win.ini", "sub/level.json"],
+)
+def test_manifest_rejects_path_traversal(tmp_path: pathlib.Path, evil: str) -> None:
+    """★ 同一道闸也是**路径逃逸**的防线。
+
+    `pathlib` 对绝对路径是**整个替换**基路径而不是拼接(`Path("a") / "/etc/passwd"`
+    得到 `/etc/passwd`),所以 file 一旦能写任意值,加载器就会去读 active 目录之外
+    的文件。manifest 是发布产物,但发布链上任何一环被写坏都不该有这个能力。
+    """
+    d = _manifest_dir(tmp_path, table={"file": evil})
+    with pytest.raises(configtable.ConfigTableError):
+        configtable.read_manifest(d)
+
+
+def test_manifest_rejects_zero_version(tmp_path: pathlib.Path) -> None:
+    """★ version 必须 > 0 —— 它是热更防回退的唯一依据(§9.15)。
+
+    version=0 的批次一旦被接受,之后**任何**批次都"更新",防回退直接失效。
+    """
+    d = _manifest_dir(tmp_path, version=0)
+    with pytest.raises(configtable.ConfigTableError, match="version"):
+        configtable.read_manifest(d)
+
+
+def test_manifest_rejects_checksum_without_prefix(tmp_path: pathlib.Path) -> None:
+    """checksum 必须带 sha256: 前缀 —— 缺前缀说明发布器换了算法或写坏了。"""
+    d = _manifest_dir(tmp_path, table={"checksum": "0" * 64})
+    with pytest.raises(configtable.ConfigTableError, match="sha256"):
+        configtable.read_manifest(d)
+
+
+def test_manifest_rejects_empty_table_name(tmp_path: pathlib.Path) -> None:
+    d = _manifest_dir(tmp_path, table={"name": ""})
+    with pytest.raises(configtable.ConfigTableError, match="name 为空"):
+        configtable.read_manifest(d)
+
+
+@pytest.mark.parametrize("alias", ["", "report", "report-only", "report_only", "REPORT_ONLY", " Report "])
+def test_parse_mode_accepts_every_alias_go_accepts(alias: str, repo_root: pathlib.Path) -> None:
+    """★ retention_mode 的词表必须与 Go 的 ParseMode 一致。
+
+    少认一个别名的后果不是"配置不生效",而是**启动直接失败**
+    (ValidateRetentionMode 是 fail-fast)—— 一份在 Go 上跑得好好的 yaml,
+    换成 Python 副本就起不来,而错误只说"无法识别",看不出是两栈词表不同。
+    """
+    src = (repo_root / "pkg" / "dbguard" / "sweep.go").read_text(encoding="utf-8")
+    assert '"report-only"' in src and '"report"' in src, "Go 的别名集合变了?"
+    assert dbguard.parse_mode(alias) is dbguard.Mode.REPORT_ONLY
+
+
+def test_parse_mode_still_rejects_typos() -> None:
+    """拼错仍必须报错 —— 拼错一个字母就开始删生产数据是不可接受的失败模式。"""
+    with pytest.raises(ValueError):
+        dbguard.parse_mode("delet")
+    with pytest.raises(ValueError):
+        dbguard.parse_mode("report_onlyy")
+
+
+# ── ★ errcode → gRPC 状态码映射与 Go 一致 ──────────────────────────────────
+
+
+def test_grpc_status_mapping_matches_go(repo_root: pathlib.Path) -> None:
+    """★ 映射表必须与 Go 的 GRPCCode **逐条一致**,判据取自 Go 源码。
+
+    这张表的每一格都是客户端的分支依据。最要命的是顶号那格:
+    Go 刻意把 ErrSessionSuperseded 映射成 ABORTED 而**不是** UNAUTHENTICATED ——
+    因为网关对自然过期 token 也产 UNAUTHENTICATED,客户端分不出"可以自动换新"
+    和"另一台设备登录了"。分不出的后果是被顶设备自动重登、反顶新设备,
+    形成**互踢循环**(INC-20260722-004)。抄错这一格不会报错,只会让两台手机打架。
+
+    解析刻意用逐行扫描而不是正则:这段 Go 是 `case A, B:` 多行块,
+    正则写复杂了容易在"没匹配到"时静默变成空表,而空表会让本用例恒真。
+    """
+    from pandorapy import errcode, errcode_grpc
+
+    src = (repo_root / "pkg" / "errcode" / "grpc.go").read_text(encoding="utf-8")
+    body_text = src[src.index("func GRPCCode") : src.index("// ToGRPCError")]
+
+    pairs: dict[str, str] = {}
+    pending: list[str] = []
+    for line in body_text.splitlines():
+        s = line.strip()
+        if s.startswith("case ") and s.endswith(":"):
+            pending = [n.strip() for n in s[len("case ") : -1].split(",")]
+        elif s.startswith("return codes.") and pending:
+            code = s[len("return codes.") :].strip()
+            for name in pending:
+                pairs[name] = code
+            pending = []
+    assert len(pairs) >= 8, f"Go 映射表只解析出 {len(pairs)} 项,解析多半坏了"
+
+    # ★ 两个库对同一个状态的**拼写**不同,不是语义不同,必须显式登记:
+    #   Go   codes.Canceled   (一个 l)
+    #   grpc StatusCode.CANCELLED (两个 l)
+    # 不登记的话本用例会红在一个纯拼写差异上,然后被人"顺手"改成忽略大小写/模糊比对
+    # —— 那会把真正的映射错误一起放过去。
+    _SPELLING = {"Canceled": "CANCELLED"}
+
+    def to_py_name(go_code: str) -> str:
+        """Go 的 CamelCase 码名 → grpcio 的 UPPER_SNAKE(OK / DeadlineExceeded 两种形态)。"""
+        if go_code in _SPELLING:
+            return _SPELLING[go_code]
+        if go_code.isupper():
+            return go_code  # OK
+        out = []
+        for i, ch in enumerate(go_code):
+            if ch.isupper() and i:
+                out.append("_")
+            out.append(ch.upper())
+        return "".join(out)
+
+    for go_name, go_code in pairs.items():
+        code = getattr(errcode, go_name, None)
+        if code is None:
+            continue  # Go 里的 OK 之类不在 errcode 常量表
+        want = to_py_name(go_code)
+        got = errcode_grpc.grpc_code(code).name
+        assert got == want, f"{go_name}: Python={got} Go={want}"
+
+    # 顶号那一格单独再钉一次 —— 它是整张表里唯一"反直觉"的映射。
+    assert errcode_grpc.grpc_code(errcode.ErrSessionSuperseded).name == "ABORTED"
+
+
+def test_unmapped_business_codes_fall_back_to_unknown() -> None:
+    """业务段(>=1000)刻意不逐一映射 —— 逐一映射会让每加一个码就要同步两处。"""
+    import grpc
+
+    from pandorapy import errcode, errcode_grpc
+
+    assert errcode_grpc.grpc_code(errcode.ErrTradeInsufficient) is grpc.StatusCode.UNKNOWN
+
+
+def test_dialogue_table_rejects_zero_primary_key() -> None:
+    """★ 主键为 0 即拒批 —— 与 Go 的 newDialogueTable 同一道闸。
+
+    0 是 protobuf 的默认值:一行"什么都没填"的空行解析出来 id 就是 0。
+    放过它的后果不只是多了一行垃圾 —— `_by_id[0]` 会被后来的空行**覆盖**,
+    表现为"查某个对话节点查出来是另一个";而 is_start 为真的空行还会成为
+    该 NPC(npc_id 同样是 0)的起始节点。
+    """
+
+    class _Row:
+        def __init__(self, rid: int, npc: int = 1, start: bool = False) -> None:
+            self.id = rid
+            self.npc_id = npc
+            self.is_start = start
+
+    with pytest.raises(configtable.ConfigTableError, match="主键为 0"):
+        configtable.DialogueTable([_Row(1), _Row(0)])
+
+    # 正常行仍然建得起来
+    assert configtable.DialogueTable([_Row(1), _Row(2)]).count() == 2
+
+
+def test_oversize_payload_rejection_is_observable() -> None:
+    """★ 拒写必须留下**可观测信号**,不能只抛异常。
+
+    异常会被调用方按业务错误处理掉,于是"某个玩家的数据一直写不进去"
+    在运维视角上**完全不可见**:没有日志、没有指标,只有客服工单。
+    Go 侧这里有 ERROR 日志 + 拒写计数器。
+    """
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        with pytest.raises(dbguard.PayloadTooLargeError):
+            dbguard.check_payload("bag_items", b"x" * 200, max_bytes=100)
+    assert "db_payload_too_large_rejected" in [e["event"] for e in logs], (
+        "拒写没有任何日志 —— 运维看不见这件事在发生"
+    )

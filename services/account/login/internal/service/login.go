@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-kratos/kratos/v2/transport"
 
+	"github.com/luyuancpp/pandora/pkg/auth"
 	"github.com/luyuancpp/pandora/pkg/errcode"
 	plog "github.com/luyuancpp/pandora/pkg/log"
 	"github.com/luyuancpp/pandora/pkg/middleware"
@@ -35,8 +36,9 @@ import (
 type LoginService struct {
 	loginv1.UnimplementedLoginServiceServer
 
-	loginUC  *biz.LoginUsecase
-	ticketUC *biz.TicketUsecase
+	loginUC    *biz.LoginUsecase
+	ticketUC   *biz.TicketUsecase
+	playerNoUC *biz.PlayerNoResolveUsecase
 
 	// redisDSAdmission 仅由 authority_mode=redis + mode=enforce 的 main 开启。
 	// guard/checker 任一缺失都 fail-closed，绝不回退 legacy Verify。
@@ -67,6 +69,11 @@ func (s *LoginService) SetRedisDSAdmissionAuthority(guard *middleware.DSCallback
 	s.redisDSAdmission = true
 	s.dsGuard = guard
 	s.admissionChecker = checker
+}
+
+// SetPlayerNoResolveUsecase 注入 LoginService 与内部 Team RPC 共用的账号编号批量权威读取。
+func (s *LoginService) SetPlayerNoResolveUsecase(uc *biz.PlayerNoResolveUsecase) {
+	s.playerNoUC = uc
 }
 
 // Login 立即完成型(参考 proto/pandora/login/v1/login.proto 注释)。
@@ -458,6 +465,62 @@ func (s *LoginService) VerifyDSTicket(ctx context.Context, req *loginv1.VerifyDS
 			ReleaseTrack:    claims.ReleaseTrack,
 		},
 	}, nil
+}
+
+// ResolvePlayerNosForDS 是 DS listener 独占的展示读取入口。
+// legacy/off 保留本地开发直连语义；redis admission 才强制 Bearer DS credential + active 权威。
+func (s *LoginService) ResolvePlayerNosForDS(
+	ctx context.Context,
+	req *loginv1.ResolvePlayerNosRequest,
+) (*loginv1.ResolvePlayerNosResponse, error) {
+	playerIDs, ok := normalizePlayerNoIDs(req.GetPlayerIds())
+	if !ok {
+		return &loginv1.ResolvePlayerNosResponse{Code: commonv1.ErrCode_ERR_INVALID_ARG}, nil
+	}
+	if s == nil {
+		return &loginv1.ResolvePlayerNosResponse{Code: commonv1.ErrCode_ERR_UNAVAILABLE}, nil
+	}
+	if s.redisDSAdmission {
+		if s.dsGuard == nil || s.admissionChecker == nil || s.dsGuard.Mode() != middleware.DSAuthEnforce {
+			plog.With(ctx).Errorw("msg", "resolve_player_nos_for_ds_rejected", "reason", "ds_admission_guard_not_enforced")
+			return &loginv1.ResolvePlayerNosResponse{Code: commonv1.ErrCode_ERR_UNAVAILABLE}, nil
+		}
+		_, credential, guardErr := s.dsGuard.CheckCredential(ctx, middleware.DSScope{RequireToken: true})
+		if guardErr != nil {
+			plog.With(ctx).Warnw("msg", "resolve_player_nos_for_ds_rejected", "reason", "ds_credential_rejected",
+				"code", int32(errcode.As(guardErr)), "err", guardErr)
+			return &loginv1.ResolvePlayerNosResponse{Code: toProtoCode(guardErr)}, nil
+		}
+		if credential == nil {
+			plog.With(ctx).Warnw("msg", "resolve_player_nos_for_ds_rejected", "reason", "ds_credential_missing")
+			return &loginv1.ResolvePlayerNosResponse{Code: commonv1.ErrCode_ERR_UNAUTHORIZED}, nil
+		}
+		admission, activeErr := s.admissionChecker.CheckActive(ctx, credential.Pod, credential)
+		if activeErr != nil {
+			plog.With(ctx).Warnw("msg", "resolve_player_nos_for_ds_rejected", "reason", "ds_admission_not_active",
+				"ds_pod", credential.Pod, "code", int32(errcode.As(activeErr)), "err", activeErr)
+			return &loginv1.ResolvePlayerNosResponse{Code: toProtoCode(activeErr)}, nil
+		}
+		if credential.DSType == auth.DSTypeBattle && !playerIDsBelongToAdmission(playerIDs, admission.PlayerIDs) {
+			plog.With(ctx).Warnw("msg", "resolve_player_nos_for_ds_rejected", "reason", "player_outside_battle_admission",
+				"ds_pod", credential.Pod, "count", len(playerIDs))
+			return &loginv1.ResolvePlayerNosResponse{Code: commonv1.ErrCode_ERR_PERMISSION_DENY}, nil
+		}
+	}
+	return resolvePlayerNosFromAuthority(ctx, s.playerNoUC, playerIDs), nil
+}
+
+func playerIDsBelongToAdmission(requested, admitted []uint64) bool {
+	allowed := make(map[uint64]struct{}, len(admitted))
+	for _, playerID := range admitted {
+		allowed[playerID] = struct{}{}
+	}
+	for _, playerID := range requested {
+		if _, ok := allowed[playerID]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // toProtoCode 把 pkg/errcode 转成 proto enum。

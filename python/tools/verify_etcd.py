@@ -212,7 +212,7 @@ async def test_watch_from_revision_recovers_missed_events(endpoint: str) -> None
     key = f"{PREFIX}watch_revision".encode()
     async with _client(endpoint) as c:
         await c.delete(key)
-        first = await c.put(key, b"before", prev_kv=False)
+        await c.put(key, b"before", prev_kv=False)
         base_rev = (await c.get(key)).mod_revision
 
         # 模拟"客户端断线期间"发生的 3 次变更

@@ -13,40 +13,133 @@ dialogue 不产生自定义业务指标,所以本模块当前只负责:
 
 from __future__ import annotations
 
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from starlette.requests import Request
 from starlette.responses import Response
 
 # ── RPC 层通用指标 ────────────────────────────────────────────────────────────
 #
-# 命名沿用 Prometheus/gRPC 生态惯例(grpc_server_*),而不是自造 pandora_rpc_*:
-# 迁移期 Go 版和 Python 版会同时在线,同名指标能让同一块面板直接对比两个实现的
-# 延迟与错误率 —— 这正是灰度时最需要看的东西。
-RPC_STARTED = Counter(
-    "grpc_server_started_total",
-    "gRPC 请求进入数",
-    ["grpc_service", "grpc_method"],
+# ★ 名字与 label 必须与 Go 侧 pkg/middleware/metrics.go **逐字一致**。
+#
+# 这里原先用的是 grpc_server_*(Prometheus/gRPC 生态惯例),理由写的是"同名指标便于
+# 对比两个实现"—— 那个前提在本仓**不成立**:Go 侧根本没有 grpc_server_* 这族指标,
+# 它用的是 pandora_rpc_total / pandora_rpc_duration_seconds。后果是灰度期按
+# pandora_* 建的告警对 Python 实例是 **NoData 而不是告警** —— 静默失去覆盖,
+# 比"指标名不好看"严重得多。
+#
+# Go 侧定义(pkg/middleware/metrics.go:24-38):
+#     pandora_rpc_duration_seconds{service,method,code}  Histogram, ExponentialBuckets(0.001,2,12)
+#     pandora_rpc_total{service,method,code}             Counter
+# 其中 service 是 proto 服务名的**最后一段**(LoginService),不是全限定名。
+
+# 与 Go 的 pmetrics.StandardBuckets 逐值一致:ExponentialBuckets(0.001, 2, 12)。
+# 直方图桶边界不一致 = 两栈的 P99 不可比,而这正是灰度时唯一要看的数。
+STANDARD_BUCKETS = tuple(0.001 * (2**i) for i in range(12))
+
+RPC_DURATION = Histogram(
+    "pandora_rpc_duration_seconds",
+    "RPC handler duration in seconds.",
+    ["service", "method", "code"],
+    buckets=STANDARD_BUCKETS,
 )
-RPC_HANDLED = Counter(
-    "grpc_server_handled_total",
-    "gRPC 请求完成数(按业务错误码分)",
-    # errcode 而不是 grpc_code:本仓库的业务失败走 response.code(errcode),
-    # gRPC status 基本恒为 OK。只看 grpc_code 会以为一切正常。
-    ["grpc_service", "grpc_method", "errcode"],
+RPC_TOTAL = Counter(
+    "pandora_rpc_total",
+    "RPC call count.",
+    ["service", "method", "code"],
 )
-RPC_LATENCY = Histogram(
-    "grpc_server_handling_seconds",
-    "gRPC 请求处理耗时",
-    ["grpc_service", "grpc_method"],
-    # 分桶按游戏后端 unary RPC 的实际关切设置:1ms 到 5s。
-    # Python 侧比 Go 慢是预期的,桶必须能分辨"慢一点"和"慢一个数量级"。
-    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+
+# ── 以下三个是 Python 侧**独有**的补充指标 ────────────────────────────────────
+#
+# Go 侧没有对应物,所以刻意用不同的 metric 名,不去污染上面那两个 —— 一族指标
+# 只能有一个语义来源,否则跨栈对比时会把"Python 多打的那部分"算进共同口径。
+
+RPC_INBAND_TOTAL = Counter(
+    "pandora_rpc_inband_total",
+    "按业务 errcode 分的 RPC 完成数(Go 侧只把它打进 access log,没有对应指标)",
+    # 本仓的业务失败走 response.code(errcode),gRPC status 基本恒为 OK ——
+    # 上面那族 code label 与 Go 一样只能看到 "ok",这一族才能看出是哪个业务错。
+    ["service", "method", "errcode"],
 )
 RPC_PANIC = Counter(
-    "grpc_server_panics_total",
+    "pandora_rpc_panics_total",
     "gRPC handler 未捕获异常数",
-    ["grpc_service", "grpc_method", "exc_type"],
+    ["service", "method", "exc_type"],
 )
+RPC_CANCELED = Counter(
+    "pandora_rpc_canceled_total",
+    "gRPC handler 被取消数(客户端超时 / 断连)",
+    # ★ 必须与 panics 分开计。grpc.aio 用**取消**来终止超时的 handler,
+    # 混进 panics 会让每一次正常的客户端 deadline 都表现成"服务端在 panic",
+    # 弱网 / 高峰时把真正的未捕获异常淹掉。
+    ["service", "method"],
+)
+
+
+# ── 运行时标识 ──────────────────────────────────────────────────────────────
+
+RUNTIME_INFO = Gauge(
+    "pandora_runtime_info",
+    "进程运行时标识(恒为 1 的 info 指标,label 才是内容)",
+    ["service", "runtime"],
+)
+
+
+def set_runtime_info(service: str, runtime: str = "python") -> None:
+    """标记本进程的实现语言。各服务 main 在启动时调一次。
+
+    ★ 为什么需要它:灰度期同一个服务会有 Go 副本和 Python 副本**同时在线**,
+    而 pandora_rpc_* 上没有任何维度能区分两者 —— 面板上只能看到一条混合曲线,
+    "Python 版慢不慢 / 错得多不多"这个灰度期唯一要回答的问题**无法回答**。
+
+    用恒为 1 的 info 指标 + label 是 Prometheus 的标准做法(同 kube_*_info):
+    面板按 instance join 一下就能把两栈分开,而不必给每个业务指标都加一个 label
+    (那会让所有历史曲线的 label 集合变化,旧告警全部失配)。
+
+    `service_ready` 日志里已经有同名的 `runtime` 字段,两边口径一致。
+    """
+    RUNTIME_INFO.labels(service, runtime).set(1)
+
+
+def short_service(service: str) -> str:
+    """把全限定服务名收成 Go 侧的 label 形态:pandora.login.v1.LoginService → LoginService。
+
+    对应 Go 的 splitOperation。label 值不一致的话,同一块面板上两栈会各占一行
+    (service="LoginService" vs service="pandora.login.v1.LoginService"),
+    "对比两个实现"就无从谈起。
+    """
+    return service.rsplit(".", 1)[-1] if service else "unknown"
+
+
+def code_label(grpc_code: object | None) -> str:
+    """把 gRPC status 归到 Go 的 code 桶。对应 Go 的 codeLabel。
+
+    ★ 语义要与 Go 对齐:Go 取的是 **transport error**,而本仓业务失败是 in-band
+    (response.code),transport err 恒 nil —— 所以 Go 侧业务失败也记 "ok"。
+    这里照做,不"改进"。业务维度看 RPC_INBAND_TOTAL,别把两族混起来。
+    """
+    if grpc_code is None:
+        return "ok"
+    name = getattr(grpc_code, "name", str(grpc_code))
+    if name == "OK":
+        return "ok"
+    if name in ("UNAUTHENTICATED", "PERMISSION_DENIED"):
+        return "unauthorized"
+    if name == "DEADLINE_EXCEEDED":
+        return "timeout"
+    if name in (
+        "INVALID_ARGUMENT",
+        "NOT_FOUND",
+        "ALREADY_EXISTS",
+        "FAILED_PRECONDITION",
+        "OUT_OF_RANGE",
+        "RESOURCE_EXHAUSTED",
+        "CANCELLED",
+        "ABORTED",
+    ):
+        return "client_err"
+    if name in ("INTERNAL", "UNAVAILABLE", "UNKNOWN", "DATA_LOSS", "UNIMPLEMENTED"):
+        return "server_err"
+    return "other"
 
 
 async def metrics_endpoint(_request: Request) -> Response:

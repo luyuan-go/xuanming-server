@@ -138,16 +138,23 @@ try {
     $script:VerifierProc = [pscustomobject]@{ Id = 222; Path = $fakeExe }
     $script:VerifierCommandLine = "mysqld --defaults-file=`"$fakeIni`""
     $script:VerifierListenerPid = 222
+    $script:VerifierListenerUnknown = $false
     function Get-Process { [CmdletBinding()] param([int]$Id); return $script:VerifierProc }
     function Get-PandoraProcessCommandLine([int]$ProcessId) { return $script:VerifierCommandLine }
-    function Get-NetTCPConnection { [CmdletBinding()] param([string]$State, [int]$LocalPort); return [pscustomobject]@{ OwningProcess = $script:VerifierListenerPid } }
+    function Get-PandoraTcpListenerProcessIds([int]$Port) {
+        if ($script:VerifierListenerUnknown) { throw 'PANDORA_LISTENER_STATE_UNKNOWN' }
+        return @($script:VerifierListenerPid)
+    }
     Assert-True ((Get-PandoraLocalMysqlOwnedProcess $sandbox $ownedState).Id -eq 222) '共享 verifier 要求 PID/exe/my.ini/listener 四项同时吻合'
     $script:VerifierListenerPid = 999
     Assert-True (-not (Get-PandoraLocalMysqlOwnedProcess $sandbox $ownedState)) '端口被其它 PID 接管时共享 verifier fail closed'
     $script:VerifierListenerPid = 222
+    $script:VerifierListenerUnknown = $true
+    Assert-True (-not (Get-PandoraLocalMysqlOwnedProcess $sandbox $ownedState)) 'listener 查询未知时共享 verifier fail closed'
+    $script:VerifierListenerUnknown = $false
     $script:VerifierCommandLine = "mysqld --defaults-file=`"$($fakeIni).evil`""
     Assert-True (-not (Get-PandoraLocalMysqlOwnedProcess $sandbox $ownedState)) '共享 verifier 不接受 my.ini.evil 冒充'
-    Remove-Item function:Get-Process, function:Get-PandoraProcessCommandLine, function:Get-NetTCPConnection -Force
+    Remove-Item function:Get-Process, function:Get-PandoraProcessCommandLine, function:Get-PandoraTcpListenerProcessIds -Force
 } finally {
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
 }

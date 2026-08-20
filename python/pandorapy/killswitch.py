@@ -60,12 +60,48 @@ class Manager:
 
         operation 形如 `/pandora.login.v1.LoginService/Login`(Kratos transport.Operation()
         / gRPC 的 full method)。比对时去掉前导 "/",与 Go 侧口径一致。
+
+        ★ 匹配优先级与 Go 的 Manager.Disabled **逐级一致**:
+
+            ① 全局 "*"                  全服维护(慎用)
+            ② 精确 method               单个 RPC
+            ③ 整服 "<service>/*"        某个服务的全部 RPC
+            ④ feature 组 "feature/<名>"  一组跨服务的 RPC(需先 register_feature)
+
+        早先这里**只做第 ② 级**。后果不是"少一点能力":运维照手册写下
+        `pandora.trade.v1.TradeService/*` 想关掉整个交易服,规则**加进去了、
+        也生效返回了成功**,而 Python 副本一条都没挡住 —— 关停这种"出事时才用"
+        的能力,失效恰好只在出事时才被发现。
         """
         op = operation.lstrip("/")
         rules = self._rules  # 只读一次引用,后续不受并发替换影响
+
+        # ① 全局维护开关
+        reason = rules.get("*")
+        if reason is not None:
+            return True, reason or "全服维护中,稍后重试"
+
+        # ② 精确 method
         reason = rules.get(op)
         if reason is not None:
             return True, reason or _DEFAULT_REASON
+
+        # ③ 整服通配 "<service>/*"
+        idx = op.rfind("/")
+        if idx > 0:
+            svc = op[:idx]
+            reason = rules.get(f"{svc}/*")
+            if reason is not None:
+                return True, reason or f"服务维护中: {svc}"
+
+        # ④ feature 组:被关的键形如 "feature/<name>",展开成注册进该组的 operation 列表
+        for key, why in rules.items():
+            if not key.startswith(_FEATURE_PREFIX):
+                continue
+            name = key[len(_FEATURE_PREFIX) :]
+            if feature_contains(name, op):
+                return True, why or f"功能维护中: {name}"
+
         return False, ""
 
     def feature_disabled(self, feature: str) -> tuple[bool, str]:
@@ -77,6 +113,36 @@ class Manager:
 
     def rule_count(self) -> int:
         return len(self._rules)
+
+
+# ── feature 组注册表(对应 Go 的 RegisterFeature / featureContains)───────────
+#
+# feature 是"一组跨服务的 RPC"的别名,让运维能一键关掉"交易玩法"而不必列出
+# 它涉及的十几个 method。组的成员由**代码**注册(哪些 RPC 属于哪个玩法是业务事实),
+# 规则文件里只写 `feature/<名>`。
+_features: dict[str, frozenset[str]] = {}
+
+
+def register_feature(name: str, operations: list[str]) -> None:
+    """把一组 operation 归入某 feature。各服务在 main 装配时调用。
+
+    重复注册同名 feature 会**合并**而不是覆盖 —— 一个玩法的 RPC 天然分散在多个服务,
+    覆盖语义会让"后注册的那个服务把前面几个挤掉",而且不报错。
+    """
+    normalized = {op.lstrip("/") for op in operations if op}
+    existing = _features.get(name, frozenset())
+    _features[name] = frozenset(existing | normalized)
+
+
+def feature_contains(name: str, operation: str) -> bool:
+    """该 operation 是否属于这个 feature 组。"""
+    ops = _features.get(name)
+    return bool(ops) and operation.lstrip("/") in ops
+
+
+def clear_features() -> None:
+    """清空注册表(测试用)。"""
+    _features.clear()
 
 
 # 包级默认 Manager,拦截器用它。为 None 时 fail-open 放行(见模块头注释)。

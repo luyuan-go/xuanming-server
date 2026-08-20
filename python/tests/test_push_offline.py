@@ -41,18 +41,42 @@ async def rdb():
 
     addr = os.getenv("PANDORA_TEST_REDIS_ADDR", "127.0.0.1:16379")
     host, _, port = addr.rpartition(":")
-    client = aioredis.Redis(
-        host=host or "127.0.0.1", port=int(port), db=0,
-        decode_responses=False, socket_connect_timeout=3, socket_timeout=3,
-    )
-    try:
-        await asyncio.wait_for(client.ping(), timeout=4)
-    except Exception as exc:  # noqa: BLE001
-        pytest.skip(
-            f"Redis 不可用 @ {addr} ({exc}) —— push 投递缓冲测试跳过(不假装通过)。"
-            f"起一个:docker run -d -p 16379:6379 redis:8-alpine"
+
+    # ★ 每个 pytest 进程占一个**独立的 Redis 逻辑库**,不能都用 db=0。
+    #
+    # 这个 fixture 会 flushdb() —— 而 flushdb 冲的是**整个库**。两个 pytest 同时跑时
+    # 一边正在断言、另一边 flush,表现为"投递缓冲里的帧莫名其妙没了"这类**假红**,
+    # 而代码一个字没变(与 tests/mysqlfixture.py 头注释里那条是同一个形状)。
+    #
+    # 挑法:从 PID 派生一个起点轮转,取第一个 **DBSIZE==0** 的库 —— 真拿到独占,
+    # 不是靠取模碰运气。16 个都被占说明并发跑得太多,此时 skip 并说清原因,
+    # 而不是去冲别人的库。
+    client = None
+    chosen = -1
+    for i in range(16):
+        db = (os.getpid() + i) % 16
+        candidate = aioredis.Redis(
+            host=host or "127.0.0.1", port=int(port), db=db,
+            decode_responses=False, socket_connect_timeout=3, socket_timeout=3,
         )
-    await client.flushdb()
+        try:
+            await asyncio.wait_for(candidate.ping(), timeout=4)
+        except Exception as exc:  # noqa: BLE001
+            await candidate.aclose()
+            pytest.skip(
+                f"Redis 不可用 @ {addr} ({exc}) —— push 投递缓冲测试跳过(不假装通过)。"
+                f"起一个:docker run -d -p 16379:6379 redis:8-alpine"
+            )
+        if await candidate.dbsize() == 0:
+            client, chosen = candidate, db
+            break
+        await candidate.aclose()
+    if client is None:
+        pytest.skip(
+            f"Redis @ {addr} 的 16 个逻辑库都非空 —— 多半有别的 pytest 正在跑。"
+            f"并发跑时本用例不抢库(抢了就是互相冲数据),跳过而不假装通过"
+        )
+    assert chosen >= 0
     try:
         yield client
     finally:
@@ -235,15 +259,88 @@ def test_key_format_matches_go() -> None:
     assert poff.offline_key(1001) == "pandora:push:offline:1001"
 
 
-async def test_corrupt_member_is_skipped_not_fatal(rdb) -> None:
-    """脏数据(旧格式残留)跳过而不是让整次拉取失败。
+async def test_corrupt_member_is_accounted_not_silently_skipped(rdb) -> None:
+    """★ 坏 member 必须折进 fl 哨兵并被物理删除,不能只是跳过。
 
-    ⚠️ 这**不是兼容手段** —— 上线后演进 member 格式必须按 §9.17 双向兼容
+    只跳过 = 它上面的好帧照常交付、客户端游标越过坏帧,而 Range 严格 >游标,
+    坏 member 此后永远不会再被扫到 —— 既无记账也无 resync 的永久静默漏报。
+    这条咬的就是"跳过之后有没有留下丢失证据"。
+
+    ⚠️ 跳过本身**不是兼容手段** —— 上线后演进 member 格式必须按 §9.17 双向兼容
     纪律另行设计,不得复用静默跳过。
     """
     cache = poff.RedisOfflineCache(rdb)
     good = await cache.assign_and_buffer(7, _frame(1), NOW)
-    # 手工塞一条不符合 %020d + 0x1f 格式的成员
+    # 手工塞一条不符合 %020d + 0x1f 格式的成员,游标在好帧**之上**
     await rdb.zadd(poff.offline_key(7), {b"garbage-member": good + 1})
+
     got = await cache.range_after(7, 0, NOW)
+    # 一条脏数据不该拖死整次补推:坏帧之下的好帧照常交付
     assert [f.cursor for f in got] == [good]
+
+    # ★ 折账:fl 抬到坏帧游标
+    assert int(await rdb.zscore(poff.offline_key(7), poff.SENTINEL_FLOOR)) == good + 1
+    # ★ 自愈:坏 member 物理删除,下一轮不再重复扫到
+    assert await rdb.zscore(poff.offline_key(7), b"garbage-member") is None
+    # ★ 有折账 ⇒ 客户端推进到 good 之后仍能检出丢失,拿到 resync 信号
+    assert await cache.lost_since(7, good, NOW) == good + 1
+
+
+async def test_corrupt_cleanup_failure_withholds_frames_above(rdb, monkeypatch) -> None:
+    """★ fl 抬升失败时,坏帧**之上**的好帧一律不交付(游标不许越过未记账的丢失)。
+
+    这是 Go 侧 R7 P1 的收口:补推可以重来,少推几帧只是延迟;但游标一旦越过
+    没记进 fl 的坏帧,那段丢失就再也没人能发现。
+    """
+
+    class _Boom:
+        async def __call__(self, client, keys=None, args=None):  # noqa: ANN001, ANN204
+            raise RuntimeError("redis unavailable")
+
+    cache = poff.RedisOfflineCache(rdb)
+    good = await cache.assign_and_buffer(8, _frame(1), NOW)
+    bad_cursor = good - 1  # 坏帧在好帧**之下**(仍在保留窗内)
+    await rdb.zadd(poff.offline_key(8), {b"garbage-member": bad_cursor})
+
+    monkeypatch.setattr(poff, "_MARK_CORRUPT", _Boom())
+    got = await cache.range_after(8, 0, NOW)
+
+    # 好帧被扣发 —— 客户端游标停在坏帧之下
+    assert got == []
+    # 坏 member 仍留在 key 里,下一轮重扫重试记账
+    assert int(await rdb.zscore(poff.offline_key(8), b"garbage-member")) == bad_cursor
+
+
+# ── 坏 member 的判定谓词必须与 Go 逐条相同 ────────────────────────────────
+#
+# Go decodeMember(services/runtime/push/internal/data/offline.go:130-147)要求
+# **前 20 字节全是数字**,不只是"第 20 位是分隔符"。差别不是理论上的:proto3 反序列化
+# 极宽松,**空 payload 也能解成功**,所以 `<20 字节垃圾>` 这种脏写在只查分隔符的
+# 实现里会被当好帧投出去,而 Go 判它是坏帧(删除 + 折账)。同一条脏数据两侧判定正相反。
+
+
+def _frame_bytes(ts_ms: int = 7) -> bytes:
+    return push_pb2.PushFrame(ts_ms=ts_ms).SerializeToString()
+
+
+def test_non_digit_cursor_prefix_is_a_bad_member() -> None:
+    """★ 前 20 字节非数字 = 坏帧。只查分隔符的话这条会被当好帧投出去。"""
+    raw = b"x" * poff.CURSOR_PREFIX_WIDTH + b"" + _frame_bytes()
+    assert poff._parse_member(raw) is None  # noqa: SLF001
+
+
+def test_non_digit_prefix_with_empty_payload_is_still_bad() -> None:
+    """最刁的一格:payload 为空时 proto3 照样解析成功,只有数字校验能拦住。"""
+    raw = b"x" * poff.CURSOR_PREFIX_WIDTH + b""
+    assert poff._parse_member(raw) is None  # noqa: SLF001
+
+
+def test_digit_prefix_with_empty_payload_is_a_good_member() -> None:
+    """反向:数字前缀 + 空 payload 在 Go 侧是合法帧,不能被一起误杀。"""
+    raw = b"%020d" % 9 + b""
+    assert poff._parse_member(raw) is not None  # noqa: SLF001
+
+
+def test_separator_must_sit_exactly_at_offset_20() -> None:
+    raw = b"%019d" % 9 + b"" + _frame_bytes()   # 分隔符在第 19 位
+    assert poff._parse_member(raw) is None  # noqa: SLF001

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import pytest
+from pandora.locator.v1 import locator_pb2
 
 from pandorapy import errcode, placement
 from pandorapy.services.player_locator import biz as lbiz
@@ -75,10 +76,69 @@ def test_zero_player_rejected() -> None:
         lbiz.validate_location_input(_hub(player_id=0))
 
 
-@pytest.mark.parametrize("state", [0, 4, 99, -1])
+@pytest.mark.parametrize("state", [-1, 6, 99])
 def test_out_of_range_state_rejected(state: int) -> None:
+    """只有落在枚举闭区间外(< UNSPECIFIED 或 > BATTLE)才算越界。
+
+    ★ 这条曾经把 state=4 列为越界 —— 那是手抄枚举错位的产物;4 是真正的
+    MATCHING,把它判越界等于线上 MATCHING 位置一个都写不进去。
+    """
+    inp = lbiz.LocationInput(player_id=1001, state=state)
     with pytest.raises(errcode.PandoraError, match=lbiz.REASON_STATE_OUT_OF_RANGE):
-        lbiz.validate_location_input(_hub(state=state))
+        lbiz.validate_location_input(inp)
+
+
+def test_location_state_encoding_matches_proto() -> None:
+    """★ 编码必须与 locator.proto 逐个对齐(Go / Lua / UE 三处按数值硬编码)。
+
+    这里同时断言两件事:①常量来自生成物,不是手抄;②生成物的数值就是
+    契约里那一组 —— 后者能挡住 proto 被重新编号却没人发现的情况。
+    """
+    assert (lbiz.LOCATION_STATE_UNSPECIFIED, locator_pb2.LOCATION_STATE_UNSPECIFIED) == (0, 0)
+    assert (lbiz.LOCATION_STATE_OFFLINE, locator_pb2.LOCATION_STATE_OFFLINE) == (1, 1)
+    assert (
+        lbiz.LOCATION_STATE_LOGIN_PENDING,
+        locator_pb2.LOCATION_STATE_LOGIN_PENDING,
+    ) == (2, 2)
+    assert (lbiz.LOCATION_STATE_HUB, locator_pb2.LOCATION_STATE_HUB) == (3, 3)
+    assert (lbiz.LOCATION_STATE_MATCHING, locator_pb2.LOCATION_STATE_MATCHING) == (4, 4)
+    assert (lbiz.LOCATION_STATE_BATTLE, locator_pb2.LOCATION_STATE_BATTLE) == (5, 5)
+
+
+def test_matching_and_battle_real_encodings_are_writable() -> None:
+    """★ 真值 4 / 5 必须能写进去。
+
+    编码错位时这两条各自被判 state_out_of_range —— 表现是"匹配中和战斗中的
+    玩家位置全部写失败",而 HUB(真值 3)会被拿去当 MATCHING 校验、只要求
+    match_id 不要求 hub_pod。所以这条同时咬住三个状态的分支归属。
+    """
+    lbiz.validate_location_input(
+        lbiz.LocationInput(player_id=1001, state=4, match_id=555)
+    )
+    lbiz.validate_location_input(
+        lbiz.LocationInput(
+            player_id=1001, state=5, match_id=555, battle_pod="battle-1"
+        )
+    )
+    # 真值 3 = HUB:缺 hub_pod 必须被 hub_pod_missing 拒(若被当成 MATCHING,
+    # 有 match_id 就放行了)。
+    with pytest.raises(errcode.PandoraError, match=lbiz.REASON_HUB_POD_MISSING):
+        lbiz.validate_location_input(
+            lbiz.LocationInput(player_id=1001, state=3, match_id=555)
+        )
+
+
+@pytest.mark.parametrize(
+    "state", [lbiz.LOCATION_STATE_OFFLINE, lbiz.LOCATION_STATE_LOGIN_PENDING]
+)
+def test_offline_and_login_pending_are_in_range(state: int) -> None:
+    """★ 合法区间是闭区间,不是"三个业务态"的白名单。
+
+    Go 侧只校验 0..5,OFFLINE / LOGIN_PENDING 没有附加必填项、直接通过;
+    白名单写法会把它们判越界(而且 OFFLINE=1 恰好是错位版本里的 HUB,
+    会被要求 hub_pod)。
+    """
+    lbiz.validate_location_input(lbiz.LocationInput(player_id=1001, state=state))
 
 
 def test_hub_without_pod_rejected() -> None:

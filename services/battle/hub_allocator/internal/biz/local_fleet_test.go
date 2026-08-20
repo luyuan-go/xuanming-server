@@ -179,20 +179,47 @@ func TestHubBuildArgs_PackagedLauncherUnchanged(t *testing.T) {
 }
 
 // editor 形态:.uproject 必须排在关卡 URL 之前(UE 只认第一个非 '-' token 作工程),
-// 且 -server 仍在(NetMode=NM_DedicatedServer,后端对接与打包 DS 完全一致)。
+// 且 -server 仍在(NetMode=NM_DedicatedServer,后端对接与打包 DS 完全一致);
+// 末尾必须带 MissingLevelPackage 的 CVar 覆盖(理由见 conf.EditorLauncherCVarArg)。
 func TestHubBuildArgs_EditorLauncherPutsProjectFirst(t *testing.T) {
 	p := newHubFleetWithLauncher(t, conf.LauncherEditor, true)
 	got := p.buildArgs()
-	if len(got) != 5 || !strings.HasSuffix(got[0], "Pandora.uproject") {
+	if len(got) != 6 || !strings.HasSuffix(got[0], "Pandora.uproject") {
 		t.Fatalf("editor 形态 .uproject 应为第一个参数: %v", got)
 	}
 	want := []string{
 		got[0],
 		"/Game/Hub?game=/Script/Pandora.PandoraHubGameMode?MaxPlayers=500",
 		"-server", "-log", "-port=7777",
+		conf.EditorLauncherCVarArg,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("editor args:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+// 锁死 MissingLevelPackage 开关的形态与作用域(2026-08-18 秒级无限重连事故)。
+//
+// 三条都是修复本体,任缺一条这次事故就会原样复发或波及生产:
+//   - editor 形态必须带,否则未 cook 的 DS 与 PIE 客户端的 WP cell 命名对不上就踢人;
+//   - packaged 绝不能带,那里的 MissingLevelPackage 是真的内容不一致,要保留踢人保护;
+//   - 参数**不得含空格**:含空格的 -ExecCmds= 经 exec.Command 传到 Windows 会被引号
+//     转义打散,引擎解析不到,表现是"加了等于没加"且不报错。
+func TestHubBuildArgs_EditorSkipsMissingLevelDisconnectOnly(t *testing.T) {
+	if strings.ContainsAny(conf.EditorLauncherCVarArg, " \t\"") {
+		t.Fatalf("CVar 覆盖参数不得含空格/引号(会被 Windows 参数转义打散): %q",
+			conf.EditorLauncherCVarArg)
+	}
+	if !strings.Contains(conf.EditorLauncherCVarArg, "net.SkipMissingLevelDisconnect=1") {
+		t.Fatalf("CVar 覆盖参数必须关掉缺 level package 的踢人: %q", conf.EditorLauncherCVarArg)
+	}
+	for _, launcher := range []string{"", conf.LauncherPackaged} {
+		p := newHubFleetWithLauncher(t, launcher, false)
+		for _, a := range p.buildArgs() {
+			if strings.Contains(a, "SkipMissingLevelDisconnect") {
+				t.Fatalf("launcher=%q(cook 过的内容)不得关掉踢人保护: %v", launcher, p.buildArgs())
+			}
+		}
 	}
 }
 

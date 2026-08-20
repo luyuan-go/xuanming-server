@@ -376,6 +376,11 @@ mysql_defaults_file` 原子写入 `run/localinfra/cfg/ports.json`。迁移脚本
 证明归属。13 份 MySQL dev 配置中的 14 条 DSN 只在 `run/localinfra/cfg/services/` 生成运行态
 副本，受版本控制的 YAML 保持不变。
 
+Windows listener 查询统一由 `lib/local_infra_state.ps1` 调用系统目录下的 `netstat.exe -ano`
+并严格解析一次快照；`local_infra` 的候选/状态/诊断、`start` 的 8443/8444 预检、迁移归属复核和
+22 服务的残留/ready 均复用该 seam。命令失败或格式未知一律 fail-closed，不能为了性能退回
+`Test-PortOpen`；也不能在循环中使用单次约数秒的 `Get-NetTCPConnection`。
+
 `run/dev/mysql-port-applied.json` 独立记录业务服务**最后成功应用**的
 `mode + mysql_port + social_on_mysql` 配置画像。
 它不能由基础设施启动提前更新；Docker `3307` 与免 Docker 动态端口/模式任一变化，都必须先完整
@@ -396,6 +401,27 @@ mysql_defaults_file` 原子写入 `run/localinfra/cfg/ports.json`。迁移脚本
 `down` 只有在进程确认退出后才删除 PID 登记；
 未知活 PID、停止超时或状态冲突会返回失败。`reset` 还会复核本工作区 mysqld 与核心 InnoDB 文件
 独占状态，任何不确定性都保留数据目录，不把“看不见归属”冒充成“已经停止”。
+
+### 6.1.2 策划 SVN 自带第三方便携包
+
+免 Docker 的取包 seam 统一在 `local_infra.ps1::Get-Archive`：已校验的可变 cache → 显式
+`PANDORA_LOCALINFRA_MIRROR`（设置时）或仓库只读 `installers/localinfra`（默认）→ 固定公网 URL。
+PowerShell 尚不存在时，ASCII-only 的 `bootstrap_pwsh.cmd` 实现同一顺序。目录存在不代表完整，
+每个当前版本文件独立判断；缺失才联网，同名 SHA256 不符 fail-closed。Envoy 的 Docker Hub token
+预检也读取同一来源，仓库已有 layer 时不得产生任何公网请求。
+
+已解包目录不能只凭 exe 存在就复用：每个组件在 `run/localinfra/dist/<组件>` 保存固定包 SHA256
+marker，probe 与 marker 必须同时吻合。pin 变化或旧目录没有 marker 时，先在同盘 staging 完整解包、
+probe 并写 marker，再原子换入；任一步失败保留旧目录。目标目录仍被进程使用时 fail-closed，要求先按
+本工作区停止链退出，绝不为更新固定包而强杀未知进程或触碰 Docker 组件。
+marker 只记录该 dist 对应哪个已校验归档，不是逐文件防篡改凭据；真实性仍由解包前固定 SHA256
+保证。dist 的 staging/previous 与 `data/cfg/logs/pids` 分离，换工具版本不得删除运行数据或身份状态。
+
+Git 只跟踪目录说明，策划 SVN 跟踪 7 个固定 Windows x64 包。只读 bundle 与
+`run/localinfra/cache` 刻意分开：本机 SVN 包校验后直接解包，避免首次启动再复制 544.5 MiB；
+显式 UNC/移动盘镜像与公网包才先落 cache。`-Force`、坏缓存清理和中断续传不能删除 SVN
+工作副本里的唯一离线源。此白名单例外及更新/许可证边界见
+`decision-revisit-localinfra-svn-bundle.md`。
 
 ### 6.2 Go 服务 gRPC 端口
 

@@ -55,6 +55,11 @@ SVN 仓库根：`http://infinity-svn/svn/Pandora-Moba`
 
 引擎那 51 GB 是大头，按内网带宽预留时间。
 
+> **CI 机还需要 `uv`**（2026-08-19）：`tools/scripts/ci_backend.ps1` 的 Python 侧门禁
+> （`python/` 下的 errcode 一致性 + pytest）用它现建虚拟环境。缺了会**直接失败而不是跳过** ——
+> 这是有意的，跳过等于让 Python 侧的测试白写。`bootstrap-machine.ps1 -Install` 会用
+> `winget install --id astral-sh.uv` 装上；CPython 3.13 由 uv 自己按需下载并缓存，不用单独装。
+
 ---
 
 ## 1. 引擎：clone + **注册**

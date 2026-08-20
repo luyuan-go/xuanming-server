@@ -27,6 +27,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/luyuancpp/pandora/tools/migrate/workspacedb"
 )
 
 const freshInitSQLDir = "../../deploy/mysql-init"
@@ -74,6 +76,26 @@ func TestEveryFreshInitDatabaseHasMigrationSet(t *testing.T) {
 		"修法:建 migrations/<库名>/000001_baseline.{up,down}.sql(从 mysql-init 那份生成,全 IF NOT EXISTS),\n"+
 		"以后的结构变更一律新增更高版本。确实无 schema 的库登记进 migrationSetExemptDatabases 并写明理由。",
 		strings.Join(missing, "\n  "))
+}
+
+// TestCanonicalWorkspaceSetsMatchEmbeddedMigrations 防止中心 provisioner 的十库清单与
+// pandora-migrate 真正编进二进制的 migration set 漂移。
+func TestCanonicalWorkspaceSetsMatchEmbeddedMigrations(t *testing.T) {
+	embedded := collectMigrationSets(t)
+	canonical := workspacedb.CanonicalMigrationSets()
+	if len(canonical) != len(embedded) {
+		t.Fatalf("canonical/embedded migration sets=%v/%v", canonical, embedded)
+	}
+	seen := make(map[string]bool, len(canonical))
+	for _, migrationSet := range canonical {
+		if seen[migrationSet] {
+			t.Fatalf("canonical migration set 重复: %s", migrationSet)
+		}
+		seen[migrationSet] = true
+		if !embedded[migrationSet] {
+			t.Fatalf("canonical migration set %s 不在内嵌 migrations 目录", migrationSet)
+		}
+	}
 }
 
 // TestMigrationSetExemptionsStayEmpty 反向门禁:被豁免的库必须**确实**还没有表。

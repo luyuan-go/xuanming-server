@@ -47,6 +47,9 @@ param(
     # 没装 Go 的机器(策划机)会自动走这条路,不必显式传。
     [switch]$UseArtifacts,
 
+    # 仅由策划免 Docker 双击入口开启：合并热启动的 listener 查询，不改变普通开发流程。
+    [switch]$FastExistingProbe,
+
     # 配合 -Action build:把产物编到 run/artifacts/windows/bin(而不是 run/dev/bin),
     # 供打包分发给没装 Go 的机器。
     [switch]$PublishArtifacts,
@@ -89,8 +92,25 @@ if (-not $env:GOSUMDB -or $env:GOSUMDB -match 'sum\.golang\.org') {
 $ProjectRoot = (Resolve-Path "$PSScriptRoot/../..").Path
 $stateHelper = Join-Path $PSScriptRoot 'lib/local_infra_state.ps1'
 . $stateHelper
-if ($NoDocker) {
-    $mustUseMysql = $Action -in @('up', 'restart')
+. (Join-Path $PSScriptRoot 'lib/planner_mysql_startup.ps1')
+. (Join-Path $PSScriptRoot 'lib/mysql_service_runtime_config.ps1')
+. (Join-Path $PSScriptRoot 'lib/planner_mysql_preflight.ps1')
+. (Join-Path $PSScriptRoot 'lib/planner_fast_start.ps1')
+$mustUseMysql = $Action -in @('up', 'restart')
+$plannerMysqlMode = if ($NoDocker) { Get-PandoraPlannerMysqlStartupMode -ProjectRoot $ProjectRoot } else { 'docker' }
+$centralMysqlProfile = $null
+$centralMysqlCredential = $null
+$mysqlProfileFingerprint = ''
+if ($NoDocker -and $plannerMysqlMode -ceq 'central-managed') {
+    if ($mustUseMysql) {
+        $plannerMysqlContext = Initialize-PandoraPlannerMysqlRuntime -ProjectRoot $ProjectRoot
+        $centralMysqlProfile = $plannerMysqlContext.Profile
+        $centralMysqlCredential = Get-PandoraPlannerDbCredential -WorkspaceId $centralMysqlProfile.workspace_id `
+            -Target $centralMysqlProfile.credential_ref.target
+        $MysqlPort = [int]$centralMysqlProfile.endpoint.port
+        $mysqlProfileFingerprint = "$($centralMysqlProfile.fingerprint)"
+    }
+} elseif ($NoDocker) {
     $mysqlState = Get-PandoraLocalInfraPortState $ProjectRoot
     if ($mustUseMysql -and -not $mysqlState) {
         throw '免 Docker MySQL 尚无已验证身份状态；拒绝生成配置或启动服务。'
@@ -106,13 +126,14 @@ if ($NoDocker) {
 } elseif ($MysqlPort -eq 0) {
     $MysqlPort = 3307
 }
-$serviceRuntimeMode = if ($NoDocker) { 'nodocker' } else { 'docker' }
+$serviceRuntimeMode = if ($plannerMysqlMode -ceq 'central-managed') { 'central' } elseif ($NoDocker) { 'nodocker' } else { 'docker' }
 $serviceRuntimeSocialOnMysql = [bool]$SocialOnMysql
 
 function Test-ServiceRuntimeProfileMatches($State) {
     return $State -and $State.Mode -eq $serviceRuntimeMode -and
         [int]$State.MysqlPort -eq $MysqlPort -and
-        [bool]$State.SocialOnMysql -eq $serviceRuntimeSocialOnMysql
+        [bool]$State.SocialOnMysql -eq $serviceRuntimeSocialOnMysql -and
+        ($serviceRuntimeMode -cne 'central' -or "$($State.ProfileFingerprint)" -ceq $mysqlProfileFingerprint)
 }
 
 function Assert-SingleServiceRuntimeCompatible {
@@ -136,6 +157,7 @@ function Assert-SingleServiceRuntimeCompatible {
 
 function Assert-NoDockerMysqlOwned {
     if (-not $NoDocker) { return }
+    if ($plannerMysqlMode -ceq 'central-managed') { return }
     $currentState = Get-PandoraLocalInfraPortState $ProjectRoot
     if (-not $currentState -or [int]$currentState.MysqlPort -ne $MysqlPort -or
         -not (Get-PandoraLocalMysqlOwnedProcess $ProjectRoot $currentState)) {
@@ -152,6 +174,60 @@ New-Item -ItemType Directory -Force -Path $BinDir, $LogDir | Out-Null
 # 没装 Go 的机器(策划机)启动时直接拷这里的 exe,免装 Go 工具链、免联网拉模块。
 $ArtifactBinDir = Join-Path $ProjectRoot 'run/artifacts/windows/bin'
 $script:HasGo = [bool](Get-Command go -ErrorAction SilentlyContinue)
+$PlannerBuildReceiptDir = Join-Path $ProjectRoot 'run/localinfra/cfg/service-build-receipts'
+$script:PlannerBuildFingerprint = ''
+$script:PlannerArtifactManifestByName = @{}
+$script:PlannerBuildPublished = $false
+
+function Get-PlannerBuildFingerprint($svc) {
+    if (-not $FastExistingProbe -or $PublishArtifacts) { return '' }
+    $artifactMode = ($UseArtifacts -or -not $script:HasGo)
+    if (-not $script:PlannerBuildFingerprint) {
+        if ($artifactMode) {
+            $manifestPath = Join-Path $ProjectRoot 'run/artifacts/windows/manifest.json'
+            if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+                throw "策划 fast 启动要求预编译 manifest，但不存在:$manifestPath"
+            }
+            $manifest = [IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
+            foreach ($entry in @($manifest.binaries)) {
+                $script:PlannerArtifactManifestByName["$($entry.name)"] = $entry
+            }
+            $manifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash
+            $script:PlannerBuildFingerprint = "artifact-v1:$manifestHash"
+        } else {
+            Push-Location $ProjectRoot
+            try {
+                $goVersion = (& go version 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -ne 0 -or -not $goVersion) { throw '无法读取 go version，拒绝复用旧业务二进制。' }
+                $goEnvironment = (& go env GOROOT GOOS GOARCH GOAMD64 GO386 GOARM GOARM64 GOMIPS GOMIPS64 GOPPC64 `
+                        GORISCV64 GOWASM CGO_ENABLED CC CXX CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_LDFLAGS `
+                        GOFLAGS GOEXPERIMENT GOFIPS140 GOWORK GOTOOLCHAIN 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -ne 0 -or -not $goEnvironment) { throw '无法读取 go build 环境，拒绝复用旧业务二进制。' }
+                $workspaceJson = (& go work edit -json 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -ne 0 -or -not $workspaceJson) { throw '无法读取 go.work 模块清单，拒绝复用旧业务二进制。' }
+                $workspace = $workspaceJson | ConvertFrom-Json
+                $workspaceRoots = @($workspace.Use | ForEach-Object { "$($_.DiskPath)" } | Where-Object { $_ })
+                if ($workspaceRoots.Count -eq 0) { throw 'go.work 没有 use 模块，拒绝生成不完整的构建指纹。' }
+            } finally {
+                Pop-Location
+            }
+            $sourceHash = Get-PandoraPlannerGoInputFingerprint -ProjectRoot $ProjectRoot `
+                -ToolchainSignature "$goVersion`n$goEnvironment" -WorkspaceRoots $workspaceRoots
+            $script:PlannerBuildFingerprint = "go-v3:$sourceHash"
+        }
+    }
+
+    if ($artifactMode) {
+        $entry = $script:PlannerArtifactManifestByName[$svc.Name]
+        if (-not $entry) { throw "预编译 manifest 缺少 $($svc.Name)，拒绝混用 artifact 与现场 build。" }
+        return "$($script:PlannerBuildFingerprint):$($svc.Name):$($entry.sha256)"
+    }
+    return "$($script:PlannerBuildFingerprint):$($svc.Name):$($svc.Cmd)"
+}
+
+function Get-PlannerBuildReceiptPath($svc) {
+    return (Join-Path $PlannerBuildReceiptDir "$($svc.Name).json")
+}
 
 # ===== 服务清单(数组顺序 = 依赖启动顺序:leaf 依赖在前,login 最后)=====
 # 全部 22 个服务(含 social/friend、social/chat、social/guild、social/mail、social/dialogue、
@@ -226,6 +302,100 @@ function Get-ServiceConfigPath($svc) {
     return $target
 }
 
+function Get-ServiceRuntimeConfig($svc) {
+    $svcDir = Join-Path $ProjectRoot $svc.Dir
+    $source = Join-Path $svcDir $svc.Conf
+    if ($plannerMysqlMode -ceq 'central-managed') {
+        if (-not $centralMysqlProfile -or -not $centralMysqlCredential) {
+            throw '中心 MySQL profile/DPAPI credential 未就绪；拒绝渲染服务配置。'
+        }
+        return New-PandoraMysqlServiceRuntimeConfig -ProjectRoot $ProjectRoot -ServiceName $svc.Name `
+            -SourcePath $source -Profile $centralMysqlProfile -Credential $centralMysqlCredential
+    }
+    $path = Get-ServiceConfigPath $svc
+    $resolved = if ([IO.Path]::IsPathRooted("$path")) { "$path" } else { Join-Path $svcDir "$path" }
+    return [pscustomobject][ordered]@{ Path = $resolved; Root = ''; Ephemeral = $false; DsnCount = 0 }
+}
+
+function Remove-ServiceRuntimeConfigAfterLaunch {
+    param(
+        $svc,
+        $RuntimeConfig,
+        $Process,
+        [switch]$AlwaysRollback,
+        [string]$FailureContext = ''
+    )
+    $initialCleanupError = ''
+    if (-not $AlwaysRollback) {
+        try {
+            Remove-PandoraMysqlServiceRuntimeConfig -RuntimeConfig $RuntimeConfig
+            return
+        } catch {
+            $initialCleanupError = $_.Exception.Message
+        }
+    }
+
+    # 启动事务失败或明文 YAML 首次删不掉时，只停止本轮 Start-Process 返回的 exact Process。
+    # Stop-Process 返回不等于进程已退出；必须有界 Refresh 后观察 HasExited=true 才能删 PID 登记。
+    $rollbackErrors = [Collections.Generic.List[string]]::new()
+    $exitConfirmed = $true
+    $processId = 0
+    if ($Process) {
+        $processId = [int]$Process.Id
+        try {
+            $stopResult = Stop-PandoraPlannerExactProcess -Process $Process -TimeoutMilliseconds 5000
+            $exitConfirmed = [bool]$stopResult.ExitConfirmed
+            if (-not $exitConfirmed) {
+                $rollbackErrors.Add("PID $processId 未能确认退出:$($stopResult.Error)")
+            }
+        } catch {
+            $exitConfirmed = $false
+            $rollbackErrors.Add("PID $processId 停止/退出证明失败:$($_.Exception.Message)")
+        }
+    }
+
+    $cleanupSucceeded = $false
+    $cleanupAttemptErrors = [Collections.Generic.List[string]]::new()
+    $cleanupAttempts = if ($AlwaysRollback) { 2 } else { 1 }
+    for ($attempt = 1; $attempt -le $cleanupAttempts; $attempt++) {
+        try {
+            Remove-PandoraMysqlServiceRuntimeConfig -RuntimeConfig $RuntimeConfig
+            $cleanupSucceeded = $true
+            break
+        } catch {
+            $cleanupAttemptErrors.Add("第 $attempt 次:$($_.Exception.Message)")
+        }
+    }
+    if (-not $cleanupSucceeded) {
+        $rollbackErrors.Add("secret runtime 重试清理失败:$($cleanupAttemptErrors -join '；')")
+    }
+
+    if ($Process -and $exitConfirmed -and $cleanupSucceeded) {
+        try {
+            Remove-PandoraPlannerExactPidFile -PidFile (Get-PidFile $svc) -ExpectedProcessId $processId
+        } catch {
+            $rollbackErrors.Add($_.Exception.Message)
+        }
+    }
+
+    $context = @($FailureContext, $(if ($initialCleanupError) { "首次 secret 清理失败:$initialCleanupError" })) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    if ($rollbackErrors.Count -gt 0) {
+        $state = if (-not $exitConfirmed) {
+            '未能确认本轮进程退出，保留 PID 登记与错误证据'
+        } elseif (-not $cleanupSucceeded) {
+            '已确认本轮进程退出，但 secret 仍未清理，保留 PID 登记与错误证据'
+        } else {
+            '已确认本轮进程退出并清理 secret，但 exact PID 登记未能安全删除，保留错误证据'
+        }
+        throw "服务 $($svc.Name) 启动回滚失败：$state。上下文:$($context -join '；')。详情:$($rollbackErrors -join ' | ')"
+    }
+    if ($initialCleanupError) {
+        $processState = if ($Process) { '本轮 exact Process 已确认退出' } else { '本轮未创建进程' }
+        throw "服务 $($svc.Name) 的 secret runtime 首次清理失败；$processState，重试清理成功且 exact PID 登记已安全处理；启动已中止。详情:$initialCleanupError"
+    }
+}
+
 function Get-Service([string]$name) {
     $svc = $Services | Where-Object { $_.Name -eq $name }
     if (-not $svc) {
@@ -289,11 +459,16 @@ function Test-PortOpen([int]$port) {
     }
 }
 
-function Test-ServiceListenerOwned($svc, $proc) {
+function Test-ServiceListenerOwned($svc, $proc, $ListenerRecords = $null) {
     if (-not $proc) { return $false }
     try {
-        $owners = @(Get-NetTCPConnection -State Listen -LocalPort ([int]$svc.Port) -ErrorAction Stop |
-            Select-Object -ExpandProperty OwningProcess -Unique)
+        $owners = if ($null -ne $ListenerRecords) {
+            @($ListenerRecords |
+                Where-Object { [int]$_.LocalPort -eq [int]$svc.Port } |
+                Select-Object -ExpandProperty OwningProcess -Unique)
+        } else {
+            @(Get-PandoraTcpListenerProcessIds -Port ([int]$svc.Port))
+        }
         return $owners -contains [int]$proc.Id
     } catch { return $false }
 }
@@ -360,12 +535,21 @@ function Clear-LocalDsProcesses($svc, $ownerProc, [switch]$OrphansOnly) {
 # 用户只看到"某服务没起来"却查不到原因。这里在启动前把占端口的进程揪出来:
 #   - 若它就是本服务自己的 exe(BinDir 下同名二进制)→ 视为残留实例,直接 Kill;
 #   - 若是别的程序占了端口 → 只告警不误杀,交由用户处理。
-function Clear-PortSquatter($svc) {
+function Clear-PortSquatter($svc, $ListenerRecords = $null) {
     $owningPids = @()
     try {
-        $owningPids = Get-NetTCPConnection -State Listen -LocalPort $svc.Port -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty OwningProcess -Unique
-    } catch { $owningPids = @() }
+        $owningPids = if ($null -ne $ListenerRecords) {
+            @($ListenerRecords |
+                Where-Object { [int]$_.LocalPort -eq [int]$svc.Port } |
+                Select-Object -ExpandProperty OwningProcess -Unique)
+        } else {
+            @(Get-PandoraTcpListenerProcessIds -Port ([int]$svc.Port))
+        }
+    } catch {
+        # 查询失败时不能把未知当作空闲，更不能按进程名猜一个 PID 去杀；让后续 bind/readiness 自己失败。
+        Write-Host "  [WARN] 查询 :$($svc.Port) listener 失败，不会猜测或清理进程:$($_.Exception.Message)" -ForegroundColor Yellow
+        return
+    }
     if (-not $owningPids) { return }
 
     $expectedExe = [System.IO.Path]::GetFullPath((Join-Path $BinDir "$($svc.Name).exe"))
@@ -377,10 +561,8 @@ function Clear-PortSquatter($svc) {
         try { $procPath = $proc.Path } catch { $procPath = $null }
         $isOurs = $false
         if ($procPath) {
-            $isOurs = ([System.IO.Path]::GetFullPath($procPath) -eq $expectedExe)
-        } elseif ($proc.ProcessName -eq $svc.Name) {
-            # 部分系统进程路径读不到;只在路径不可见时退回按进程名判断。
-            $isOurs = $true
+            try { $isOurs = ([System.IO.Path]::GetFullPath($procPath) -eq $expectedExe) }
+            catch { $isOurs = $false }
         }
         if ($isOurs) {
             Write-Host "  [kill] $($svc.Name) 端口 :$($svc.Port) 被残留实例 (PID $opid) 占用,先清理" -ForegroundColor Yellow
@@ -391,6 +573,10 @@ function Clear-PortSquatter($svc) {
                 Start-Sleep -Milliseconds 200
             }
         } else {
+            if (-not $procPath) {
+                Write-Host "  [WARN] $($svc.Name) 端口 :$($svc.Port) 的 PID $opid 映像路径不可读；无法证明是 exact exe，不会停止。" -ForegroundColor Yellow
+                continue
+            }
             # 端口被非本服务进程占。最常见是 docker 业务容器(经 wslrelay/com.docker.backend 代理端口):
             # 上一轮跑过 docker/intranet 模式,容器还占着 20001-20022,宿主 go 进程会 bind 失败。
             $isDockerProxy = $proc.ProcessName -match 'wslrelay|com\.docker'
@@ -422,13 +608,19 @@ function Test-InfraReady {
     if (-not $NoDocker) { $infra += @{ Name = 'etcd'; Port = 2380 } }
     $down = @()
     foreach ($i in $infra) {
-        if (-not (Test-PortOpen $i.Port)) { $down += $i }
+        $targetHost = if ($i.Name -ceq 'MySQL' -and $plannerMysqlMode -ceq 'central-managed') {
+            "$($centralMysqlProfile.endpoint.host)"
+        } else { '127.0.0.1' }
+        $reachable = if ($targetHost -ceq '127.0.0.1') { Test-PortOpen $i.Port } else {
+            Test-NetConnection -ComputerName $targetHost -Port $i.Port -InformationLevel Quiet -WarningAction SilentlyContinue
+        }
+        if (-not $reachable) { $down += [pscustomobject]@{ Name = $i.Name; Host = $targetHost; Port = $i.Port } }
     }
     if ($down.Count -eq 0) { return $true }
 
     Write-Host "[ERR] 基础设施未就绪,业务服务无法启动:" -ForegroundColor Red
     foreach ($d in $down) {
-        Write-Host "  - $($d.Name) 127.0.0.1:$($d.Port) 连不上(容器没起/端口没发布)" -ForegroundColor Red
+        Write-Host "  - $($d.Name) $($d.Host):$($d.Port) 连不上" -ForegroundColor Red
     }
     Write-Host "原因:这些是 go 服务的强依赖;Redis 不通时 hub_allocator 也拉不起大厅 Hub DS,客户端会卡在连大厅。" -ForegroundColor Yellow
     Write-Host "修复:" -ForegroundColor Yellow
@@ -458,12 +650,49 @@ function Build-Service($svc) {
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     $exe = Join-Path $outDir "$($svc.Name).exe"
 
+    $plannerFingerprint = Get-PlannerBuildFingerprint $svc
+    $plannerReceipt = if ($plannerFingerprint) { Get-PlannerBuildReceiptPath $svc } else { '' }
+    if ($plannerReceipt -and (Test-PandoraPlannerBuildReceipt -ReceiptPath $plannerReceipt `
+            -Fingerprint $plannerFingerprint -BinaryPath $exe)) {
+        Write-Host "  [reuse] $($svc.Name) (源码/工具链未变化)" -ForegroundColor DarkGray
+        return $exe
+    }
+
     if (($UseArtifacts -or -not $script:HasGo) -and -not $PublishArtifacts) {
         $artifact = Join-Path $ArtifactBinDir "$($svc.Name).exe"
         if (Test-Path -LiteralPath $artifact) {
+            if ($plannerFingerprint) {
+                $entry = $script:PlannerArtifactManifestByName[$svc.Name]
+                $stagedExe = Join-Path $outDir (".{0}.planner-stage-{1}-{2}.exe" -f `
+                        $svc.Name, $PID, [guid]::NewGuid().ToString('N'))
+                try {
+                    Copy-Item -LiteralPath $artifact -Destination $stagedExe -Force
+                    # 校验实际将执行的 staging 字节，不在源文件上做 hash→copy 的 TOCTOU。
+                    $stagedInfo = Get-Item -LiteralPath $stagedExe -ErrorAction Stop
+                    if ([int64]$stagedInfo.Length -ne [int64]$entry.size) {
+                        throw "预编译产物大小与 manifest 不一致:$artifact"
+                    }
+                    $stagedHash = (Get-FileHash -LiteralPath $stagedExe -Algorithm SHA256).Hash
+                    if (-not [string]::Equals($stagedHash, "$($entry.sha256)", [StringComparison]::OrdinalIgnoreCase)) {
+                        throw "预编译产物 SHA256 与 manifest 不一致:$artifact"
+                    }
+                    [IO.File]::Move($stagedExe, $exe, $true)
+                    $script:PlannerBuildPublished = $true
+                } finally {
+                    Remove-Item -LiteralPath $stagedExe -Force -ErrorAction SilentlyContinue
+                }
+            } else {
+                Copy-Item -LiteralPath $artifact -Destination $exe -Force
+            }
             Write-Host "  [use ] $($svc.Name) (预编译产物)" -ForegroundColor DarkGray
-            Copy-Item -LiteralPath $artifact -Destination $exe -Force
+            if ($plannerReceipt) {
+                Write-PandoraPlannerBuildReceipt -ReceiptPath $plannerReceipt `
+                    -Fingerprint $plannerFingerprint -BinaryPath $exe
+            }
             return $exe
+        }
+        if ($UseArtifacts) {
+            throw "-UseArtifacts 已显式要求预编译模式，但缺少产物:$artifact；拒绝与现场 go build 混用。"
         }
         if (-not $script:HasGo) {
             Write-Host "[ERR] 本机没装 Go,也没找到预编译产物: $artifact" -ForegroundColor Red
@@ -487,13 +716,18 @@ function Build-Service($svc) {
     } finally {
         Pop-Location
     }
+    if ($plannerReceipt) {
+        $script:PlannerBuildPublished = $true
+        Write-PandoraPlannerBuildReceipt -ReceiptPath $plannerReceipt `
+            -Fingerprint $plannerFingerprint -BinaryPath $exe
+    }
     return $exe
 }
 
-function Start-Service($svc) {
+function Start-Service($svc, $ListenerRecords = $null) {
     $existing = Get-RunningProcess $svc
     if ($existing) {
-        if (Test-ServiceListenerOwned $svc $existing) {
+        if (Test-ServiceListenerOwned $svc $existing $ListenerRecords) {
             Write-Host "  [skip] $($svc.Name) 已在运行 (PID $($existing.Id))" -ForegroundColor Yellow
             return $true
         }
@@ -502,7 +736,7 @@ function Start-Service($svc) {
     }
 
     # 启动前清理占端口的残留实例,避免新进程 bind 端口失败静默崩溃。
-    Clear-PortSquatter $svc
+    Clear-PortSquatter $svc $ListenerRecords
     # 同理清无主 DS:它占着 7777,新 allocator 拉起的 DS 会 bind 失败(allocator 自己没事,
     # 于是表现成"服务全绿但进不去大厅",极难排查)。
     if ($LocalDsSpawners -contains $svc.Name) { Clear-LocalDsProcesses $svc $null -OrphansOnly }
@@ -513,27 +747,43 @@ function Start-Service($svc) {
     }
 
     $svcDir = Join-Path $ProjectRoot $svc.Dir
-    $confPath = Get-ServiceConfigPath $svc
+    $runtimeConfig = Get-ServiceRuntimeConfig $svc
+    $confPath = $runtimeConfig.Path
     $log = Get-LogFile $svc
     $err = Get-ErrFile $svc
-
-    $proc = Start-Process -FilePath $exe `
-        -ArgumentList '-conf', "`"$confPath`"" `
-        -WorkingDirectory $svcDir `
-        -RedirectStandardOutput $log `
-        -RedirectStandardError $err `
-        -WindowStyle Hidden `
-        -PassThru
-
-    $proc.Id | Out-File -FilePath (Get-PidFile $svc) -Encoding ascii
-
-    # 端口探活
+    $proc = $null
     $ready = $false
-    for ($i = 0; $i -lt 30; $i++) {
-        if ($proc.HasExited) { break }
-        if (Test-ServiceListenerOwned $svc $proc) { $ready = $true; break }
-        Start-Sleep -Milliseconds 400
+    $launchFailure = $null
+    try {
+        $proc = Start-Process -FilePath $exe `
+            -ArgumentList '-conf', "`"$confPath`"" `
+            -WorkingDirectory $svcDir `
+            -RedirectStandardOutput $log `
+            -RedirectStandardError $err `
+            -WindowStyle Hidden `
+            -PassThru
+
+        $proc.Id | Out-File -FilePath (Get-PidFile $svc) -Encoding ascii
+
+        # 端口就绪证明服务已经读取配置；此后 finally 精确删除本服务的 secret YAML。
+        for ($i = 0; $i -lt 30; $i++) {
+            if ($proc.HasExited) { break }
+            if ($FastExistingProbe) {
+                if ((Test-PortOpen $svc.Port) -and (Test-ServiceListenerOwned $svc $proc)) { $ready = $true; break }
+            } elseif (Test-ServiceListenerOwned $svc $proc) {
+                $ready = $true
+                break
+            }
+            Start-Sleep -Milliseconds 400
+        }
+    } catch {
+        $launchFailure = $_
+    } finally {
+        $failureContext = if ($launchFailure) { "普通启动异常:$($launchFailure.Exception.Message)" } else { '' }
+        Remove-ServiceRuntimeConfigAfterLaunch -svc $svc -RuntimeConfig $runtimeConfig -Process $proc `
+            -AlwaysRollback:($null -ne $launchFailure) -FailureContext $failureContext
     }
+    if ($launchFailure) { throw $launchFailure }
 
     if ($proc.HasExited) {
         Write-Host "  [FAIL] $($svc.Name) 启动后立即退出 (exit $($proc.ExitCode)),看日志: $err" -ForegroundColor Red
@@ -545,6 +795,240 @@ function Start-Service($svc) {
         Write-Host "  [WARN] $($svc.Name) PID $($proc.Id) 已起但 :$($svc.Port) 未就绪,看日志: $log" -ForegroundColor Yellow
         return $false
     }
+}
+
+function Start-PlannerFastServices($Targets) {
+    # 只给策划 cmd 的冷启动使用：第一波并发拉起 login 之外的服务，统一用
+    # listener 快照验证 exact PID；第二波再启 login，保留原有“login 最后”的依赖边界。
+    # 首次/源码变化时 Build-Service 仍逐项构建；日常命中收据后不再把
+    # 每个服务的 ready 等待串成 22 倍。
+    $targetsArray = @($Targets)
+    $states = [Collections.Generic.List[object]]::new()
+    $failed = [Collections.Generic.List[string]]::new()
+    $waves = [Collections.Generic.List[object]]::new()
+    $beforeLogin = @($targetsArray | Where-Object { $_.Name -ne 'login' })
+    $login = @($targetsArray | Where-Object { $_.Name -eq 'login' })
+    if ($beforeLogin.Count -gt 0) { $waves.Add($beforeLogin) }
+    if ($login.Count -gt 0) { $waves.Add($login) }
+
+    $totalWatch = [Diagnostics.Stopwatch]::StartNew()
+    $buildWatch = [Diagnostics.Stopwatch]::StartNew()
+    $launchWatch = [Diagnostics.Stopwatch]::new()
+    $readyWatch = [Diagnostics.Stopwatch]::new()
+    $perf = @{ Snapshots = 0; Existing = 0; Launched = 0; Waves = 0 }
+    $preparedExecutables = @{}
+    $script:PlannerBuildPublished = $false
+
+    # 先完成全部缺失二进制的构建/拷贝，再生成带密码的临时配置并启动。
+    # 这样冷 build 即使中途失败，也不会留下明文 DSN 或半批新进程。
+    $prebuildListenerRecords = $null
+    try {
+        $prebuildListenerRecords = @(Get-PandoraTcpListenerRecords)
+        $perf.Snapshots++
+    } catch {
+        Write-Host "  [WARN] 预构建前 listener 快照失败，缺少 pidfile 的残留实例将逐端口 fail-closed 复核:$($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    foreach ($svc in $targetsArray) {
+        $existing = Get-RunningProcess $svc
+        # 这里只决定是否需要预构建；绝不用构建前的旧 listener 快照下就绪结论。
+        if ($existing) { continue }
+        # pidfile 可能丢失，但旧的 exact exe 仍在占端口并被 Windows 锁定。必须先精确清它，
+        # 否则 go build/Copy-Item 还没进入启动波就会 Access denied。
+        Clear-PortSquatter $svc $prebuildListenerRecords
+        $exe = Join-Path $BinDir "$($svc.Name).exe"
+        if (-not $NoBuild -or -not (Test-Path -LiteralPath $exe)) { $exe = Build-Service $svc }
+        $preparedExecutables[$svc.Name] = $exe
+    }
+    $buildWatch.Stop()
+    if ($script:PlannerBuildPublished -and $targetsArray.Count -gt 0) {
+        # 强指纹在批量 build/copy 前取得；同步工具若在这期间改了 Go 输入或
+        # artifact manifest，不能给一批混合字节留下可命中收据，更不能立即启动。
+        $beforeBuildFingerprint = $script:PlannerBuildFingerprint
+        $script:PlannerBuildFingerprint = ''
+        $script:PlannerArtifactManifestByName = @{}
+        $null = Get-PlannerBuildFingerprint $targetsArray[0]
+        if (-not [string]::Equals($script:PlannerBuildFingerprint, $beforeBuildFingerprint, [StringComparison]::Ordinal)) {
+            foreach ($svc in $targetsArray) {
+                Remove-Item -LiteralPath (Get-PlannerBuildReceiptPath $svc) -Force -ErrorAction SilentlyContinue
+            }
+            throw '业务构建输入在批量 build/copy 期间发生变化；已作废本轮收据，请等代码同步完成后重试。'
+        }
+    }
+
+    foreach ($wave in $waves) {
+        if ($failed.Count -gt 0) { break }
+        $perf.Waves++
+        $waveStates = [Collections.Generic.List[object]]::new()
+        $runtimeRecords = [Collections.Generic.List[object]]::new()
+        $waveFailure = $null
+        $cleanupErrors = @()
+        try {
+            $launchServices = [Collections.Generic.List[object]]::new()
+            $waveListenerRecords = $null
+            try {
+                $waveListenerRecords = @(Get-PandoraTcpListenerRecords)
+                $perf.Snapshots++
+            } catch {
+                Write-Host "  [WARN] 本波启动前 listener 快照失败，每个端口将独立 fail-closed 复核:$($_.Exception.Message)" -ForegroundColor Yellow
+            }
+            foreach ($svc in $wave) {
+                $existing = Get-RunningProcess $svc
+                if ($existing) {
+                    $perf.Existing++
+                    if (Test-ServiceListenerOwned $svc $existing $waveListenerRecords) {
+                        Write-Host "  [skip] $($svc.Name) 已在运行 (PID $($existing.Id))" -ForegroundColor Yellow
+                    } else {
+                        # snapshot 与 listener bind 之间存在正常竞态；已有 exact exe 不立即判死，
+                        # 纳入本波统一轮询。错 PID/永不 ready/提前退出仍会在 12s 全局 deadline fail-closed。
+                        Write-Host "  [wait] $($svc.Name) 已有 exact PID $($existing.Id)，等待 :$($svc.Port) 就绪" -ForegroundColor DarkGray
+                        $state = [pscustomobject][ordered]@{
+                            Name = $svc.Name; Port = [int]$svc.Port; ProcessId = [int]$existing.Id
+                            Service = $svc; Process = $existing; RuntimeConfig = $null
+                            Ready = $false; Failure = ''
+                        }
+                        $waveStates.Add($state)
+                        $states.Add($state)
+                    }
+                    continue
+                }
+
+                $exe = "$($preparedExecutables[$svc.Name])"
+                if (-not $exe -or -not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+                    # 极端竞态：预检时服务存活，到本波启动时却退出。
+                    # pidfile 可能同时丢失，exact exe 却还没退出；覆盖前再清一次才不会撞 Windows 映像锁。
+                    Clear-PortSquatter $svc $waveListenerRecords
+                    $exe = Build-Service $svc
+                    $preparedExecutables[$svc.Name] = $exe
+                }
+                $launchServices.Add([pscustomobject]@{ Service = $svc; Exe = $exe })
+            }
+
+            foreach ($candidate in $launchServices) {
+                if ($failed.Count -gt 0) { break }
+                $svc = $candidate.Service
+                $exe = $candidate.Exe
+                Clear-PortSquatter $svc $waveListenerRecords
+                if ($LocalDsSpawners -contains $svc.Name) { Clear-LocalDsProcesses $svc $null -OrphansOnly }
+
+                $svcDir = Join-Path $ProjectRoot $svc.Dir
+                $runtimeConfig = Get-ServiceRuntimeConfig $svc
+                $proc = $null
+                $runtimeRecord = [pscustomobject]@{
+                    Service = $svc; RuntimeConfig = $runtimeConfig; Process = $null
+                    AlwaysRollback = $false; FailureContext = ''
+                }
+                $runtimeRecords.Add($runtimeRecord)
+                try {
+                    $launchWatch.Start()
+                    $proc = Start-Process -FilePath $exe `
+                        -ArgumentList '-conf', "`"$($runtimeConfig.Path)`"" `
+                        -WorkingDirectory $svcDir `
+                        -RedirectStandardOutput (Get-LogFile $svc) `
+                        -RedirectStandardError (Get-ErrFile $svc) `
+                        -WindowStyle Hidden `
+                        -PassThru
+                    $runtimeRecord.Process = $proc
+                    $proc.Id | Out-File -FilePath (Get-PidFile $svc) -Encoding ascii
+                    $launchWatch.Stop()
+                    $state = [pscustomobject][ordered]@{
+                        Name = $svc.Name
+                        Port = [int]$svc.Port
+                        ProcessId = [int]$proc.Id
+                        Service = $svc
+                        Process = $proc
+                        RuntimeConfig = $runtimeConfig
+                        Ready = $false
+                        Failure = ''
+                    }
+                    $waveStates.Add($state)
+                    $states.Add($state)
+                    $perf.Launched++
+                } catch {
+                    $launchWatch.Stop()
+                    $runtimeRecord.AlwaysRollback = $true
+                    $runtimeRecord.FailureContext = "fast wave 启动异常:$($_.Exception.Message)"
+                    throw
+                }
+            }
+
+            if ($waveStates.Count -gt 0) {
+                $readyWatch.Start()
+                $getListeners = { $perf.Snapshots++; @(Get-PandoraTcpListenerRecords) }
+                $isExited = { param($state) return [bool]$state.Process.HasExited }
+                $isOwned = {
+                    param($state, $records)
+                    return (Test-ServiceListenerOwned $state.Service $state.Process $records)
+                }
+                $sleep = { param([int]$milliseconds) Start-Sleep -Milliseconds $milliseconds }
+                $elapsedBase = [int64]$readyWatch.ElapsedMilliseconds
+                $elapsed = { return [int64]($readyWatch.ElapsedMilliseconds - $elapsedBase) }
+                Wait-PandoraPlannerServiceBatch -States $waveStates.ToArray() -GetListenerRecords $getListeners `
+                    -TestProcessExited $isExited -TestListenerOwned $isOwned -Sleep $sleep `
+                    -GetElapsedMilliseconds $elapsed -PollMilliseconds 100 -TimeoutMilliseconds 12000
+                $readyWatch.Stop()
+            }
+        } catch {
+            $waveFailure = $_
+        } finally {
+            if ($launchWatch.IsRunning) { $launchWatch.Stop() }
+            if ($readyWatch.IsRunning) { $readyWatch.Stop() }
+            # 哪怕后续服务 build/launch 抛异常，也不留下带明文 DSN 的临时 YAML。
+            # 单个文件清理失败不能阻止后面的 secret 继续清理；最后聚合 fail-closed。
+            $cleanup = {
+                param($record)
+                    Remove-ServiceRuntimeConfigAfterLaunch -svc $record.Service `
+                        -RuntimeConfig $record.RuntimeConfig -Process $record.Process `
+                        -AlwaysRollback:$record.AlwaysRollback -FailureContext $record.FailureContext
+            }
+            $cleanupErrors = @(Invoke-PandoraPlannerCleanupRecords -Records $runtimeRecords.ToArray() -Cleanup $cleanup)
+        }
+        if ($cleanupErrors.Count -gt 0) {
+            $cause = if ($waveFailure) { "；原始异常:$($waveFailure.Exception.Message)" } else { '' }
+            throw "策划 fast 启动的 secret runtime 配置清理失败:$($cleanupErrors -join ' | ')$cause"
+        }
+        if ($waveFailure) { throw $waveFailure }
+
+        foreach ($state in $waveStates) {
+            if ($state.Ready) {
+                Write-Host "  [ OK ] $($state.Name)  PID $($state.ProcessId)  :$($state.Port)" -ForegroundColor Green
+                continue
+            }
+            $failed.Add($state.Name)
+            if ($state.Failure -eq 'process-exited') {
+                Write-Host "  [FAIL] $($state.Name) 启动后立即退出 (exit $($state.Process.ExitCode)),看日志: $(Get-ErrFile $state.Service)" -ForegroundColor Red
+            } else {
+                Write-Host "  [WARN] $($state.Name) PID $($state.ProcessId) 已起但 :$($state.Port) 未就绪,看日志: $(Get-LogFile $state.Service)" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    # 批量 wait 只能证明某一刻 ready；在登记全局 MySQL 应用状态前，再用一份
+    # fresh 快照复核全部目标的 exact PID，封住“检查后立即退出/端口被抢”的假绿窗口。
+    if ($failed.Count -eq 0) {
+        $finalListenerRecords = $null
+        try {
+            $finalListenerRecords = @(Get-PandoraTcpListenerRecords)
+            $perf.Snapshots++
+        } catch {
+            foreach ($svc in $targetsArray) { $failed.Add($svc.Name) }
+            Write-Host "  [FAIL] 无法取得最终 listener 快照，拒绝把未知当作全服务就绪:$($_.Exception.Message)" -ForegroundColor Red
+        }
+        if ($null -ne $finalListenerRecords) {
+            foreach ($svc in $targetsArray) {
+                $proc = Get-RunningProcess $svc
+                if (-not $proc -or -not (Test-ServiceListenerOwned $svc $proc $finalListenerRecords)) {
+                    $failed.Add($svc.Name)
+                    Write-Host "  [FAIL] 最终复核失败:$($svc.Name) 未由 exact PID 持有 :$($svc.Port)。" -ForegroundColor Red
+                }
+            }
+        }
+    }
+
+    $totalWatch.Stop()
+    Write-Host ("[perf] planner-services targets={0} existing={1} launched={2} waves={3} snapshots={4} build_ms={5} launch_ms={6} ready_ms={7} total_ms={8}" -f `
+            $targetsArray.Count, $perf.Existing, $perf.Launched, $perf.Waves, $perf.Snapshots, $buildWatch.ElapsedMilliseconds,
+            $launchWatch.ElapsedMilliseconds, $readyWatch.ElapsedMilliseconds, $totalWatch.ElapsedMilliseconds) -ForegroundColor DarkGray
+    return $failed.ToArray()
 }
 
 function Stop-Service($svc) {
@@ -591,6 +1075,11 @@ try {
 if ($Action -in @('up', 'down', 'restart')) {
     Enter-PandoraOrchestrationLock -ProjectRoot $ProjectRoot -Operation "业务服务 $Action"
     $orchestrationLockEntered = $true
+}
+if ($mustUseMysql -and $plannerMysqlMode -ceq 'central-managed') {
+    Invoke-PandoraPlannerSecretSessionSweep -ProjectRoot $ProjectRoot
+    Invoke-PandoraPlannerMysqlPreflight -ProjectRoot $ProjectRoot -Profile $centralMysqlProfile `
+        -Credential $centralMysqlCredential | Out-Null
 }
 switch ($Action) {
 
@@ -654,17 +1143,32 @@ switch ($Action) {
                 if (-not (Stop-Service $svc)) { exit 1 }
             }
             $svcDir = Join-Path $ProjectRoot $svc.Dir
-            $confPath = Get-ServiceConfigPath $svc
+            $runtimeConfig = Get-ServiceRuntimeConfig $svc
+            $confPath = $runtimeConfig.Path
             Write-Host "===== 前台运行 $($svc.Name) (:$($svc.Port),Ctrl+C 退出) =====" -ForegroundColor Cyan
-            # 没装 Go 的机器跑不了 go run,退回「预编译产物 + 前台执行」,日志一样直出。
-            if (-not $script:HasGo -or $UseArtifacts) {
+            $proc = $null
+            $launchFailure = $null
+            try {
+                # central secret 不能留到前台进程退出；统一用可执行文件启动，端口就绪后即删。
                 $exe = Build-Service $svc
-                Push-Location $svcDir
-                try { & $exe -conf $confPath } finally { Pop-Location }
-                break
+                $proc = Start-Process -FilePath $exe -ArgumentList '-conf', "`"$confPath`"" `
+                    -WorkingDirectory $svcDir -NoNewWindow -PassThru
+                $ready = $false
+                for ($i = 0; $i -lt 30; $i++) {
+                    if ($proc.HasExited) { break }
+                    if ((Test-PortOpen $svc.Port) -and (Test-ServiceListenerOwned $svc $proc)) { $ready = $true; break }
+                    Start-Sleep -Milliseconds 400
+                }
+                if (-not $ready) { throw "前台服务未在期限内读取配置并监听 :$($svc.Port)" }
+            } catch {
+                $launchFailure = $_
+            } finally {
+                $failureContext = if ($launchFailure) { "前台启动异常:$($launchFailure.Exception.Message)" } else { '' }
+                Remove-ServiceRuntimeConfigAfterLaunch -svc $svc -RuntimeConfig $runtimeConfig -Process $proc `
+                    -AlwaysRollback:($null -ne $launchFailure) -FailureContext $failureContext
             }
-            Push-Location $svcDir
-            try { & go run "./cmd/$($svc.Cmd)" -conf $confPath } finally { Pop-Location }
+            if ($launchFailure) { throw $launchFailure }
+            $proc.WaitForExit()
             break
         }
 
@@ -704,9 +1208,13 @@ switch ($Action) {
         if ($Exclude.Count -gt 0) { Write-Host "排除: $($Exclude -join ', ')  (留给 IDE 调试)" -ForegroundColor Yellow }
         Write-Host ""
 
-        $startFailed = @()
-        foreach ($svc in $targets) {
-            if (-not (Start-Service $svc)) { $startFailed += $svc.Name }
+        if ($FastExistingProbe) {
+            $startFailed = @(Start-PlannerFastServices $targets)
+        } else {
+            $startFailed = @()
+            foreach ($svc in $targets) {
+                if (-not (Start-Service $svc)) { $startFailed += $svc.Name }
+            }
         }
 
         if ($startFailed.Count -gt 0) {
@@ -714,8 +1222,13 @@ switch ($Action) {
             exit 1
         }
         if (-not $Service -and $Exclude.Count -eq 0 -and $Only.Count -eq 0) {
-            Set-PandoraServiceAppliedMysqlPort -ProjectRoot $ProjectRoot -Mode $serviceRuntimeMode `
-                -MysqlPort $MysqlPort -SocialOnMysql $serviceRuntimeSocialOnMysql | Out-Null
+            if ($serviceRuntimeMode -ceq 'central') {
+                Set-PandoraServiceAppliedMysqlProfile -ProjectRoot $ProjectRoot -Mode central `
+                    -MysqlPort $MysqlPort -SocialOnMysql $true -ProfileFingerprint $mysqlProfileFingerprint | Out-Null
+            } else {
+                Set-PandoraServiceAppliedMysqlPort -ProjectRoot $ProjectRoot -Mode $serviceRuntimeMode `
+                    -MysqlPort $MysqlPort -SocialOnMysql $serviceRuntimeSocialOnMysql | Out-Null
+            }
         } elseif (-not $Service) {
             Write-Host '[WARN] 部分启动不登记“全服务已应用”运行态。' -ForegroundColor Yellow
         }

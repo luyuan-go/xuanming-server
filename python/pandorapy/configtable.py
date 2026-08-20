@@ -23,6 +23,7 @@ JSON 解析用 protobuf 的 json_format 而不是裸 dict:
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -86,22 +87,44 @@ def read_manifest(active_dir: str | pathlib.Path) -> Manifest:
     except json.JSONDecodeError as exc:
         raise ConfigTableError(f"{path} 解析失败: {exc}") from exc
 
+    # ★ 三道结构闸,逐条对应 Go 的 ReadManifest。少一道都不会当场报错,
+    # 只会让**坏批次被当成好批次加载**:
+    version = int(raw.get("version", 0))
+    if version <= 0:
+        # 版本单调是热更流水线的防回退依据(§9.15)。version=0 的批次一旦被接受,
+        # 后续任何批次都"更新",防回退直接失效。
+        raise ConfigTableError(f"{path} 的 version 必须 > 0(实为 {version})")
+
     tables: dict[str, ManifestTable] = {}
-    for entry in raw.get("tables", []):
+    for i, entry in enumerate(raw.get("tables", [])):
         mt = ManifestTable(
-            name=entry["name"],
-            file=entry["file"],
-            proto=entry["proto"],
-            checksum=entry["checksum"],
+            name=str(entry.get("name", "")),
+            file=str(entry.get("file", "")),
+            proto=str(entry.get("proto", "")),
+            checksum=str(entry.get("checksum", "")),
             rows=int(entry.get("rows", 0)),
         )
+        if not mt.name:
+            raise ConfigTableError(f"{path} 的 tables[{i}] name 为空")
         if mt.name in tables:
             raise ConfigTableError(f"manifest 中表名重复: {mt.name}")
+        # ★ 文件名钉死为 <name>.json —— 这一条同时消灭两件事:
+        #   ① 文件名与表名漂移(改了文件名却没改表名,加载的是另一张表的内容);
+        #   ② **路径逃逸**:file 写成 "../../etc/passwd" 或绝对路径时,
+        #      下面的 `dir / mt.file` 会**跳出 active 目录**(pathlib 对绝对路径
+        #      是整个替换基路径,不是拼接)。manifest 是发布产物,但发布链上任何一环
+        #      被写坏都不该让加载器去读目录外的文件。
+        if mt.file != f"{mt.name}.json":
+            raise ConfigTableError(
+                f"表 {mt.name!r} 的 file 必须是 {mt.name + '.json'!r},实为 {mt.file!r}"
+            )
+        if not mt.checksum.startswith("sha256:"):
+            raise ConfigTableError(f"表 {mt.name!r} 的 checksum 缺少 sha256: 前缀")
         tables[mt.name] = mt
     if not tables:
         raise ConfigTableError(f"{path} 未列出任何表")
     return Manifest(
-        version=int(raw.get("version", 0)),
+        version=version,
         generated_at_ms=int(raw.get("generated_at_ms", 0)),
         generator=str(raw.get("generator", "")),
         source_rev=str(raw.get("source_rev", "")),
@@ -138,7 +161,15 @@ class DialogueTable:
         self._rows = rows
         self._by_id: dict[int, Any] = {}
         self._by_npc: dict[int, list[Any]] = {}
-        for row in rows:
+        for i, row in enumerate(rows):
+            # ★ 主键为 0 即拒批(与 Go 的 newDialogueTable 同一道闸)。
+            #
+            # 0 是 protobuf 的默认值:一行"什么都没填"的空行解析出来 id 就是 0。
+            # 放过它的后果是**一整行垃圾进了索引** —— 而且 `_by_id[0]` 还会被
+            # 后来的空行覆盖,表现为"某个对话节点查出来是另一个"。
+            # 更糟的是 is_start 为真的空行会成为该 NPC 的起始节点(npc_id 也是 0)。
+            if row.id == 0:
+                raise ConfigTableError(f"dialogue 第 {i + 1} 行主键为 0")
             if row.id in self._by_id:
                 raise ConfigTableError(f"对话表节点 id 重复: {row.id}")
             self._by_id[row.id] = row
@@ -299,12 +330,25 @@ def load_dialogue(
 
     container = _cfg_dialogue_pb2.DialogueTableData()
     try:
-        json_format.Parse(raw.decode("utf-8"), container)
+        # ★ ignore_unknown_fields=True —— 与 Go 侧 pkg/configtable/store.go 的
+        # unmarshalTable(protojson + DiscardUnknown)一致,**不是**放松校验。
+        #
+        # 严格校验属于**生成阶段**(导表器负责);运行期必须容忍新增列,否则:
+        # 标准发布序是「先发配置、再滚二进制」,新 dist 一加列,尚未滚上的旧进程
+        # 就会在热加载时整批拒载 —— 整个共存窗口(§9.21)被打穿。
+        # Go 侧有 store_test.go 的 TestLoadTolerateUnknownField 钉住这条。
+        json_format.Parse(raw.decode("utf-8"), container, ignore_unknown_fields=True)
     except json_format.ParseError as exc:
         raise ConfigTableError(f"{path} protojson 解析失败: {exc}") from exc
 
     rows = list(container.rows)
-    if mt.rows and len(rows) != mt.rows:
+    # ★ 判据是 `len(rows) != mt.rows`,**不是** `if mt.rows and ...`。
+    #
+    # 加了 `if mt.rows` 之后,manifest 声明 rows=0 的表会**整条跳过**行数校验 ——
+    # 而这道校验防的正是"发布拷贝被截断":一份被截成 0 行的表配上一份声明 0 行的
+    # manifest,两边"自洽",服务照常启动,对话树整个是空的。
+    # rows 是发布器写的,它写 0 本身就该被当成异常而不是"不校验"。
+    if len(rows) != mt.rows:
         raise ConfigTableError(
             f"dialogue 表行数不符: manifest 声明 {mt.rows} 实际 {len(rows)}"
         )
@@ -329,3 +373,59 @@ def load_dialogue(
         warnings=warnings,
         dialogue=table,
     )
+
+
+# ── 热更互斥 ────────────────────────────────────────────────────────────
+
+class ReloadMutex:
+    """`ReloadConfigTable` 的批次切换互斥。对齐 Go `pkg/configtable/store.go` 的 `s.mu`。
+
+    ★ 没有它的后果**不是**"多热更一次",是**版本静默回退**。
+
+    Python 侧原先的形状是:
+
+        current = store.tables.version          # ← 读在 await 之前
+        result  = await asyncio.to_thread(load_tables, ...)   # ← 让出事件循环
+        if result.version < current: reject
+        store.replace(result.tables)
+
+    两个并发 reload(运维双击、发布脚本重试、canary 与 stable 同时触发)会这样交错:
+
+        A 读 current=4 → A 让出
+        B 读 current=4 → B 加载到 v6 → B 判 6>4 通过 → B 切到 v6
+        A 加载到 v5    → A 判 5>4 通过(**用的是过期的 4**) → A 切回 v5
+
+    结果:内存里生效 v5,而两次热更都返回成功、运维视图上是 v6。此后所有人对
+    "现在生效的是哪批"的判断都是错的 —— 这正是 §9.15 要求 version 单调递增
+    想防的事,单调闸本身却因为读了过期基准而被绕过。
+
+    Go 里 `Store.Load` 整段持锁,load + 单调检查 + 切换是一个原子段。这里用
+    `asyncio.Lock` 复现同一个边界:**`current_version` 必须在锁内读**。
+
+    用法:
+
+        async with store.reload_mutex:
+            current = store.tables.version      # ← 锁内读,基准才是新鲜的
+            result = await asyncio.to_thread(load_tables, store.active_dir, expect)
+            ...单调检查...
+            store.replace(result.tables)
+
+    读侧照旧无锁:`replace()` 是单次属性赋值,读者要么看到旧的一整批、要么看到
+    新的一整批,不需要参与互斥。
+    """
+
+    __slots__ = ("_lock",)
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+
+    async def __aenter__(self) -> "ReloadMutex":
+        await self._lock.acquire()
+        return self
+
+    async def __aexit__(self, *exc) -> None:  # noqa: ANN002
+        self._lock.release()
+
+    @property
+    def locked(self) -> bool:
+        return self._lock.locked()

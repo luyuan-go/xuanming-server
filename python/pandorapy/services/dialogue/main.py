@@ -34,11 +34,12 @@ import sys
 # 必须最先 import:Windows 下 stdout 默认 cp1252,日志里的中文会抛 UnicodeEncodeError
 # 并把整条日志丢掉(实测)。见 pandorapy/_utf8.py。
 from pandorapy import _utf8  # noqa: F401
+from pandorapy import config as pconfig
 from pandorapy import configtable as pct
 from pandorapy import godur
 from pandorapy import log as plog
 from pandorapy import server as pserver
-from pandorapy import snowflake as psnowflake
+from pandorapy import snowflake_etcd as psnowflake_etcd
 from pandorapy.services.dialogue import biz as pbiz
 from pandorapy.services.dialogue import conf as pconf
 from pandorapy.services.dialogue import data as pdata
@@ -107,7 +108,7 @@ async def _main_async(args: argparse.Namespace) -> int:
 
     try:
         cfg = pconf.Config.load(conf_path)
-    except FileNotFoundError as exc:
+    except pconfig.ConfigLoadError as exc:
         logger.error("config_load_failed", err=str(exc), path=str(conf_path))
         return 1
     except Exception as exc:  # noqa: BLE001
@@ -116,16 +117,66 @@ async def _main_async(args: argparse.Namespace) -> int:
         logger.error("config_scan_failed", err=str(exc), path=str(conf_path))
         return 1
 
+    # 注:「配了但 Python 侧没实现的功能段拒启」这道闸**不在这里** ——
+    # 它挂在 pandorapy.config.BaseConf 的 pydantic 校验器上,加载配置时就抛了
+    # (上面的 config_scan_failed 分支会接住)。放在这里的版本是死代码:
+    # 永远轮不到它执行,而它的存在会让人以为"每个 main 都得记得调一次"。
+
     # 3. Snowflake(dialogue_id 生成)
     #
-    # Go 侧走 etcdnode.MustProvideSnowflake,支持 node_id_source=etcd 自动抢占 + 失租退出。
-    # Python 侧本轮只实现 static 模式(读 yaml 的 node.node_id)。
-    # ⚠️ 多副本部署前必须先补 etcd 抢占,否则重号(CLAUDE.md §9 不变量 11)。
+    # 对应 Go 的 etcdnode.MustProvideSnowflake:由 snowflake.node_id_source 二选一
+    #   ""/"static" → 用 yaml 的 node.node_id(单副本 / dev 默认,不碰 etcd)
+    #   "etcd"      → etcd 自动抢占 nodeID + 失租退出
+    # 两条路径都是完整实现(CLAUDE.md §14.2)。
+    #
+    # ★ 失租**必须退出进程**,不能降级继续发号:此刻另一个副本可能已经抢到同一个
+    # nodeID,继续发就是重号(§9 不变量 11),而重号在背包域表现为 DuplicateGuid
+    # fail-closed 卡住玩家领取 —— 现场看到的是"玩家领不了奖",查不到这里。
+    node_holder = None
     try:
-        snowflake_node = psnowflake.Node(cfg.node.node_id)
+        snowflake_node, node_holder = await psnowflake_etcd.provide_node(
+            list(cfg.snowflake.etcd_endpoints),
+            cfg.snowflake.etcd_service_name or SERVICE_NAME,
+            cfg.node.node_id,
+            cfg.snowflake.node_id_source,
+            # 失主 = 独占权不可证明 = 继续发号就是重号,没有安全的降级 → 退出进程。
+            on_lost=psnowflake_etcd.exit_process_on_lost,
+            **(
+                {"prefix": cfg.snowflake.etcd_prefix}
+                if cfg.snowflake.etcd_prefix
+                else {}
+            ),
+            **(
+                {"lease_ttl_sec": cfg.snowflake.etcd_lease_ttl_sec}
+                if cfg.snowflake.etcd_lease_ttl_sec > 0
+                else {}
+            ),
+        )
     except ValueError as exc:
-        logger.error("snowflake_init_failed", err=str(exc), node_id=cfg.node.node_id)
+        logger.error(
+            "snowflake_init_failed",
+            err=str(exc),
+            node_id=cfg.node.node_id,
+            node_id_source=cfg.snowflake.node_id_source,
+        )
         return 1
+    except Exception as exc:  # noqa: BLE001 —— 抢号失败必须拒启,不能退回 static
+        logger.error(
+            "snowflake_nodeid_acquire_failed",
+            err=str(exc),
+            node_id_source=cfg.snowflake.node_id_source,
+            hint="etcd 档抢不到 nodeID 时**不得**退回 static —— 那正好会与别的副本重号",
+        )
+        return 1
+
+    if node_holder is not None:
+        # 续约由 provide_node 内部拉起(失主默认退出进程)—— 这里不再各写一份,
+        # 免得两处失主处置漂移。见 snowflake_etcd.provide_node 的说明。
+        logger.info(
+            "snowflake_nodeid_acquired",
+            node_id=node_holder.node_id,
+            source="etcd",
+        )
 
     # 4. 对话树:与 UE 同源的 configtable dialogue 表是唯一权威。
     #    缺目录、缺表、checksum 异常、起始节点缺失 / 重复、后继节点悬空一律拒启
@@ -212,8 +263,12 @@ async def _main_async(args: argparse.Namespace) -> int:
         http_addr=cfg.server.http.addr,
         http_default_port=21013,
         on_ready=_on_ready,
-        background=[lambda: _run_session_sweep(sessions)],
+        background=[("session_sweep", lambda: _run_session_sweep(sessions))],
     )
+    if node_holder is not None:
+        # 正常退出:停续约并断开 etcd。**刻意不 revoke**(见 Holder.close 注释) ——
+        # 立刻释放会让新副本在同一日历秒抢到同号并从 step 0 重数,逐位重号。
+        await node_holder.close()
     return 0
 
 

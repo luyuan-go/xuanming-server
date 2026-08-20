@@ -34,7 +34,9 @@ import dataclasses
 from pandora.push.v1 import push_pb2
 from redis.asyncio.client import Redis
 
-from pandorapy import errcode, redisx
+from pandorapy import errcode
+from pandorapy import log as plog
+from pandorapy import redisx
 
 # 哨兵 member 名。它们参与 score 排序但不是帧,修剪时必须跳过。
 SENTINEL_WATERMARK = "wm"  # 最后分配的游标
@@ -43,6 +45,7 @@ SENTINEL_FLOOR = "fl"  # 最高被修剪掉的游标
 # member 格式:%020d 游标前缀 + 0x1f 分隔 + protobuf payload。
 # 前缀保证同一游标下 member 唯一(ZSET 按 member 去重,score 相同的两帧不能互相覆盖)。
 MEMBER_SEP = "\x1f"
+_SEP_BYTE = ord(MEMBER_SEP)   # 按字节比较,避免 bytes 索引取到 int 时与 str 比不上
 CURSOR_PREFIX_WIDTH = 20
 
 
@@ -104,6 +107,29 @@ end
 if fl > 0 then redis.call('ZADD', KEYS[1], fl, 'fl') end
 redis.call('EXPIRE', KEYS[1], ARGV[5])
 return cursor
+""",
+)
+
+
+# ★ 同样从 Go 侧 markCorruptScript **原样搬来**(services/runtime/push/internal/data/offline.go)。
+# 单 key 原子「删坏 member + fl 哨兵单调抬升到坏帧最高游标」。
+# ARGV[1]=坏帧最高游标,ARGV[2..]=坏 member 原文。
+#
+# fl 只增不减:多个 Pod 各自扫到不同批坏帧时取 max —— 若写成无条件覆盖,后扫到
+# 较低坏帧的那个 Pod 会把丢失上界**回退**,已经报给客户端的 resync 上界之下的
+# 帧就再也不会被判为丢失。
+_MARK_CORRUPT = redisx.LuaScript(
+    name="push_mark_corrupt",
+    body="""
+local top = tonumber(ARGV[1])
+for i = 2, #ARGV do
+  redis.call('ZREM', KEYS[1], ARGV[i])
+end
+local fl = 0
+local flScore = redis.call('ZSCORE', KEYS[1], 'fl')
+if flScore then fl = tonumber(flScore) end
+if top > fl then redis.call('ZADD', KEYS[1], top, 'fl') end
+return top
 """,
 )
 
@@ -172,15 +198,33 @@ class RedisOfflineCache:
             withscores=True,
         )
         out: list[OfflineFrame] = []
+        # 坏 member 记账(Go 侧 R5 复审 P2-1 / R7 P1 的收口,逐条对齐)。
+        # ★ 坏帧**不能只是跳过**:它上面的好帧一旦交付,客户端游标就越过了坏帧,
+        #   而 Range 严格 >after_cursor —— 坏 member 永远不会再被扫到,于是既没有
+        #   fl 记账也没有 resync,变成永久静默漏报(投递契约里最坏的一种失败)。
+        corrupt_top = 0
+        corrupt_min = -1
+        corrupt_members: list[object] = []
+
+        def _mark_corrupt(score_ms: int, member_raw) -> None:  # noqa: ANN001
+            nonlocal corrupt_top, corrupt_min
+            if score_ms > corrupt_top:
+                corrupt_top = score_ms
+            if corrupt_min < 0 or score_ms < corrupt_min:
+                corrupt_min = score_ms
+            corrupt_members.append(member_raw)
+
         for member, score in raw:
             text = member.decode("utf-8", "surrogateescape") if isinstance(member, bytes) else member
             if text in (SENTINEL_WATERMARK, SENTINEL_FLOOR):
                 continue
             parsed = _parse_member(member)
             if parsed is None:
-                # 脏数据(dev 环境残留的旧格式)→ 跳过,由窗口修剪自然清理。
+                # 格式不识别(dev 旧格式残留 / 外部脏写):按坏帧记账,不阻断其它帧
+                # (一条脏数据不该拖死整次补推),但必须留痕 + 折进 fl 触发 resync。
                 # ⚠️ 这不是"兼容手段" —— 上线后演进 member 格式必须按 §9.17
                 # 双向兼容纪律另行设计,不得复用静默跳过。
+                _mark_corrupt(int(score), member)
                 continue
             cursor = int(score)
             # ★ 把 frame.ts_ms **重铸为投递游标**再交付。
@@ -190,6 +234,32 @@ class RedisOfflineCache:
             out.append(OfflineFrame(frame=parsed, cursor=cursor))
             if len(out) >= limit:
                 break
+
+        if corrupt_members:
+            plog.get().error(
+                "push_offline_corrupt_members",
+                player_id=player_id,
+                count=len(corrupt_members),
+                top_cursor=corrupt_top,
+            )
+            try:
+                await _MARK_CORRUPT(
+                    self._rdb,
+                    keys=[offline_key(player_id)],
+                    args=[corrupt_top, *corrupt_members],
+                )
+            except Exception as exc:  # noqa: BLE001
+                # ★ fl 抬升失败时**绝不交付坏帧之上的好帧**:交付了客户端游标就越过
+                # 坏帧,而这次丢失既没记进 fl 也没发 resync = 永久静默漏报。
+                # 截到最低坏帧之下,坏 member 仍留在 key 里,下一轮重扫重试记账 ——
+                # 宁可这一轮少推几帧(补推本就会重来),也不能让游标越过未记账的丢失。
+                plog.get().warning(
+                    "push_offline_corrupt_cleanup_failed",
+                    player_id=player_id,
+                    err=str(exc),
+                    withheld_above=corrupt_min,
+                )
+                out = [f for f in out if f.cursor < corrupt_min]
         return out
 
     async def lost_since(self, player_id: int, after_cursor: int, now_ms: int) -> int:
@@ -235,9 +305,15 @@ class RedisOfflineCache:
 def _parse_member(member) -> object | None:  # noqa: ANN001
     """拆 `%020d` + 0x1f + payload。格式不识别返回 None。"""
     raw = member if isinstance(member, bytes) else str(member).encode("utf-8", "surrogateescape")
-    sep = raw.find(MEMBER_SEP.encode())
-    if sep != CURSOR_PREFIX_WIDTH:
+    if len(raw) <= CURSOR_PREFIX_WIDTH or raw[CURSOR_PREFIX_WIDTH] != _SEP_BYTE:
         return None
+    # ★ 前 20 字节必须**全是数字**(Go decodeMember 的 digits 循环,offline.go:135-141)。
+    # 只看分隔符位置不够:proto3 反序列化极宽松,连**空 payload 都能解成功**,
+    # 于是 `<20 字节垃圾>\x1f` 这种脏写会被当好帧投出去 —— Go 判它是坏帧(删除+折账),
+    # Python 却投一条 ts_ms=游标的空 PushFrame,两侧对同一条脏数据的判定正相反。
+    if not raw[:CURSOR_PREFIX_WIDTH].isdigit():
+        return None
+    sep = CURSOR_PREFIX_WIDTH
     frame = push_pb2.PushFrame()
     try:
         frame.ParseFromString(raw[sep + 1 :])

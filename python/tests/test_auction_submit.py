@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import pytest
+from pandora.auction.v1 import auction_pb2
+from pandora.inventory.v1 import inventory_pb2
 
 from pandorapy import errcode
 from pandorapy.services.auction import submit as sub
@@ -33,6 +35,9 @@ class FakeRepo:
         self.claim_result: tuple[sub.OrderRecord | None, bool] = (None, False)
         self.rejected: list[tuple[int, int]] = []
         self.activated: list[tuple[int, int]] = []
+        self.confirmed: list[tuple[int, int]] = []
+        self.confirm_result = True
+        self.orders: dict[int, sub.OrderRecord] = {}
 
     async def claim_order(self, rec):  # noqa: ANN001
         got, already = self.claim_result
@@ -44,7 +49,16 @@ class FakeRepo:
 
     async def activate_order(self, market_id, order_id, now_ms):  # noqa: ANN001
         self.activated.append((market_id, order_id))
-        return None
+        return True
+
+    async def confirm_order_escrow(self, market_id, order_id, now_ms):  # noqa: ANN001
+        # 确认 escrow 是撮合前的必经闸(Go: ConfirmOrderEscrow)。
+        # 这里恒 True;它返回 False 的那条路径由 test_confirm_escrow_lost_is_fatal 覆盖。
+        self.confirmed.append((market_id, order_id))
+        return self.confirm_result
+
+    async def get_order(self, market_id, order_id):  # noqa: ANN001
+        return self.orders.get(order_id), order_id in self.orders
 
 
 class RecordingLedger:
@@ -84,14 +98,19 @@ class Cfg:
     max_price = 1_000_000
 
 
-def _submitter(repo=None, ledger=None, slots=None):
+def _submitter(repo=None, ledger=None, slots=None, matcher=None):
     return sub.AuctionSubmitter(
         repo or FakeRepo(), ledger or RecordingLedger(), slots or FakeSlots(),
-        FakeSnowflake(), Cfg(),
+        FakeSnowflake(), Cfg(), matcher=matcher,
     )
 
 
 async def _submit(s, **kw):
+    """跑一次 submit 并取出**权威记录**。
+
+    返回值是 SubmitOutcome 而不是裸记录:`finalize` 区分"本次真的推进了这张单"
+    与"只是回放了一份快照",调用方据此决定要不要写订单簿缓存 / 发 audit。
+    """
     base = dict(
         owner_id=1001, side=sub.SIDE_SELL, market_id=1, item_config_id=5001,
         quantity=10, price=100, idem_key="k-1", now_ms=1_760_000_000_000,
@@ -140,22 +159,22 @@ async def test_already_terminal_replays_without_freezing() -> None:
         True,
     )
     s = _submitter(repo, ledger, slots)
-    rec = await _submit(s)
+    rec = (await _submit(s)).record
     assert rec.status == sub.STATUS_CANCELED
     assert not ledger.freezes, "已终态还去冻结了"
     assert slots.released == [777777], "终态回放没释放名额"
 
 
-async def test_already_active_replays_without_freezing() -> None:
+async def test_already_open_replays_without_freezing() -> None:
     repo = FakeRepo()
     ledger = RecordingLedger()
     repo.claim_result = (
-        sub.OrderRecord(order_id=777777, status=sub.STATUS_ACTIVE, owner_id=1001),
+        sub.OrderRecord(order_id=777777, status=sub.STATUS_OPEN, owner_id=1001),
         True,
     )
     s = _submitter(repo, ledger)
-    rec = await _submit(s)
-    assert rec.status == sub.STATUS_ACTIVE
+    rec = (await _submit(s)).record
+    assert rec.status == sub.STATUS_OPEN
     assert not ledger.freezes
 
 
@@ -317,8 +336,136 @@ def test_out_of_range_rejected(field: str, value: int) -> None:
 
 
 def test_terminal_status_set() -> None:
-    for s in (sub.STATUS_FILLED, sub.STATUS_CANCELED, sub.STATUS_EXPIRED,
-              sub.STATUS_REJECTED):
+    """★ 终态集合必须与 Go 的 isTerminal 逐值一致。
+
+    咬住的不变量:**PARTIAL 不是终态**。它剩余量仍挂在簿上等撮合,
+    一旦被算成终态,submit 的回放分支会提前释放 owner 名额 ——
+    玩家凭一个还活着的挂单白拿额度,配额恒被穿透且不报错。
+    """
+    for s in (sub.STATUS_FILLED, sub.STATUS_CANCELED, sub.STATUS_EXPIRED):
         assert sub.is_terminal(s)
-    for s in (sub.STATUS_PENDING, sub.STATUS_ACTIVE):
+    for s in (sub.STATUS_PENDING, sub.STATUS_OPEN, sub.STATUS_PARTIAL):
         assert not sub.is_terminal(s)
+
+
+def test_status_and_side_match_proto_enum() -> None:
+    """★ 状态 / 方向必须逐值等于 proto 生成物,不许手抄。
+
+    咬住的不变量:这两组值同时是落库值与跨服务传输值。抄错一位,
+    库里的历史行与对 inventory 的冻结方向会同时错,而两边都不报错。
+    """
+    assert sub.STATUS_PENDING == auction_pb2.AUCTION_ORDER_STATUS_UNSPECIFIED
+    assert sub.STATUS_OPEN == auction_pb2.AUCTION_ORDER_STATUS_OPEN
+    assert sub.STATUS_PARTIAL == auction_pb2.AUCTION_ORDER_STATUS_PARTIALLY_FILLED
+    assert sub.STATUS_FILLED == auction_pb2.AUCTION_ORDER_STATUS_FILLED
+    assert sub.STATUS_CANCELED == auction_pb2.AUCTION_ORDER_STATUS_CANCELED
+    assert sub.STATUS_EXPIRED == auction_pb2.AUCTION_ORDER_STATUS_EXPIRED
+    assert sub.SIDE_SELL == auction_pb2.ORDER_SIDE_SELL
+    assert sub.SIDE_BUY == auction_pb2.ORDER_SIDE_BUY
+
+
+def test_side_aligns_with_inventory_escrow_side() -> None:
+    """★ 挂单方向直接当 inventory 的 EscrowSide 传下去,必须同号。
+
+    咬住的不变量:SIDE_BUY 若错位成 1,就别名到 ESCROW_SIDE_SELL ——
+    买单会去冻**道具**而不是金币,并且绕开只在 BUY 分支上的
+    quantity*price 溢出守卫(inventory.go safeMulInt64)。冻结照样成功,没有报错。
+    """
+    assert sub.SIDE_SELL == inventory_pb2.ESCROW_SIDE_SELL
+    assert sub.SIDE_BUY == inventory_pb2.ESCROW_SIDE_BUY
+
+
+async def test_partially_filled_replay_keeps_owner_slot() -> None:
+    """★ 部分成交的回放**不得**释放 owner 名额 —— 它还挂在簿上。"""
+    repo = FakeRepo()
+    ledger = RecordingLedger()
+    slots = FakeSlots()
+    repo.claim_result = (
+        sub.OrderRecord(order_id=777777, status=sub.STATUS_PARTIAL, owner_id=1001),
+        True,
+    )
+    s = _submitter(repo, ledger, slots)
+    rec = (await _submit(s)).record
+    assert rec.status == sub.STATUS_PARTIAL
+    assert not ledger.freezes, "部分成交还去重复冻结了"
+    assert slots.released == [], "部分成交被当成终态释放了名额 —— 配额被穿透"
+
+
+# ── slot 预留失败路径:对齐 Go rejectPendingAfterSlotFailure ──────────────
+#
+# 这三条锁的是移植初版比 Go 弱的三处。它们共同的后果是:一张**已落库、已占配额
+# 名额**的 PENDING 单没有被终态化 —— 既绕过了 max_active_orders_per_player,
+# 又处在"可恢复"状态等着被继续推进。
+
+
+class _RawFailSlots:
+    """reserve 抛**裸异常**(不是 PandoraError)—— 模拟 Redis 连接被重置。"""
+
+    def __init__(self) -> None:
+        self.released: list[int] = []
+
+    async def reserve(self, rec):  # noqa: ANN001
+        raise ConnectionResetError("redis connection reset by peer")
+
+    async def release(self, rec):  # noqa: ANN001
+        self.released.append(rec.order_id)
+
+
+class _NoChangeRepo(FakeRepo):
+    """reject_pending_order 返回 False —— 条件更新没命中任何 PENDING 行。"""
+
+    async def reject_pending_order(self, market_id, order_id, now_ms):  # noqa: ANN001
+        self.rejected.append((market_id, order_id))
+        return False
+
+
+@pytest.mark.asyncio
+async def test_raw_exception_from_slot_reserve_still_terminalises_pending() -> None:
+    """★ slot 预留抛裸异常时,PENDING 单**必须**被终态化。
+
+    初版写的是 `except errcode.PandoraError:` —— 只收业务错误码。
+    Redis 连接重置 / 超时 / DNS 失败都是裸异常,会直接从 submit 逃出去,
+    留下一张已占配额名额、状态仍可恢复的 PENDING 单。
+
+    Go 那边是 `if slotErr := reserveOwnerSlotPruning(...); slotErr != nil`,
+    对**任何** error 都去终态化。
+    """
+    repo, slots = FakeRepo(), _RawFailSlots()
+    s = _submitter(repo=repo, slots=slots)
+    with pytest.raises(ConnectionResetError):
+        await _submit(s)
+    assert repo.rejected, "裸异常路径没有终态化 PENDING —— 配额名额被永久占用"
+    assert slots.released, "owner 名额没释放"
+
+
+@pytest.mark.asyncio
+async def test_reject_not_changed_after_slot_failure_is_internal_error() -> None:
+    """★ `changed == False` 是异常,不是"没什么可做"。
+
+    刚亲手写下过一张 PENDING 单,条件更新却说没有 PENDING 可改 —— 要么有并发写者,
+    要么状态机不自洽。静默放过会让调用方只看到原始的 slot 错误,没有任何线索
+    指向这里,而那张单继续占名额、继续可恢复。
+    """
+    repo = _NoChangeRepo()
+    s = _submitter(repo=repo, slots=FakeSlots(full=True))
+    with pytest.raises(errcode.PandoraError) as ei:
+        await _submit(s)
+    assert ei.value.code == errcode.ErrInternal, (
+        f"应当抛 ErrInternal,实际 {ei.value.code}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_slot_failure_releases_escrow_not_just_the_slot() -> None:
+    """★ 终态化之后要退 escrow,不能只放 owner 名额。
+
+    只放名额解决的是"这个玩家还能挂几张单",解决不了"资产被锁住"。
+    Go 的 `rejectPendingAfterSlotFailure` 里 `releaseOwnerSlot` 和
+    `tryReleaseOrder` 是两件事,少任何一件都留下残留。
+    """
+    repo, ledger, slots = FakeRepo(), RecordingLedger(), FakeSlots(full=True)
+    s = _submitter(repo=repo, ledger=ledger, slots=slots)
+    with pytest.raises(errcode.PandoraError):
+        await _submit(s)
+    assert slots.released, "owner 名额没释放"
+    assert ledger.releases, "escrow 没退 —— 资产会被锁住直到补偿链兜底"

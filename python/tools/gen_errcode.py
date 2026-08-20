@@ -64,13 +64,33 @@ class PandoraError(Exception):
     但**不改变** code 语义 —— 对客户端只暴露 code/msg,与 Go 侧一致。
     """
 
-    __slots__ = ("code", "msg", "cause")
+    __slots__ = ("code", "msg", "cause", "current_record", "retry_after_ms", "order_state")
 
     def __init__(self, code: int, msg: str = "", *args: object, cause: BaseException | None = None):
         # Go 侧 New(code, msg, args...) 用 fmt.Sprintf;这里对齐成 %% 风格格式化。
         self.msg = (msg % args) if args else msg
         self.code = code
         self.cause = cause
+        # ★ 三个「随错误一起回给调用方的证据」。**通则**:凡 Go 侧写成
+        # `(value, err)` 多返回、且失败路径上 value 仍然有意义的地方,Python 用异常
+        # 传播就必须把那个 value 显式挂在异常上,否则**静默丢失** —— 调用方拿到零值,
+        # 看起来只是"没有信息",实际是"信息被吞了",两者在日志里长得一模一样。
+        #   current_record  epoch 冲突时的当前记录 —— §9.23 query-first 重查依据,
+        #                   丢了调用方就得再打一次 Query,多一个 TOCTOU 窗口。
+        #   retry_after_ms  屏障未开时的等待时长 —— §9.23 要求 WAIT 必须带明确
+        #                   retry_after,丢了(=0)调用方要么空转要么干等。
+        #   order_state     trade ConfirmOrder 失败时订单"现在停在哪"。Go 的
+        #                   biz.ConfirmOrder 在**四条**失败路径上仍回真实状态
+        #                   (EXPIRED / FAILED / SELLER_CONFIRMED ×2,见
+        #                   services/economy/trade/internal/biz/trade.go:351/398/403/424),
+        #                   service 层原样透传(service/trade.go:61-62)。丢了它,
+        #                   客户端只看到 code=UNAVAILABLE + new_state=0,判不出该重试
+        #                   还是该当订单没动 —— 而"已结算但终态未落库"必须重试。
+        # 声明成 slots 而不是随手 setattr:后者能写进去(Exception 自带 __dict__)
+        # 但拼写错一个字母不会报错,读的那侧只会永远拿到默认值。
+        self.current_record: object | None = None
+        self.retry_after_ms: int = 0
+        self.order_state: int = 0
         super().__init__(f"errcode={code} {self.msg}")
 
 

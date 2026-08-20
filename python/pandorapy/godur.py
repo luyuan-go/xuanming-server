@@ -54,7 +54,15 @@ def duration_string(td: _dt.timedelta) -> str:
 
 
 def _trim(value: float) -> str:
-    """去掉浮点尾零,整数就输出整数(Go 也不会打 "5.000")。"""
+    """去掉浮点尾零,整数就输出整数(Go 也不会打 "5.000")。
+
+    ★ 不能用 `f"{value:g}"`:%g 只保留 **6 位有效数字**,而 Go 的
+    time.Duration.String() 打的是完整精度(纳秒级)。1.0000005s 这类值
+    在 %g 下会被截成 "1",于是同一个时长在两栈日志 / 配置回显里长得不一样,
+    而这种差异不会报错 —— 只会让人以为两边配的不是同一个值。
+    这里改成:定点展开到纳秒(Duration 的最小刻度)再去掉尾零。
+    """
     if value == int(value):
         return str(int(value))
-    return f"{value:g}"
+    text = f"{value:.9f}".rstrip("0").rstrip(".")
+    return text or "0"

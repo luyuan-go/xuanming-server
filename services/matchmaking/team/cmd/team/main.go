@@ -33,6 +33,8 @@ import (
 	"github.com/luyuancpp/pandora/pkg/kafkax"
 	"github.com/luyuancpp/pandora/pkg/middleware"
 	"github.com/luyuancpp/pandora/pkg/offlinewatch"
+	"github.com/luyuancpp/pandora/pkg/playername"
+	"github.com/luyuancpp/pandora/pkg/playerno"
 	"github.com/luyuancpp/pandora/pkg/redisx"
 	"github.com/luyuancpp/pandora/pkg/sessiongate"
 	"github.com/luyuancpp/pandora/pkg/snowflake/etcdnode"
@@ -92,6 +94,14 @@ func main() {
 	// 模式必须启动就暴露,不能等第一个玩家掉线才发现。
 	if err := cfg.ValidateOfflineLeave(); err != nil {
 		helper.Errorw("msg", "team_offline_leave_config_invalid", "err", err)
+		os.Exit(1)
+	}
+	if err := cfg.ValidatePlayerNoResolver(); err != nil {
+		helper.Errorw("msg", "player_no_resolver_init_failed", "err", err)
+		os.Exit(1)
+	}
+	if err := cfg.ValidatePlayerNameResolver(); err != nil {
+		helper.Errorw("msg", "player_name_resolver_init_failed", "err", err)
 		os.Exit(1)
 	}
 
@@ -155,6 +165,38 @@ func main() {
 		Limit: int64(cfg.Team.RateQuotaPerMin), Window: time.Minute,
 	})
 	helper.Infow("msg", "team_rate_quota_ready", "per_min", cfg.Team.RateQuotaPerMin)
+	if cfg.Team.PlayerNoResolverAddr != "" {
+		playerNoSigner, signErr := internalrpcauth.NewSigner(cfg.Team.PlayerNoResolverAuthSecret,
+			"team", cfg.Team.PlayerNoResolverAuthAudience)
+		if signErr != nil {
+			helper.Errorw("msg", "player_no_resolver_init_failed", "err", signErr)
+			os.Exit(1)
+		}
+		playerNoResolver := data.NewGrpcPlayerNoResolver(cfg.Team.PlayerNoResolverAddr, playerNoSigner)
+		defer func() { _ = playerNoResolver.Close() }()
+		uc.SetPlayerNoResolver(playerNoResolver)
+		helper.Infow("msg", "player_no_resolver_ready", "addr", cfg.Team.PlayerNoResolverAddr,
+			"timeout", "250ms", "max_batch", playerno.ResolveBatchLimit)
+	} else {
+		helper.Warnw("msg", "player_no_resolver_disabled",
+			"hint", "TeamMember.player_no will remain 0 until team.player_no_resolver_addr is configured")
+	}
+	if cfg.Team.PlayerNameResolverAddr != "" {
+		playerNameSigner, signErr := internalrpcauth.NewSigner(cfg.Team.PlayerNameResolverAuthSecret,
+			"team", cfg.Team.PlayerNameResolverAuthAudience)
+		if signErr != nil {
+			helper.Errorw("msg", "player_name_resolver_init_failed", "err", signErr)
+			os.Exit(1)
+		}
+		playerNameResolver := data.NewGrpcPlayerNameResolver(cfg.Team.PlayerNameResolverAddr, playerNameSigner)
+		defer func() { _ = playerNameResolver.Close() }()
+		uc.SetPlayerNameResolver(playerNameResolver)
+		helper.Infow("msg", "player_name_resolver_ready", "addr", cfg.Team.PlayerNameResolverAddr,
+			"timeout", "250ms", "max_batch", playername.ResolveBatchLimit)
+	} else {
+		helper.Warnw("msg", "player_name_resolver_disabled",
+			"hint", "TeamMember.nickname will remain empty until team.player_name_resolver_addr is configured")
+	}
 	// matchmaker 联动(弱依赖:matchmaker_addr 留空 → 离队/踢人不撤匹配票据,
 	// 且入队闸门跳过 —— 没有匹配链路的部署本就不存在"被对局占住的队伍")
 	if cfg.Team.MatchmakerAddr != "" {

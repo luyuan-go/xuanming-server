@@ -37,30 +37,41 @@ $buildAst = [System.Management.Automation.Language.Parser]::ParseFile(
     $BuildScript, [ref]$null, [ref]$parseErrors)
 Assert-True (-not ($parseErrors -and $parseErrors.Count -gt 0)) 'build_release_binaries.ps1 语法可解析'
 
-$fullBuildBlocks = @($buildAst.FindAll({
+$releaseListAssignments = @($buildAst.FindAll({
             param($node)
-            $node -is [System.Management.Automation.Language.IfStatementAst] -and
-            $node.Extent.Text -match 'if\s*\(\s*-not\s+\$Service\s*\)'
+            $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -ceq '$ReleaseBinaries'
         }, $true))
-Assert-True ($fullBuildBlocks.Count -eq 1) '存在唯一的整批构建工具分支 if (-not $Service)'
+Assert-True ($releaseListAssignments.Count -eq 1) '存在唯一正式二进制白名单'
 
-$fullBuildText = if ($fullBuildBlocks.Count -eq 1) { $fullBuildBlocks[0].Extent.Text } else { '' }
-Assert-True ($fullBuildText -match "Join-Path\s+\`$ProjectRoot\s+'tools/migrate'") `
-    '整批发布从 tools/migrate 模块构建迁移器'
-Assert-True ($fullBuildText -match "Join-Path\s+\`$ArtifactDir\s+'pandora-migrate\.exe'") `
-    '迁移器输出到 windows/bin/pandora-migrate.exe'
-Assert-True ($fullBuildText -match '&\s+go\s+build\s+-o\s+\$migrateExePath\s+\.') `
-    '迁移器使用 go build -o 写入约定产物路径'
+$releaseListText = if ($releaseListAssignments.Count -eq 1) {
+    $releaseListAssignments[0].Right.Extent.Text
+} else { '' }
+Assert-True ($releaseListText -match "Name\s*=\s*'pandora-migrate';\s*Dir\s*=\s*'tools/migrate';\s*Package\s*=\s*'\.'") `
+    '正式白名单从 tools/migrate 模块构建 pandora-migrate'
+Assert-True ($BuildSource -match 'Join-Path\s+\$stageBin\s+"\$\(\$binary\.Name\)\.exe"') `
+    '所有白名单项统一输出到本轮 staging/bin'
+Assert-True ($BuildSource -match '&\s+go\s+build\s+-buildvcs=true\s+-o\s+\$outputPath\s+\$binary\.Package') `
+    '迁移器与服务共用显式 VCS 身份的 staging go build 发布路径'
 
 Write-Host '[2] manifest、zip 与运行时消费路径闭环' -ForegroundColor Cyan
-$migrateBuildIndex = $BuildSource.IndexOf('go build -o $migrateExePath', [StringComparison]::Ordinal)
-$manifestScanIndex = $BuildSource.IndexOf('$exes = @(', [StringComparison]::Ordinal)
-Assert-True ($migrateBuildIndex -ge 0 -and $manifestScanIndex -gt $migrateBuildIndex) `
-    '迁移器在 manifest 扫描 bin/*.exe 之前完成构建，清单会记录其 hash'
-Assert-True ($BuildSource -match "Compress-Archive\s+-Path\s+\(Join-Path\s+\(Split-Path\s+-Parent\s+\`$ArtifactDir\)\s+'\*'\)") `
-    'zip 打包 windows 产物根，包含 bin/pandora-migrate.exe 与 manifest.json'
+$buildLoopIndex = $BuildSource.IndexOf('foreach ($binary in $ReleaseBinaries)', [StringComparison]::Ordinal)
+$manifestScanIndex = $BuildSource.IndexOf('$actualFiles = @(', [StringComparison]::Ordinal)
+Assert-True ($buildLoopIndex -ge 0 -and $manifestScanIndex -gt $buildLoopIndex) `
+    '完整白名单构建完才扫描 staging 生成 manifest，迁移器 hash 不会漏记'
+Assert-True ($BuildSource -match 'Compress-Archive\s+-Path\s+\(Join-Path\s+\$stageRoot\s+''\*''\)') `
+    'zip 从已核验 staging 根生成，包含 bin/pandora-migrate.exe 与 manifest.json'
 Assert-True ($MigrateSource -match "run/artifacts/windows/bin/pandora-migrate\.exe") `
     'dev_migrate.ps1 消费同一个 pandora-migrate.exe 路径'
+
+Write-Host '[3] 正式发布动态契约纳入既有 CI 入口' -ForegroundColor Cyan
+$publishContract = Join-Path $PSScriptRoot 'release_artifact_publish_contract_test.ps1'
+$publishOutput = (& pwsh -NoProfile -File $publishContract 2>&1 | Out-String)
+$publishExit = $LASTEXITCODE
+Assert-True ($publishExit -eq 0) 'dirty/unknown、失败回滚、exact 24 与 -Service 隔离动态契约通过'
+if ($publishExit -ne 0) {
+    Write-Host $publishOutput -ForegroundColor DarkYellow
+}
 
 Write-Host ''
 if ($script:Failures.Count -gt 0) {

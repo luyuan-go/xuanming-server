@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from pandora.mission.v1 import mission_pb2
 from pandorapy.services.mission import engine as eng
 
 
@@ -71,6 +72,20 @@ class FakeCatalog:
 
 KILL = 10  # 条件类别:击杀
 COMPLETE = eng.CONDITION_CATEGORY_COMPLETE_MISSION
+
+
+def test_complete_mission_category_matches_proto() -> None:
+    """COMPLETE_MISSION 类别号必须与 proto 枚举同值。
+
+    咬住的是"手抄了一个数"这件事本身:引擎里一旦写成字面量而不是取生成物,
+    这条就红。数字 8 再写一遍是给 proto 改号留的跳闸点 —— 改号时必须有人
+    同时看一眼 Go 侧 pkg/configtable/condition.go 的 ConditionCategoryCompleteMission。
+    """
+    assert (
+        eng.CONDITION_CATEGORY_COMPLETE_MISSION
+        == mission_pb2.MISSION_CONDITION_CATEGORY_COMPLETE_MISSION
+        == 8
+    )
 
 
 def _state(player_id: int, active: dict[int, list[int]] | None = None) -> eng.PlayerState:
@@ -369,6 +384,12 @@ def test_output_order_is_deterministic() -> None:
 
 
 def test_saturating_add_does_not_overflow() -> None:
-    """饱和加钳到上限 —— Python int 无限精度,不钳会写不进 INT UNSIGNED 列。"""
-    assert eng.saturating_add(2**31 - 2, 100) == 2**31 - 1
+    """饱和加钳到 uint32 上限 —— 必须与 Go saturatingAdd 的 math.MaxUint32 同口径。
+
+    咬住的是**上限本身取哪个数**:钳低成 int32 的 2**31-1 时,第一条断言
+    会把结果算成 2**31-1 而不是原值,双端进度在高位区间静默劈叉。
+    """
+    assert eng.saturating_add(2**31, 5) == 2**31 + 5  # 越过 int32 界不该被钳
+    assert eng.saturating_add(2**32 - 2, 100) == 2**32 - 1
+    assert eng.saturating_add(2**32 - 1, 1) == 2**32 - 1
     assert eng.saturating_add(1, 2) == 3

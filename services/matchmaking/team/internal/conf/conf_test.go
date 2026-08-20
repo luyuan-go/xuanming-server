@@ -5,6 +5,7 @@
 package conf_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,6 +78,16 @@ func loadConfig(t *testing.T, rel string) conf.Config {
 	if err != nil {
 		t.Fatalf("abs %s: %v", rel, err)
 	}
+	if filepath.Ext(path) == ".example" {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", rel, readErr)
+		}
+		path = filepath.Join(t.TempDir(), "config.yaml")
+		if writeErr := os.WriteFile(path, raw, 0o600); writeErr != nil {
+			t.Fatalf("stage %s: %v", rel, writeErr)
+		}
+	}
 	c := kconfig.New(kconfig.WithSource(file.NewSource(path)))
 	defer c.Close()
 	if err := c.Load(); err != nil {
@@ -106,5 +117,57 @@ func TestDevConfigCarriesMatchResumeAuthCredential(t *testing.T) {
 	if _, err := internalrpcauth.NewSigner(cfg.Team.MatchResumeAuthSecret, "team",
 		cfg.Team.MatchResumeAuthAudience); err != nil {
 		t.Fatalf("dev 配置无法构造 team resume signer: %v", err)
+	}
+}
+
+func TestPlayerNoResolverConfigIsComplete(t *testing.T) {
+	var cfg conf.Config
+	cfg.Defaults()
+	if err := cfg.ValidatePlayerNoResolver(); err != nil {
+		t.Fatalf("disabled resolver should remain valid: %v", err)
+	}
+	cfg.Team.PlayerNoResolverAuthAudience = "login:player-no"
+	if err := cfg.ValidatePlayerNoResolver(); err == nil {
+		t.Fatal("audience without resolver address must fail fast")
+	}
+	cfg.Team.PlayerNoResolverAuthAudience = ""
+
+	cfg.Team.PlayerNoResolverAddr = "login:20001"
+	cfg.Defaults()
+	if err := cfg.ValidatePlayerNoResolver(); err == nil {
+		t.Fatal("resolver address without secret must fail fast")
+	}
+
+	cfg.Team.PlayerNoResolverAuthSecret = "team-player-no-resolver-test-key-0123456789"
+	if err := cfg.ValidatePlayerNoResolver(); err != nil {
+		t.Fatalf("complete resolver config: %v", err)
+	}
+	cfg.Team.MaxMembers = 33
+	if err := cfg.ValidatePlayerNoResolver(); err == nil {
+		t.Fatal("max_members above batch contract must fail fast")
+	}
+	cfg.Team.MaxMembers = 5
+	cfg.Team.MaxApplicationsPerTeam = 33
+	if err := cfg.ValidatePlayerNoResolver(); err == nil {
+		t.Fatal("max_applications_per_team above batch contract must fail fast")
+	}
+	cfg.Team.MaxApplicationsPerTeam = 10
+	cfg.Team.MaxOpenTeamsPerQuery = 33
+	if err := cfg.ValidatePlayerNoResolver(); err == nil {
+		t.Fatal("max_open_teams_per_query above batch contract must fail fast")
+	}
+}
+
+func TestTeamDeploymentConfigsCarryPlayerNoResolver(t *testing.T) {
+	for _, rel := range []string{"etc/team-dev.yaml", "etc/team-prod.yaml.example"} {
+		t.Run(rel, func(t *testing.T) {
+			cfg := loadConfig(t, rel)
+			if err := cfg.ValidatePlayerNoResolver(); err != nil {
+				t.Fatalf("%s player_no resolver config: %v", rel, err)
+			}
+			if cfg.Team.PlayerNoResolverAddr == "" {
+				t.Fatalf("%s must enable player_no resolver", rel)
+			}
+		})
 	}
 }

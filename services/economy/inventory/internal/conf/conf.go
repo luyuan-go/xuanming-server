@@ -65,6 +65,15 @@ type BagCapacityPurchaseRule struct {
 type BagConf struct {
 	// DSN pandora_bag 库连接串。空 = 背包域未启用(安全默认,不注册 BagService)。
 	DSN string `yaml:"dsn,omitempty" json:"dsn,omitempty"`
+	// 背包库是独立 DSN，但必须复用 pkg/mysqlx 的严格 TLS 与连接池契约；中心策划档
+	// 渲染同名字段，本地留空保持既有行为。
+	TLSCAFile       string          `yaml:"tls_ca_file,omitempty" json:"tls_ca_file,omitempty"`
+	TLSServerName   string          `yaml:"tls_server_name,omitempty" json:"tls_server_name,omitempty"`
+	MaxOpenConns    int             `yaml:"max_open_conns,omitempty" json:"max_open_conns,omitempty"`
+	MaxIdleConns    int             `yaml:"max_idle_conns,omitempty" json:"max_idle_conns,omitempty"`
+	ConnMaxLifetime config.Duration `yaml:"conn_max_lifetime,omitempty" json:"conn_max_lifetime,omitempty"`
+	ConnMaxIdleTime config.Duration `yaml:"conn_max_idle_time,omitempty" json:"conn_max_idle_time,omitempty"`
+	PingTimeout     config.Duration `yaml:"ping_timeout,omitempty" json:"ping_timeout,omitempty"`
 
 	// OwnerAddr owner 服务 gRPC 地址(host:port;五要件② owner 授权,phase 2 写权威切换)。
 	// 背包域启用时必填:LoadBag/AppendJournal/SaveCheckpoint 逐调校验
@@ -114,6 +123,21 @@ type BagConf struct {
 
 	// MigrationBatch 迁移作业单轮枚举玩家数(默认 200)。
 	MigrationBatch int `yaml:"migration_batch,omitempty" json:"migration_batch,omitempty"`
+}
+
+// MySQLClientConf 把 bag 独立连接配置一次性翻译成共享 mysqlx seam，避免只传 DSN
+// 时静默丢掉中心 MySQL 的 TLS 身份或小池参数。
+func (bc BagConf) MySQLClientConf() config.MySQLConf {
+	return config.MySQLConf{
+		DSN:             bc.DSN,
+		TLSCAFile:       bc.TLSCAFile,
+		TLSServerName:   bc.TLSServerName,
+		MaxOpenConns:    bc.MaxOpenConns,
+		MaxIdleConns:    bc.MaxIdleConns,
+		ConnMaxLifetime: bc.ConnMaxLifetime,
+		ConnMaxIdleTime: bc.ConnMaxIdleTime,
+		PingTimeout:     bc.PingTimeout,
+	}
 }
 
 // SectionCapacityOf 返回某段容量(0 = 未配置,调用侧 fail-closed)。

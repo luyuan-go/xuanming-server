@@ -48,6 +48,15 @@ team:
   # matchmaker_addr: matchmaker gRPC 直连地址——成员离队/被踢时联动撤销其匹配票据
   # (弱依赖,留空则不联动)
   matchmaker_addr: "127.0.0.1:20011"
+  # team→login 内部批量解析角色展示编号；只传 player_id，完整请求体做 HMAC 绑定。
+  # 与 login-dev.yaml 的 player_no_resolve_auth_* 完全一致，且不得复用其它服务密钥。
+  player_no_resolver_addr: "127.0.0.1:20001"
+  player_no_resolver_auth_secret: "pandora-dev-team-player-no-auth-key-v1!"
+  player_no_resolver_auth_audience: "login:player-no"
+  # team→player 内部批量解析角色名；与 player-dev.yaml 入站配置一致，独立于 DS Bearer。
+  player_name_resolver_addr: "127.0.0.1:20002"
+  player_name_resolver_auth_secret: "pandora-dev-team-player-name-auth-key-v1!"
+  player_name_resolver_auth_audience: "player:name"
   # team→matchmaker 调 ResolvePlayerMatchContext 的服务鉴权(caller 固定签 "team")。
   # 用于入队闸门(fail-closed)与招募列表复核;不签名会被 matchmaker 拒(code=7),
   # 表现为"获取队伍恒空 + 申请入队恒失败"。

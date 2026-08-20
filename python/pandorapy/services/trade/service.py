@@ -58,12 +58,15 @@ class TradeService(trade_pb2_grpc.TradeServiceServicer):
         try:
             new_state = await self._uc.confirm_order(player_id, request.order_id)
         except tbiz.errcode.PandoraError as exc:
-            # 业务异常可能携带"订单现在停在哪"的信息(如结算在途 → SELLER_CONFIRMED)。
-            # biz 用异常传递错误、用返回值传递状态,所以这里从异常拿不到 state,
-            # 与 Go 侧一致地回传 UNSPECIFIED —— 除非 biz 显式挂了 state 属性。
+            # ★ 失败路径也必须回真实 new_state,与 Go service/trade.go:61-62 一致
+            # (它把 biz 的 `(newState, err)` 里的 newState 原样透传)。
+            # 客户端拿 code 判"成没成"、拿 new_state 判"该不该重试":
+            # SELLER_CONFIRMED = 结算可能已生效,必须重试;FAILED/EXPIRED = 终态,别重试。
+            # exc.order_state 是 PandoraError 的**声明式** slot,biz 在四条路径上显式挂;
+            # 没挂的路径它是 0 = UNSPECIFIED,与 Go 的零值路径(trade.go:355)一致。
             return trade_pb2.ConfirmOrderResponse(
                 code=errcode.as_code(exc),
-                new_state=getattr(exc, "order_state", trade_pb2.OrderState.ORDER_STATE_UNSPECIFIED),
+                new_state=exc.order_state,
             )
         except Exception as exc:  # noqa: BLE001
             return trade_pb2.ConfirmOrderResponse(code=errcode.as_code(exc))

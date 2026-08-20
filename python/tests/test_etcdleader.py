@@ -14,38 +14,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import time
 
 import pytest
 
+import etcdfixture as efixture
+from etcdfixture import ENDPOINT
+
 from pandorapy import etcdleader
-
-ENDPOINT = os.getenv("PANDORA_TEST_ETCD_ENDPOINTS", "127.0.0.1:12379").split(",")[0]
-
-
-async def _etcd_available() -> bool:
-    try:
-        import aetcd
-
-        host, _, port = ENDPOINT.rpartition(":")
-        async with aetcd.Client(host=host or "127.0.0.1", port=int(port), timeout=2) as c:
-            await asyncio.wait_for(c.get(b"/pandora/probe"), timeout=3)
-        return True
-    except Exception:
-        return False
-
 
 @pytest.fixture(scope="module", autouse=True)
 async def require_etcd() -> None:
-    if not await _etcd_available():
-        pytest.skip(
-            f"etcd 不可用 @ {ENDPOINT} —— 选主测试整体跳过(不假装通过)。"
-            f"起一个:docker run -d -p 12379:2379 quay.io/coreos/etcd:v3.5.17 etcd "
-            f"--listen-client-urls http://0.0.0.0:2379 "
-            f"--advertise-client-urls http://127.0.0.1:12379",
-            allow_module_level=False,
-        )
+    # 探活与"什么才算不可用"的判据在 tests/etcdfixture.py:
+    # 原先这里是 `except Exception: return False` + 不带异常的跳过文案,
+    # 配置写错 / 驱动 API 变化会让 44 条真 etcd 用例静默消失而退出码 0。
+    await efixture.require_etcd("选主测试")
 
 
 @pytest.fixture
@@ -365,19 +348,32 @@ async def test_waiting_candidate_keeps_queue_position(clean_key) -> None:
         return task
 
     # 时序判据全部用「等条件 + deadline」,不用固定 sleep(见 _await_condition 注释)。
-    a = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=3)
+    #
+    # ★ TTL 取 20 而不是 3(2026-08-19,全量跑约 1/4 概率变红后改):
+    #   本条测的是**队列顺序**,不是租约时长。TTL=3 时,全量跑里前面的
+    #   MySQL / Redis 用例把事件循环压住,A 的续约会赶不上 3s 窗口 ——
+    #   A 在被 cancel 之前先自己丢了 leadership(日志判据:leader_lost lost_count=1),
+    #   于是接管顺序被一个与本条无关的失败模式打乱。
+    #   抬 TTL **不会**削弱断言:A 退出走的是 shutdown 主动撤销 lease,
+    #   接管速度与 TTL 无关;租约本身的失效行为由 test_revoked_lease_stops_the_writer
+    #   专门覆盖,不该在这里顺带测。
+    ttl = 20
+    a = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=ttl)
     ha = asyncio.create_task(a.run(make("A")))
     assert await _await_condition(lambda: a.is_leader), "A 没能当选"
 
     # B 入队:必须等它**真的建好了自己的 key**(而不是睡一会儿假设建好了),
     # 否则 C 可能抢在 B 前面拿到更小的 CreateRevision,队列顺序就不是 A→B→C 了。
-    b = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=3)
+    b = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=ttl)
     hb = asyncio.create_task(b.run(make("B")))
     assert await _await_condition(lambda: b.queued), "B 没能入队"
 
-    c = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=3)
+    c = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=ttl)
     hc = asyncio.create_task(c.run(make("C")))
     assert await _await_condition(lambda: c.queued), "C 没能入队"
+
+    # A 必须始终是 leader 才能证明后面的接管是"让位"而不是"A 自己掉了"。
+    assert a.is_leader, "A 在建队期间就丢了 leadership —— 环境问题,不是队列语义问题"
 
     assert (a.is_leader, b.is_leader, c.is_leader) == (True, False, False), (
         f"入队最早的应当当选:A={a.is_leader} B={b.is_leader} C={c.is_leader}"
@@ -408,19 +404,27 @@ async def test_queue_position_survives_multiple_poll_cycles(clean_key) -> None:
     """排队者在多个轮询周期后仍保持同一个 key(CreateRevision 不变)。
 
     如果实现每轮重建 key,CreateRevision 会一直变大 —— 这条直接盯住那个行为。
+
+    ⚠️ TTL 取 6 而不是 3(2026-08-19 实测调整):TTL=3 时续约超时只有 1s、
+    本地安全窗只有 2s,机器一被压满(本机曾同时跑两套全量测试 + 两个服务进程)
+    就会**真的**失租,于是这条用例偶发红在 `leader_lease_keepalive_deadline_exceeded`
+    上 —— 那是环境噪音,不是被测行为出问题,而这种红最容易被当成"又是这个 flaky 用例"
+    从而掩盖真回归。被测的不变量(key 与 CreateRevision 跨轮询周期不变)与 TTL 大小无关,
+    所以把余量放宽是纯收益。观察窗仍取 TTL/3 的两倍以上,保证真跨过多个轮询周期。
     """
     import aetcd
 
     election = clean_key("stable")
+    ttl = 6
 
     async def task() -> None:
         await asyncio.sleep(3600)
 
-    leader = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=3)
+    leader = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=ttl)
     hl = asyncio.create_task(leader.run(task))
     await asyncio.sleep(1.5)
 
-    waiter = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=3)
+    waiter = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=ttl)
     hw = asyncio.create_task(waiter.run(task))
     await asyncio.sleep(1.5)
 
@@ -432,7 +436,7 @@ async def test_queue_position_survives_multiple_poll_cycles(clean_key) -> None:
             return {kv.key: kv.create_revision for kv in await c.get_prefix(prefix)}
 
     first = await snapshot()
-    await asyncio.sleep(4)  # 跨过多个轮询周期(TTL/3 = 1s)
+    await asyncio.sleep(5)  # 跨过多个轮询周期(poll = TTL/3 = 2s)
     second = await snapshot()
 
     for h in (hl, hw):
@@ -445,3 +449,79 @@ async def test_queue_position_survives_multiple_poll_cycles(clean_key) -> None:
         f"候选者 key 或其 CreateRevision 变了 —— 排队位置没保住。\n"
         f"before={first}\nafter={second}"
     )
+
+
+async def test_queued_replica_requeues_when_its_key_disappears(clean_key) -> None:
+    """★ 排队副本的候选者 key 消失后,必须**重新入队**,不能永远等下去。
+
+    形状:B 在排队(A 是 leader)。此时 B 的 key 因为失租 / 被手工删而消失。
+
+    坏实现里 `_wait_for_turn` 只判"我是不是队首" —— key 没了永远不是队首,于是
+    它每个轮询周期查一次、**永不返回**:`_one_term` 不返回 → `run()` 的重试循环
+    走不到 → `_enqueue` 再也不会被调用。这个副本从此退出选举,而它自己以为还在排队,
+    而且**全程零日志**(leader_lost 只在当选过之后才打)。
+    A 随后被滚更下线时,就没人接管了。
+
+    判据取「出现了一个 CreateRevision 更大的新候选者 key」= 它确实重新入过队,
+    而不是「B 最终当上了 leader」—— 后者在坏实现里也可能因为别的路径碰巧发生。
+    """
+    import aetcd
+
+    election = clean_key("requeue")
+    host, _, port = ENDPOINT.rpartition(":")
+    prefix = f"{etcdleader.DEFAULT_PREFIX}{election}/".encode()
+
+    async def snapshot() -> dict[bytes, int]:
+        async with aetcd.Client(host=host or "127.0.0.1", port=int(port)) as c:
+            return {kv.key: kv.create_revision for kv in await c.get_prefix(prefix)}
+
+    async def await_async(pred, timeout: float = 30.0, tick: float = 0.2) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if await pred():
+                return True
+            await asyncio.sleep(tick)
+        return False
+
+    async def task() -> None:
+        await asyncio.sleep(3600)
+
+    # ★ 时序必须确定:先让 A 当选(它的 key 一定是队首),再放 B 进来排队。
+    # 两个一起启动的话谁先入队是竞态,偶发会红在"A 没当选"上。
+    leader = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=6)
+    hl = asyncio.create_task(leader.run(task))
+    hw = None
+    try:
+        assert await _await_condition(lambda: leader.is_leader), "A 没当选"
+
+        waiter = etcdleader.LeaderElection([ENDPOINT], election, lease_ttl_sec=6)
+        hw = asyncio.create_task(waiter.run(task))
+
+        async def two_keys() -> bool:
+            return len(await snapshot()) == 2
+
+        assert await await_async(two_keys), "B 没入队"
+
+        before = await snapshot()
+        leader_key = min(before, key=lambda k: before[k])
+        waiter_key = next(k for k in before if k != leader_key)
+        old_rev = before[waiter_key]
+
+        # 把排队者的 key 从它脚下删掉 —— 等价于「排队期间悄悄掉出了队列」。
+        async with aetcd.Client(host=host or "127.0.0.1", port=int(port)) as c:
+            await c.delete(waiter_key)
+
+        async def requeued() -> bool:
+            now = await snapshot()
+            return any(k != leader_key and rev > old_rev for k, rev in now.items())
+
+        assert await await_async(requeued, timeout=30), (
+            "排队副本的 key 被删后没有重新入队 —— 它多半永远挂在等队首上了"
+        )
+    finally:
+        for h in (hl, hw):
+            if h is None:
+                continue
+            h.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await h

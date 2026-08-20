@@ -25,6 +25,7 @@ from pandora.data_service.v1 import data_service_pb2
 from redis.asyncio.client import Redis
 
 from pandorapy import errcode, mysqlx, protosql
+from pandorapy import log as plog
 
 # 表结构从 proto 描述符推导。显式传表名/主键(显式 > 隐式),与 proto option 一致。
 PLAYER_DATA_SCHEMA = protosql.schema_of(
@@ -48,6 +49,62 @@ def is_updatable_field(name: str) -> bool:
 def cache_key(player_id: int) -> str:
     """与 Go 侧一致:pandora:data:player:<id>。"""
     return f"pandora:data:player:{player_id}"
+
+
+# ── 缓存值格式(与 Go 侧 internal/data/cache.go 逐字节一致)────────────────────
+#
+# 布局:魔数 4B('P','D','C',0x02)+ 位图长度 4B(big-endian uint32)+ 字段号位图 + PlayerData pb
+#
+# 为什么不是裸 pb —— §9 不变量 16/17 的缓存投毒防护:
+#     滚动升级期新旧副本共用同一个 Redis key。旧副本读 MySQL 时只读得进它 proto 描述符里
+#     认得的列,新副本刚加的新列它读不到,手上是一份「缺新列的残缺 PlayerData」。这份残缺
+#     数据一旦写进共享缓存,新副本读到就等于新列被抹掉,零停机升级被破坏。所以缓存值带上
+#     「写入方字段号位图」,读方只信任「写入方字段集 ⊇ 自己字段集」的条目,否则当未命中回落
+#     MySQL —— 自己读库能拿到自己认得的全部列。
+#
+# 为什么不用「最大字段编号」当版本:编号空洞里加字段(如 {1,2,5} 加 3)最大值不变;
+#     reserved 删掉最高编号字段则最大值下降,版本非单调。两类合法演进都会被漏判。
+#
+# 魔数的作用:把「无头的旧裸 pb / 脏字节 / 旧 0x01 版本格式」与本格式区分开。没有魔数时,
+#     裸 pb 的头几个字节会被当成头部解释,剩余字节又常能被 protobuf 宽松反序列化成功,
+#     结果是命中一份错误数据。魔数不符一律当未命中。
+CACHE_MAGIC = b"PDC\x02"
+CACHE_MAGIC_LEN = 4
+CACHE_MASK_LEN_LEN = 4
+CACHE_HEADER_MIN_LEN = CACHE_MAGIC_LEN + CACHE_MASK_LEN_LEN
+
+# 魔数是 Go 侧的私有 wire 常量,pb2 生成物里没有对应符号,只能写字面量。长度写错会让整个
+# 头部偏移而不会报错,就地钉死,免得两处漂开。
+assert len(CACHE_MAGIC) == CACHE_MAGIC_LEN
+
+
+def _compute_cache_schema_mask() -> bytes:
+    """本副本 PlayerData 描述符所有字段号的位图(bit n 置位 = 字段号 n 存在)。
+
+    从描述符推导而不是手写常量:手写的位图不会随 proto 演进,加字段后它仍是旧值,
+    投毒防护就成了摆设,而且不会有任何报错。
+    """
+    numbers = [f.number for f in data_service_pb2.PlayerData.DESCRIPTOR.fields]
+    max_num = max(numbers, default=0)
+    mask = bytearray(max_num // 8 + 1)
+    for n in numbers:
+        mask[n // 8] |= 1 << (n % 8)
+    return bytes(mask)
+
+
+CACHE_SCHEMA_MASK = _compute_cache_schema_mask()
+
+
+def writer_has_all_reader_fields(writer_mask: bytes, reader_mask: bytes) -> bool:
+    """写入方字段集是否 ⊇ 读取方字段集(按集合包含关系逐位判断)。
+
+    只要读取方有某个字段号写入方没有,写入方那条缓存就可能缺这一列 → 判为不可信。
+    """
+    for i, r in enumerate(reader_mask):
+        w = writer_mask[i] if i < len(writer_mask) else 0
+        if r & ~w & 0xFF:  # reader 有置位而 writer 缺
+            return False
+    return True
 
 
 class PlayerStore(Protocol):
@@ -168,10 +225,10 @@ class MySQLPlayerStore:
 
 
 class RedisPlayerCache:
-    """Redis 旁路缓存,存 protobuf bytes。对应 Go 侧 cache.go。
+    """Redis 旁路缓存,存「魔数 + 字段号位图 + protobuf bytes」。对应 Go 侧 cache.go。
 
-    存 pb bytes 而不是 JSON:与 Go 侧同一份字节格式,迁移期两个实现可以读到对方写的缓存
-    (虽然用户已说库可清空,但缓存格式一致是零成本的,没理由不做)。
+    字节格式必须与 Go 逐字节一致:两边写的是**同一个** Redis key,格式一旦不同,
+    Go 读 Python 写的条目判 miss、Python 读 Go 写的条目解不开,双向命中率塌成 0 且零信号。
     """
 
     __slots__ = ("_rdb",)
@@ -180,22 +237,60 @@ class RedisPlayerCache:
         self._rdb = rdb
 
     async def get(self, player_id: int) -> tuple[object | None, bool]:
-        """返回 (数据, 是否命中)。反序列化失败视为 miss —— 旧结构缓存不应让读整个失败。"""
+        """返回 (数据, 是否命中)。格式不符 / 字段集不够 / 坏档一律当 miss 回落 MySQL。"""
         raw = await self._rdb.get(cache_key(player_id))
         if raw is None:
             return None, False
+        # 头部不足或魔数不符 = 旧裸 pb / 脏字节,不是本格式 → 当未命中,且**不打日志**:
+        # 滚动升级期新旧格式交叉读是预期内的,只会多打几次 MySQL,刷日志反而淹掉真信号。
+        if len(raw) < CACHE_HEADER_MIN_LEN or raw[:CACHE_MAGIC_LEN] != CACHE_MAGIC:
+            return None, False
+        mask_len = int.from_bytes(raw[CACHE_MAGIC_LEN:CACHE_HEADER_MIN_LEN], "big")
+        header_len = CACHE_HEADER_MIN_LEN + mask_len
+        if len(raw) < header_len:
+            # 位图长度越界 → 脏数据。
+            return None, False
+        writer_mask = raw[CACHE_HEADER_MIN_LEN:header_len]
+        # 写入方字段集必须 ⊇ 本副本字段集,否则这条可能缺本副本认得的列(投毒防护)。
+        if not writer_has_all_reader_fields(writer_mask, CACHE_SCHEMA_MASK):
+            return None, False
         pd = data_service_pb2.PlayerData()
         try:
-            pd.ParseFromString(raw)
-        except Exception:  # noqa: BLE001
-            # 缓存里是旧 pb 结构(如切换 schema 后的残留)→ 当 miss 处理,
-            # 让它回落 MySQL 并被新结构覆盖。缓存是旁路,不能因为它让读失败。
+            pd.ParseFromString(raw[header_len:])
+        except Exception as exc:  # noqa: BLE001
+            # 魔数与位图都过了还解不开 = 真坏档,不是滚动升级期的旧格式。行为仍是 miss,
+            # 但必须留痕:静默吞掉只表现为命中率下降,排障时零线索。
+            plog.get().warning(
+                "player_cache_corrupt_entry",
+                player_id=player_id,
+                reason="unmarshal_failed",
+                err=str(exc),
+                bytes=len(raw),
+            )
+            return None, False
+        if pd.player_id != player_id:
+            # 串号是缓存投毒 / 键错配的强信号,比坏档更严重,必须点名。行为仍是 miss。
+            plog.get().warning(
+                "player_cache_corrupt_entry",
+                player_id=player_id,
+                reason="player_id_mismatch",
+                cached_player_id=pd.player_id,
+            )
             return None, False
         return pd, True
 
     async def set(self, pd, ttl: _dt.timedelta) -> None:
+        # 头部写入本副本的字段号位图,供读方判断写入方字段集是否 ⊇ 自己。
+        buf = b"".join(
+            (
+                CACHE_MAGIC,
+                len(CACHE_SCHEMA_MASK).to_bytes(CACHE_MASK_LEN_LEN, "big"),
+                CACHE_SCHEMA_MASK,
+                pd.SerializeToString(),
+            )
+        )
         ms = int(ttl.total_seconds() * 1000)
-        await self._rdb.set(cache_key(pd.player_id), pd.SerializeToString(), px=max(ms, 1))
+        await self._rdb.set(cache_key(pd.player_id), buf, px=max(ms, 1))
 
     async def delete(self, player_id: int) -> None:
         await self._rdb.delete(cache_key(player_id))

@@ -42,5 +42,5 @@ def force_utf8() -> None:
             pass
 
 
-# import 即生效:调用方只需 `from pandorapy import _utf8  # noqa: F401`
+# import 即生效:调用方只需 `from pandorapy import _utf8`(配 F401 抑制注释)
 force_utf8()

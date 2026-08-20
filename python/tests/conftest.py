@@ -38,3 +38,32 @@ def configtable_dist(repo_root: pathlib.Path) -> pathlib.Path:
     造一份假数据只能验代码自己,验不了跨语言一致性。
     """
     return repo_root / "configtable" / "dist"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _drop_session_database():
+    """会话结束时删掉本进程建的独占测试库。
+
+    ★ 为什么需要独占库见 tests/mysqlfixture.py 头注释(两个 pytest 同时跑会假红)。
+    这里只负责收尾:不删的话开发机上会攒出一堆 pandora_test_<pid>_<ts>。
+
+    清理失败一律静默 —— 清理不该让测试结果变红,而且库很可能压根没建出来
+    (没有 MySQL 时数据层用例整体 skip)。
+    """
+    yield
+    import asyncio
+    import importlib
+
+    try:
+        mf = importlib.import_module("mysqlfixture")
+        asyncmy = importlib.import_module("asyncmy")
+    except Exception:  # noqa: BLE001
+        return
+    # ★ 必须与各数据层测试用**同一个** DSN。此前这里写死 13306 而
+    #   test_player_repo 写死 3307,于是 player 在 3307 上建的
+    #   `pandora_test_<pid>_<ts>` 永远删不掉(实测已攒 40+ 个孤儿库)。
+    cfg = mf.parse_go_dsn(mf.MYSQL_DSN, default_db="")
+    try:
+        asyncio.run(mf.drop_database(asyncmy, cfg))
+    except Exception:  # noqa: BLE001
+        pass

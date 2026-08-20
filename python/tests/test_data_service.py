@@ -322,3 +322,363 @@ def test_schema_rejects_repeated_and_message_fields() -> None:
 def test_cache_key_matches_go_format() -> None:
     """缓存 key 与 Go 侧一致。"""
     assert ddata.cache_key(1001) == "pandora:data:player:1001"
+
+
+# ── ★ 缓存值字节格式与 Go 互通(§9 不变量 16/17)──────────────────────────────
+#
+# 两个实现写的是**同一个** Redis key。格式只要差一个字节,Go 读 Python 写的条目判 miss、
+# Python 读 Go 写的条目解不开被当 miss,双向命中率塌成 0 —— 而且全程不报错,零信号。
+# 所以下面的用例手工拼「Go 侧会写出的字节」,不借 Python 自己的编码函数自证。
+
+
+class FakeRedis:
+    """只实现 RedisPlayerCache 用到的三个方法,存原始 bytes(decode_responses=False)。"""
+
+    def __init__(self) -> None:
+        self.kv: dict[str, bytes] = {}
+
+    async def get(self, key: str):
+        return self.kv.get(key)
+
+    async def set(self, key: str, value: bytes, px: int | None = None) -> None:
+        self.kv[key] = value
+
+    async def delete(self, key: str) -> None:
+        self.kv.pop(key, None)
+
+
+# 手工拼出的一条「Go 侧写入」的缓存值,逐段对应 cache.go 的 Set:
+#   50 44 43 02   魔数 'P','D','C',0x02(版本字节 0x02 = 位图格式)
+#   00 00 00 02   位图长度(big-endian uint32)
+#   fe 07         字段号 1..10 的位图(bit n = 字段号 n 存在)
+#   protobuf      player_id=1001, version=3, nickname="alice"
+_GO_MAGIC = bytes.fromhex("50444302")
+_GO_MASK = bytes.fromhex("fe07")
+_GO_BODY = bytes.fromhex("08e90710031a05") + b"alice"
+_GO_ENTRY = _GO_MAGIC + bytes.fromhex("00000002") + _GO_MASK + _GO_BODY
+
+
+def test_cache_schema_mask_matches_proto_descriptor() -> None:
+    """位图必须由 pb2 描述符推导 —— 手写常量不会随 proto 演进,而且不会报错。
+
+    这条同时钉住上面那串手拼的 Go 字节:proto 加字段后位图会变,它一起红,
+    提醒你 Go 侧那条样本也要跟着更新,而不是让互通静默失效。
+    """
+    numbers = [f.number for f in data_service_pb2.PlayerData.DESCRIPTOR.fields]
+    expected = bytearray(max(numbers) // 8 + 1)
+    for n in numbers:
+        expected[n // 8] |= 1 << (n % 8)
+    assert ddata.CACHE_SCHEMA_MASK == bytes(expected)
+    assert ddata.CACHE_SCHEMA_MASK == _GO_MASK
+
+
+def test_cache_magic_matches_go_literal() -> None:
+    """魔数逐字节等于 Go 的 'P','D','C',0x02(pb2 里没有这个符号,只能字面量对拍)。"""
+    assert ddata.CACHE_MAGIC == _GO_MAGIC
+    assert ddata.CACHE_HEADER_MIN_LEN == 8
+
+
+async def test_python_reads_go_written_entry() -> None:
+    """★ Python 必须能读出 Go 写的条目(手拼字节,不借 Python 自己的编码器)。"""
+    rdb = FakeRedis()
+    rdb.kv[ddata.cache_key(1001)] = _GO_ENTRY
+    pd, hit = await ddata.RedisPlayerCache(rdb).get(1001)
+    assert hit
+    assert pd.player_id == 1001
+    assert pd.version == 3
+    assert pd.nickname == "alice"
+
+
+async def test_python_writes_go_compatible_bytes() -> None:
+    """★ Python 写出的字节必须是 Go 认得的格式:魔数 + 位图长度 + 位图 + pb。"""
+    rdb = FakeRedis()
+    await ddata.RedisPlayerCache(rdb).set(_pd(1001, 3, nickname="alice"), _dt.timedelta(minutes=5))
+    raw = rdb.kv[ddata.cache_key(1001)]
+    assert raw.startswith(_GO_MAGIC)
+    assert raw[4:8] == len(ddata.CACHE_SCHEMA_MASK).to_bytes(4, "big")
+    assert raw[8 : 8 + len(_GO_MASK)] == _GO_MASK
+    # 尾部是纯 PlayerData pb —— Go 侧就是从 headerLen 之后直接 Unmarshal。
+    body = data_service_pb2.PlayerData()
+    body.ParseFromString(raw[8 + len(_GO_MASK) :])
+    assert body.player_id == 1001
+    assert body.nickname == "alice"
+
+
+async def test_bare_pb_entry_is_miss() -> None:
+    """无头的旧裸 pb(以及任何魔数不符的脏字节)必须当未命中,不能宽松解出错数据。"""
+    rdb = FakeRedis()
+    rdb.kv[ddata.cache_key(1001)] = _GO_BODY  # 没有魔数头
+    assert await ddata.RedisPlayerCache(rdb).get(1001) == (None, False)
+
+
+async def test_writer_missing_field_is_miss() -> None:
+    """★ 写入方字段集缺本副本认得的字段 → 当未命中回落 MySQL(缓存投毒防护)。
+
+    模拟旧副本:它的位图里没有本副本的最高字段号,它写的 pb 就可能缺那一列。
+    信了这条 = 新列被抹掉,零停机升级破功。
+    """
+    numbers = [f.number for f in data_service_pb2.PlayerData.DESCRIPTOR.fields]
+    top = max(numbers)
+    stale = bytearray(ddata.CACHE_SCHEMA_MASK)
+    stale[top // 8] &= ~(1 << (top % 8)) & 0xFF
+    rdb = FakeRedis()
+    rdb.kv[ddata.cache_key(1001)] = (
+        _GO_MAGIC + len(stale).to_bytes(4, "big") + bytes(stale) + _GO_BODY
+    )
+    assert await ddata.RedisPlayerCache(rdb).get(1001) == (None, False)
+
+
+def test_writer_superset_rule() -> None:
+    """超集判定:writer ⊇ reader 才可信;writer 多出字段无妨,少一位就不行。"""
+    reader = bytes.fromhex("fe07")
+    assert ddata.writer_has_all_reader_fields(bytes.fromhex("ffff"), reader)
+    assert ddata.writer_has_all_reader_fields(reader, reader)
+    # writer 位图更短 = 它根本没有高位那些字段号
+    assert not ddata.writer_has_all_reader_fields(bytes.fromhex("fe"), reader)
+    assert not ddata.writer_has_all_reader_fields(bytes.fromhex("fe03"), reader)
+
+
+async def test_player_id_mismatch_is_miss() -> None:
+    """★ 串号(key 里的 id 与 pb 里的对不上)必须当未命中 —— 缓存投毒/键错配的强信号。"""
+    rdb = FakeRedis()
+    rdb.kv[ddata.cache_key(2002)] = _GO_ENTRY  # 条目里装的是 1001
+    assert await ddata.RedisPlayerCache(rdb).get(2002) == (None, False)
+
+
+async def test_truncated_header_is_miss() -> None:
+    """位图长度声明得比实际字节长 → 当未命中,不能越界读。"""
+    rdb = FakeRedis()
+    rdb.kv[ddata.cache_key(1001)] = _GO_MAGIC + bytes.fromhex("00000040") + _GO_MASK
+    assert await ddata.RedisPlayerCache(rdb).get(1001) == (None, False)
+
+
+# ── conf 默认值:与 Go 侧 Defaults() 逐个相同 ────────────────────────────────
+#
+# 默认值分叉不会报错,只会让**同一份 yaml 喂两个实现跑出不同行为**。
+# 所以下面不是"测代码能跑",而是把 Go 那三行 Defaults() 钉成可执行断言。
+
+import asyncio  # noqa: E402
+
+from google.protobuf import field_mask_pb2  # noqa: E402
+from pandora.common.v1 import errcode_pb2  # noqa: E402
+from pandora.data_service.v1 import data_service_pb2 as dpb  # noqa: E402
+
+from pandorapy.services.data_service import budgets as dbudgets  # noqa: E402
+from pandorapy.services.data_service import conf as dconf  # noqa: E402
+from pandorapy.services.data_service import main as dmain  # noqa: E402
+from pandorapy.services.data_service import service as dsvc  # noqa: E402
+
+
+def _load_conf(tmp_path, body: str):
+    p = tmp_path / "data_service.yaml"
+    p.write_text(body, encoding="utf-8")
+    return dconf.Config.load(p)
+
+
+def test_conf_defaults_match_go(tmp_path) -> None:
+    """空 yaml → :20003 / :21003 / 5m,与 Go 的 Defaults() 逐个相同。
+
+    端口尤其要命:Envoy 的 cluster 和 run_services.ps1 的端口占用检查都钉在 20003/21003,
+    默认值漂了就是"服务起来了但没人调得到"。
+    """
+    cfg = _load_conf(tmp_path, "{}\n")
+    assert cfg.server.grpc.addr == ":20003"
+    assert cfg.server.http.addr == ":21003"
+    assert cfg.data.cache_ttl_td() == _dt.timedelta(minutes=5)
+
+
+def test_conf_zero_cache_ttl_is_normalized(tmp_path) -> None:
+    """★ 判据是 `<= 0` 不是 `== ""` —— 显式写 0 也要被纠回 5m(与 Go 同)。
+
+    放行 0 的后果:回填缓存的 TTL 为 0,写进去就立刻过期,命中率恒 0 且零错误日志。
+    """
+    cfg = _load_conf(tmp_path, 'data:\n  cache_ttl: "0s"\n')
+    assert cfg.data.cache_ttl_td() == _dt.timedelta(minutes=5)
+
+
+def test_conf_explicit_values_win(tmp_path) -> None:
+    """yaml 显式配了就不能被默认值盖掉(否则配置形同虚设)。"""
+    cfg = _load_conf(
+        tmp_path,
+        'server:\n  grpc:\n    addr: ":30003"\n  http:\n    addr: ":31003"\n'
+        'data:\n  cache_ttl: "90s"\n',
+    )
+    assert cfg.server.grpc.addr == ":30003"
+    assert cfg.server.http.addr == ":31003"
+    assert cfg.data.cache_ttl_td() == _dt.timedelta(seconds=90)
+
+
+def test_conf_loads_the_real_go_yaml(repo_root) -> None:
+    """★ 读 Go 版**同一份** etc/data_service-dev.yaml,不另建配置文件。
+
+    这条测的是迁移前提本身:运维只维护一份配置。哪天 Go 侧加了个新段而 Python 侧的
+    pydantic 模型把它判成非法,这里会红 —— 而不是等到部署时才发现起不来。
+    """
+    cfg = dconf.Config.load(
+        repo_root / "services" / "data" / "data_service" / "etc" / "data_service-dev.yaml"
+    )
+    assert cfg.server.grpc.addr == ":20003"
+    assert cfg.data.cache_ttl_td() == _dt.timedelta(minutes=5)
+    # 只填 host 的单实例形态必须被 endpoints() 认出来,否则缓存会被静默关掉
+    # (表现只是 MySQL QPS 变高,没有任何错误)。
+    assert cfg.node.redis_client.endpoints() == ["127.0.0.1:6380"]
+    assert cfg.node.mysql_client.dsn
+
+
+def test_conf_rejects_cell_route_mode(tmp_path) -> None:
+    """配了 cell_route.mode 必须拒启(Python 侧只实现了单 Cell)。
+
+    静默按单 Cell 跑的后果是玩家被路由到错的 cell 且不报错 —— 起不来是刺眼的,
+    静默跑错是致命的。main.py 把这条还原成 Go 的 cellroute_init_failed 事件名。
+    """
+    with pytest.raises(NotImplementedError) as ei:
+        _load_conf(tmp_path, "cell_route:\n  mode: static\n")
+    assert "cell_route" in str(ei.value)
+
+
+def test_conf_empty_cell_route_mode_is_allowed(tmp_path) -> None:
+    """mode 为空是**合法的单 Cell 配置**,不能被拒 —— 与 Go 的关闭态一致。"""
+    cfg = _load_conf(tmp_path, 'cell_route:\n  mode: ""\n')
+    assert cfg.server.grpc.addr == ":20003"
+
+
+# ── 容量预算:数值与 Go 侧 Budgets() 逐个相同 ──────────────────────────────
+
+
+def test_budgets_match_go() -> None:
+    """阈值两边必须同值:同一套面板会同时看到 Go 和 Python 打的 db_capacity_budget_exceeded,
+    阈值不同会让"到底超没超"这个问题按副本随机作答。"""
+    (b,) = dbudgets.budgets()
+    assert b.table == "player_data"
+    assert b.max_rows == 300_000
+    assert b.max_avg_row_bytes == 4096
+    assert "dbcheck" in b.note  # note 要指出往哪查,不能只说一句"超预算"
+
+
+# ── service 层:in-band code + 身份来源 ────────────────────────────────────
+
+
+def _svc(store=None, cache=None):
+    return dsvc.DataService(dbiz.DataUsecase(store or FakeStore(), cache, Cfg()))
+
+
+async def test_service_read_not_found_is_not_internal() -> None:
+    """★ "没这行"与"读失败"必须分开:合并成 ERR_INTERNAL 会让调用方
+    把"新玩家还没建档"当成源库故障去重试。"""
+    resp = await _svc().ReadPlayer(dpb.ReadPlayerRequest(player_id=1001), None)
+    assert resp.code == errcode_pb2.ERR_NOT_FOUND
+
+
+async def test_service_read_uses_request_player_id_not_auth_ctx() -> None:
+    """★ data_service 是内网网关:player_id 取**请求体**,不从 JWT override。
+
+    调用方(player / inventory)代表别的玩家读写,自己不持有那个玩家的 JWT。
+    若照搬客户端面服务的 extract_player_id,拿到的恒为 0 → 每个 RPC 都 401,
+    整条玩家数据链直接断。context 传 None 就是在证明这条路径根本不碰鉴权上下文 ——
+    真去读 metadata 的话这里会 AttributeError。
+    """
+    store = FakeStore()
+    svc = _svc(store)
+    await svc.WritePlayer(dpb.WritePlayerRequest(data=_pd(1001, 0, nickname="a")), None)
+    resp = await svc.ReadPlayer(dpb.ReadPlayerRequest(player_id=1001), None)
+    assert resp.code == errcode_pb2.OK
+    assert resp.data.player_id == 1001
+    assert resp.data.nickname == "a"
+
+
+async def test_service_write_empty_mask_returns_invalid_arg_in_band() -> None:
+    """★ 业务失败走 body 里的 code,gRPC status 仍是 OK(不 abort)。
+
+    改成 context.abort() 的话调用方会走到完全不同的错误分支 —— 迁移中最易悄悄改掉的语义。
+    """
+    svc = _svc()
+    await svc.WritePlayer(dpb.WritePlayerRequest(data=_pd(1001, 0, nickname="a")), None)
+    resp = await svc.WritePlayer(
+        dpb.WritePlayerRequest(data=_pd(1001, 1, nickname="b")), None
+    )
+    assert resp.code == errcode_pb2.ERR_INVALID_ARG
+
+
+async def test_service_write_returns_new_version() -> None:
+    svc = _svc()
+    await svc.WritePlayer(dpb.WritePlayerRequest(data=_pd(1001, 0, nickname="a")), None)
+    resp = await svc.WritePlayer(
+        dpb.WritePlayerRequest(
+            data=_pd(1001, 1, nickname="b"),
+            update_mask=field_mask_pb2.FieldMask(paths=["nickname"]),
+        ),
+        None,
+    )
+    assert resp.code == errcode_pb2.OK
+    assert resp.new_version == 2
+
+
+async def test_service_missing_data_is_invalid_arg() -> None:
+    """没传 data 的请求 → ERR_INVALID_ARG(对应 Go 的 GetData()==nil 分支)。"""
+    resp = await _svc().WritePlayer(dpb.WritePlayerRequest(), None)
+    assert resp.code == errcode_pb2.ERR_INVALID_ARG
+
+
+async def test_service_zero_player_id_rejected() -> None:
+    assert (
+        await _svc().ReadPlayer(dpb.ReadPlayerRequest(), None)
+    ).code == errcode_pb2.ERR_INVALID_ARG
+    assert (
+        await _svc().InvalidateCache(dpb.InvalidateCacheRequest(), None)
+    ).code == errcode_pb2.ERR_INVALID_ARG
+
+
+async def test_service_invalidate_cache_ok_without_cache() -> None:
+    """没配缓存时 InvalidateCache 是 no-op 成功 —— 不能因为"没缓存"报错,
+    否则降级运行期间上游每次主动失效都会拿到一个假故障。"""
+    resp = await _svc().InvalidateCache(dpb.InvalidateCacheRequest(player_id=1001), None)
+    assert resp.code == errcode_pb2.OK
+
+
+async def test_service_mysql_failure_surfaces_as_code_not_ok() -> None:
+    """★ 源库读故障必须变成非 OK 的 code —— 不能被当成"没这行"吞掉。"""
+    store = FakeStore()
+    store.fail_read = True
+    resp = await _svc(store).ReadPlayer(dpb.ReadPlayerRequest(player_id=1001), None)
+    assert resp.code not in (errcode_pb2.OK, errcode_pb2.ERR_NOT_FOUND)
+
+
+# ── 容量巡检循环:启动即一轮 + 单轮异常不杀循环 ────────────────────────────
+
+
+async def test_capacity_guard_runs_a_round_at_startup(monkeypatch) -> None:
+    """★ "启动即一轮"不是可省的优化:没有它,上线时就已超预算的表要等一小时
+    才有第一条告警,而那一小时正是刚发版、最需要基线的窗口。"""
+    rounds: list[object] = []
+
+    async def _fake_round(pool, schema: str) -> None:
+        rounds.append((pool, schema))
+
+    monkeypatch.setattr(dmain, "_capacity_round", _fake_round)
+    task = asyncio.create_task(dmain._run_capacity_guard("POOL", interval_sec=3600.0))
+    for _ in range(4):
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert rounds == [("POOL", dmain.DEFAULT_DB)]
+
+
+async def test_capacity_guard_survives_a_failing_round(monkeypatch) -> None:
+    """单轮异常只丢本轮。没有这层兜底,一次意外异常会让循环**静默死掉**而服务看起来正常 ——
+    从此再没有容量告警,且没有任何信号说明为什么。"""
+    calls: list[int] = []
+
+    async def _boom(pool, schema: str) -> None:
+        assert schema == dmain.DEFAULT_DB
+        calls.append(1)
+        raise RuntimeError("information_schema unavailable")
+
+    monkeypatch.setattr(dmain, "_capacity_round", _boom)
+    task = asyncio.create_task(dmain._run_capacity_guard("POOL", interval_sec=0.01))
+    await asyncio.sleep(0.08)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # 首轮炸了之后周期轮仍在跑 —— 这才是"单轮异常不杀循环"。
+    assert len(calls) >= 2

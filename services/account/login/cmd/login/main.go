@@ -41,6 +41,7 @@ import (
 	plog "github.com/luyuancpp/pandora/pkg/log"
 	"github.com/luyuancpp/pandora/pkg/middleware"
 	"github.com/luyuancpp/pandora/pkg/mysqlx"
+	"github.com/luyuancpp/pandora/pkg/playerno"
 	"github.com/luyuancpp/pandora/pkg/redisx"
 	"github.com/luyuancpp/pandora/pkg/safego"
 	"github.com/luyuancpp/pandora/pkg/snowflake/etcdnode"
@@ -393,6 +394,38 @@ func main() {
 		defer func() { _ = closeCell() }()
 	}
 	svc := service.NewLoginService(loginUC, ticketUC)
+	// DS-only 与 Team internal 两个入口共用同一账号库批量权威；权威 reader 的构造不能
+	// 绑在 Team HMAC 开关上，否则本地 legacy/off DS 会因未配置 Team secret 永远拿不到编号。
+	playerNoUC, playerNoErr := newPlayerNoResolveUsecase(accountRepo)
+	if playerNoErr != nil {
+		helper.Errorw("msg", "player_no_authority_init_failed", "err", playerNoErr)
+		os.Exit(1)
+	}
+	svc.SetPlayerNoResolveUsecase(playerNoUC)
+	var playerNoVerifier *internalrpcauth.Verifier
+	if cfg.Login.PlayerNoResolveAuthSecret != "" {
+		if rdb == nil {
+			helper.Errorw("msg", "player_no_resolve_auth_requires_redis",
+				"hint", "shared Redis nonce authority is required for LoginInternalService.ResolvePlayerNos")
+			os.Exit(1)
+		}
+		replay, replayErr := internalrpcauth.NewRedisReplayStore(rdb,
+			"pandora:login:player-no-resolve:nonce:")
+		if replayErr != nil {
+			helper.Errorw("msg", "player_no_resolve_verifier_init_failed", "err", replayErr)
+			os.Exit(1)
+		}
+		v, verifyErr := internalrpcauth.NewVerifier(cfg.Login.PlayerNoResolveAuthSecret, "team",
+			cfg.Login.PlayerNoResolveAuthAudience, 30*time.Second, replay)
+		if verifyErr != nil {
+			helper.Errorw("msg", "player_no_resolve_verifier_init_failed", "err", verifyErr)
+			os.Exit(1)
+		}
+		playerNoVerifier = v
+		helper.Infow("msg", "player_no_resolve_verifier_ready", "caller", "team",
+			"audience", cfg.Login.PlayerNoResolveAuthAudience, "max_batch", playerno.ResolveBatchLimit)
+	}
+	internalSvc := service.NewLoginInternalService(playerNoUC, playerNoVerifier)
 	// UE DS 在线 VerifyDSTicket 入场权威：默认 off/legacy 完全不改变旧内部调用；
 	// redis+enforce 才装配 Guard + 同一 Redis 的 Hub/Battle active checker，任一缺失启动失败。
 	dsGuard, derr := middleware.NewDSCallbackGuardFromConf(cfg.DSAuth)
@@ -414,7 +447,7 @@ func main() {
 	}
 
 	// 7. gRPC + HTTP server
-	grpcSrv := server.NewGRPCServer(&cfg, svc)
+	grpcSrv := server.NewGRPCServer(&cfg, svc, internalSvc)
 	httpSrv := server.NewHTTPServer(&cfg, svc)
 
 	helper.Infow(
@@ -473,6 +506,14 @@ func main() {
 		helper.Errorw("msg", "app_run_failed", "err", err)
 		os.Exit(1)
 	}
+}
+
+func newPlayerNoResolveUsecase(repo any) (*biz.PlayerNoResolveUsecase, error) {
+	reader, ok := repo.(biz.PlayerNoBatchReader)
+	if !ok {
+		return nil, fmt.Errorf("account repository does not implement batch player_no authority")
+	}
+	return biz.NewPlayerNoResolveUsecase(reader), nil
 }
 
 // mustBuildAccountRepo 连 MySQL 构造账号仓储,失败致命退出。

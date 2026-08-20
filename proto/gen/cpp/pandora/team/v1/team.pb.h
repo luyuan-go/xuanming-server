@@ -1032,6 +1032,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TeamMember final : public ::google:
     kPlayerIdFieldNumber = 1,
     kMmrFieldNumber = 3,
     kReadyFieldNumber = 4,
+    kPlayerNoFieldNumber = 10,
     kHeroIdFieldNumber = 5,
   };
   // string nickname = 2 [json_name = "nickname"];
@@ -1079,6 +1080,16 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TeamMember final : public ::google:
   void _internal_set_ready(bool value);
 
   public:
+  // uint64 player_no = 10 [json_name = "playerNo"];
+  void clear_player_no() ;
+  [[nodiscard]] ::uint64_t player_no() const;
+  void set_player_no(::uint64_t value);
+
+  private:
+  ::uint64_t _internal_player_no() const;
+  void _internal_set_player_no(::uint64_t value);
+
+  public:
   // uint32 hero_id = 5 [json_name = "heroId"];
   void clear_hero_id() ;
   [[nodiscard]] ::uint32_t hero_id() const;
@@ -1093,7 +1104,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TeamMember final : public ::google:
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<3, 5,
+      ::google::protobuf::internal::TcParseTable<3, 6,
                           0, 43,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
@@ -1126,6 +1137,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TeamMember final : public ::google:
     ::uint64_t player_id_;
     ::int32_t mmr_;
     bool ready_;
+    ::uint64_t player_no_;
     ::uint32_t hero_id_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
@@ -1543,9 +1555,26 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TeamApplication final : public ::go
 
   // accessors -------------------------------------------------------
   enum : int {
+    kNicknameFieldNumber = 3,
     kPlayerIdFieldNumber = 1,
     kExpiresAtMsFieldNumber = 2,
+    kPlayerNoFieldNumber = 4,
   };
+  // string nickname = 3 [json_name = "nickname"];
+  void clear_nickname() ;
+  [[nodiscard]] const ::std::string& nickname() const;
+  template <typename Arg_ = const ::std::string&, typename... Args_>
+  void set_nickname(Arg_&& arg, Args_... args);
+  ::std::string* PROTOBUF_NONNULL mutable_nickname();
+  [[nodiscard]] ::std::string* PROTOBUF_NULLABLE release_nickname();
+  void set_allocated_nickname(::std::string* PROTOBUF_NULLABLE value);
+
+  private:
+  const ::std::string& _internal_nickname() const;
+  PROTOBUF_ALWAYS_INLINE void _internal_set_nickname(const ::std::string& value);
+  ::std::string* PROTOBUF_NONNULL _internal_mutable_nickname();
+
+  public:
   // uint64 player_id = 1 [json_name = "playerId"];
   void clear_player_id() ;
   [[nodiscard]] ::uint64_t player_id() const;
@@ -1566,12 +1595,22 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TeamApplication final : public ::go
   void _internal_set_expires_at_ms(::int64_t value);
 
   public:
+  // uint64 player_no = 4 [json_name = "playerNo"];
+  void clear_player_no() ;
+  [[nodiscard]] ::uint64_t player_no() const;
+  void set_player_no(::uint64_t value);
+
+  private:
+  ::uint64_t _internal_player_no() const;
+  void _internal_set_player_no(::uint64_t value);
+
+  public:
   // @@protoc_insertion_point(class_scope:pandora.team.v1.TeamApplication)
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<1, 2,
-                          0, 0,
+      ::google::protobuf::internal::TcParseTable<2, 4,
+                          0, 48,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
       const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
@@ -1599,8 +1638,10 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TeamApplication final : public ::go
         const TeamApplication& from_msg);
     ::google::protobuf::internal::HasBits<1> _has_bits_;
     ::google::protobuf::internal::CachedSize _cached_size_;
+    ::google::protobuf::internal::ArenaStringPtr nickname_;
     ::uint64_t player_id_;
     ::int64_t expires_at_ms_;
+    ::uint64_t player_no_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -2431,6 +2472,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED OpenTeamBrief final : public ::goog
 
   // accessors -------------------------------------------------------
   enum : int {
+    kCaptainNicknameFieldNumber = 8,
     kTeamIdFieldNumber = 1,
     kCaptainIdFieldNumber = 2,
     kMemberCountFieldNumber = 3,
@@ -2438,7 +2480,23 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED OpenTeamBrief final : public ::goog
     kCreatedAtMsFieldNumber = 6,
     kMapIdFieldNumber = 5,
     kJoinPolicyFieldNumber = 7,
+    kCaptainPlayerNoFieldNumber = 9,
   };
+  // string captain_nickname = 8 [json_name = "captainNickname"];
+  void clear_captain_nickname() ;
+  [[nodiscard]] const ::std::string& captain_nickname() const;
+  template <typename Arg_ = const ::std::string&, typename... Args_>
+  void set_captain_nickname(Arg_&& arg, Args_... args);
+  ::std::string* PROTOBUF_NONNULL mutable_captain_nickname();
+  [[nodiscard]] ::std::string* PROTOBUF_NULLABLE release_captain_nickname();
+  void set_allocated_captain_nickname(::std::string* PROTOBUF_NULLABLE value);
+
+  private:
+  const ::std::string& _internal_captain_nickname() const;
+  PROTOBUF_ALWAYS_INLINE void _internal_set_captain_nickname(const ::std::string& value);
+  ::std::string* PROTOBUF_NONNULL _internal_mutable_captain_nickname();
+
+  public:
   // uint64 team_id = 1 [json_name = "teamId"];
   void clear_team_id() ;
   [[nodiscard]] ::uint64_t team_id() const;
@@ -2509,12 +2567,22 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED OpenTeamBrief final : public ::goog
   void _internal_set_join_policy(::pandora::team::v1::TeamJoinPolicy value);
 
   public:
+  // uint64 captain_player_no = 9 [json_name = "captainPlayerNo"];
+  void clear_captain_player_no() ;
+  [[nodiscard]] ::uint64_t captain_player_no() const;
+  void set_captain_player_no(::uint64_t value);
+
+  private:
+  ::uint64_t _internal_captain_player_no() const;
+  void _internal_set_captain_player_no(::uint64_t value);
+
+  public:
   // @@protoc_insertion_point(class_scope:pandora.team.v1.OpenTeamBrief)
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<3, 7,
-                          0, 0,
+      ::google::protobuf::internal::TcParseTable<4, 9,
+                          0, 62,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
       const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
@@ -2542,6 +2610,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED OpenTeamBrief final : public ::goog
         const OpenTeamBrief& from_msg);
     ::google::protobuf::internal::HasBits<1> _has_bits_;
     ::google::protobuf::internal::CachedSize _cached_size_;
+    ::google::protobuf::internal::ArenaStringPtr captain_nickname_;
     ::uint64_t team_id_;
     ::uint64_t captain_id_;
     ::uint32_t member_count_;
@@ -2549,6 +2618,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED OpenTeamBrief final : public ::goog
     ::int64_t created_at_ms_;
     ::uint32_t map_id_;
     int join_policy_;
+    ::uint64_t captain_player_no_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -10702,7 +10772,7 @@ inline void TeamMember::_internal_set_ready(bool value) {
 inline void TeamMember::clear_hero_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.hero_id_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
 }
 inline ::uint32_t TeamMember::hero_id() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.TeamMember.hero_id)
@@ -10710,7 +10780,7 @@ inline ::uint32_t TeamMember::hero_id() const {
 }
 inline void TeamMember::set_hero_id(::uint32_t value) {
   _internal_set_hero_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.TeamMember.hero_id)
 }
 inline ::uint32_t TeamMember::_internal_hero_id() const {
@@ -10720,6 +10790,30 @@ inline ::uint32_t TeamMember::_internal_hero_id() const {
 inline void TeamMember::_internal_set_hero_id(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.hero_id_ = value;
+}
+
+// uint64 player_no = 10 [json_name = "playerNo"];
+inline void TeamMember::clear_player_no() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.player_no_ = ::uint64_t{0u};
+  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
+}
+inline ::uint64_t TeamMember::player_no() const {
+  // @@protoc_insertion_point(field_get:pandora.team.v1.TeamMember.player_no)
+  return _internal_player_no();
+}
+inline void TeamMember::set_player_no(::uint64_t value) {
+  _internal_set_player_no(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  // @@protoc_insertion_point(field_set:pandora.team.v1.TeamMember.player_no)
+}
+inline ::uint64_t TeamMember::_internal_player_no() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.player_no_;
+}
+inline void TeamMember::_internal_set_player_no(::uint64_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.player_no_ = value;
 }
 
 // -------------------------------------------------------------------
@@ -13518,7 +13612,7 @@ inline void SetTeamMapResponse::set_allocated_team(::pandora::team::v1::Team* PR
 inline void OpenTeamBrief::clear_team_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.team_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
 }
 inline ::uint64_t OpenTeamBrief::team_id() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.OpenTeamBrief.team_id)
@@ -13526,7 +13620,7 @@ inline ::uint64_t OpenTeamBrief::team_id() const {
 }
 inline void OpenTeamBrief::set_team_id(::uint64_t value) {
   _internal_set_team_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.OpenTeamBrief.team_id)
 }
 inline ::uint64_t OpenTeamBrief::_internal_team_id() const {
@@ -13542,7 +13636,7 @@ inline void OpenTeamBrief::_internal_set_team_id(::uint64_t value) {
 inline void OpenTeamBrief::clear_captain_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.captain_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
 }
 inline ::uint64_t OpenTeamBrief::captain_id() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.OpenTeamBrief.captain_id)
@@ -13550,7 +13644,7 @@ inline ::uint64_t OpenTeamBrief::captain_id() const {
 }
 inline void OpenTeamBrief::set_captain_id(::uint64_t value) {
   _internal_set_captain_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.OpenTeamBrief.captain_id)
 }
 inline ::uint64_t OpenTeamBrief::_internal_captain_id() const {
@@ -13566,7 +13660,7 @@ inline void OpenTeamBrief::_internal_set_captain_id(::uint64_t value) {
 inline void OpenTeamBrief::clear_member_count() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.member_count_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
 }
 inline ::uint32_t OpenTeamBrief::member_count() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.OpenTeamBrief.member_count)
@@ -13574,7 +13668,7 @@ inline ::uint32_t OpenTeamBrief::member_count() const {
 }
 inline void OpenTeamBrief::set_member_count(::uint32_t value) {
   _internal_set_member_count(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.OpenTeamBrief.member_count)
 }
 inline ::uint32_t OpenTeamBrief::_internal_member_count() const {
@@ -13590,7 +13684,7 @@ inline void OpenTeamBrief::_internal_set_member_count(::uint32_t value) {
 inline void OpenTeamBrief::clear_max_size() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.max_size_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
 }
 inline ::uint32_t OpenTeamBrief::max_size() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.OpenTeamBrief.max_size)
@@ -13598,7 +13692,7 @@ inline ::uint32_t OpenTeamBrief::max_size() const {
 }
 inline void OpenTeamBrief::set_max_size(::uint32_t value) {
   _internal_set_max_size(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.OpenTeamBrief.max_size)
 }
 inline ::uint32_t OpenTeamBrief::_internal_max_size() const {
@@ -13614,7 +13708,7 @@ inline void OpenTeamBrief::_internal_set_max_size(::uint32_t value) {
 inline void OpenTeamBrief::clear_map_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.map_id_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000040U);
 }
 inline ::uint32_t OpenTeamBrief::map_id() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.OpenTeamBrief.map_id)
@@ -13622,7 +13716,7 @@ inline ::uint32_t OpenTeamBrief::map_id() const {
 }
 inline void OpenTeamBrief::set_map_id(::uint32_t value) {
   _internal_set_map_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000040U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.OpenTeamBrief.map_id)
 }
 inline ::uint32_t OpenTeamBrief::_internal_map_id() const {
@@ -13638,7 +13732,7 @@ inline void OpenTeamBrief::_internal_set_map_id(::uint32_t value) {
 inline void OpenTeamBrief::clear_created_at_ms() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.created_at_ms_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
 }
 inline ::int64_t OpenTeamBrief::created_at_ms() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.OpenTeamBrief.created_at_ms)
@@ -13646,7 +13740,7 @@ inline ::int64_t OpenTeamBrief::created_at_ms() const {
 }
 inline void OpenTeamBrief::set_created_at_ms(::int64_t value) {
   _internal_set_created_at_ms(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.OpenTeamBrief.created_at_ms)
 }
 inline ::int64_t OpenTeamBrief::_internal_created_at_ms() const {
@@ -13662,7 +13756,7 @@ inline void OpenTeamBrief::_internal_set_created_at_ms(::int64_t value) {
 inline void OpenTeamBrief::clear_join_policy() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.join_policy_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000040U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000080U);
 }
 inline ::pandora::team::v1::TeamJoinPolicy OpenTeamBrief::join_policy() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.OpenTeamBrief.join_policy)
@@ -13670,7 +13764,7 @@ inline ::pandora::team::v1::TeamJoinPolicy OpenTeamBrief::join_policy() const {
 }
 inline void OpenTeamBrief::set_join_policy(::pandora::team::v1::TeamJoinPolicy value) {
   _internal_set_join_policy(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000040U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000080U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.OpenTeamBrief.join_policy)
 }
 inline ::pandora::team::v1::TeamJoinPolicy OpenTeamBrief::_internal_join_policy() const {
@@ -13680,6 +13774,94 @@ inline ::pandora::team::v1::TeamJoinPolicy OpenTeamBrief::_internal_join_policy(
 inline void OpenTeamBrief::_internal_set_join_policy(::pandora::team::v1::TeamJoinPolicy value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.join_policy_ = value;
+}
+
+// string captain_nickname = 8 [json_name = "captainNickname"];
+inline void OpenTeamBrief::clear_captain_nickname() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.captain_nickname_.ClearToEmpty();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
+inline const ::std::string& OpenTeamBrief::captain_nickname() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.team.v1.OpenTeamBrief.captain_nickname)
+  return _internal_captain_nickname();
+}
+template <typename Arg_, typename... Args_>
+PROTOBUF_ALWAYS_INLINE void OpenTeamBrief::set_captain_nickname(Arg_&& arg, Args_... args) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  _impl_.captain_nickname_.Set(static_cast<Arg_&&>(arg), args..., GetArena());
+  // @@protoc_insertion_point(field_set:pandora.team.v1.OpenTeamBrief.captain_nickname)
+}
+inline ::std::string* PROTOBUF_NONNULL OpenTeamBrief::mutable_captain_nickname()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::std::string* _s = _internal_mutable_captain_nickname();
+  // @@protoc_insertion_point(field_mutable:pandora.team.v1.OpenTeamBrief.captain_nickname)
+  return _s;
+}
+inline const ::std::string& OpenTeamBrief::_internal_captain_nickname() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.captain_nickname_.Get();
+}
+inline void OpenTeamBrief::_internal_set_captain_nickname(const ::std::string& value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.captain_nickname_.Set(value, GetArena());
+}
+inline ::std::string* PROTOBUF_NONNULL OpenTeamBrief::_internal_mutable_captain_nickname() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  return _impl_.captain_nickname_.Mutable( GetArena());
+}
+inline ::std::string* PROTOBUF_NULLABLE OpenTeamBrief::release_captain_nickname() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.team.v1.OpenTeamBrief.captain_nickname)
+  if (!CheckHasBit(_impl_._has_bits_[0], 0x00000001U)) {
+    return nullptr;
+  }
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  auto* released = _impl_.captain_nickname_.Release();
+  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString()) {
+    _impl_.captain_nickname_.Set("", GetArena());
+  }
+  return released;
+}
+inline void OpenTeamBrief::set_allocated_captain_nickname(::std::string* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  }
+  _impl_.captain_nickname_.SetAllocated(value, GetArena());
+  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString() && _impl_.captain_nickname_.IsDefault()) {
+    _impl_.captain_nickname_.Set("", GetArena());
+  }
+  // @@protoc_insertion_point(field_set_allocated:pandora.team.v1.OpenTeamBrief.captain_nickname)
+}
+
+// uint64 captain_player_no = 9 [json_name = "captainPlayerNo"];
+inline void OpenTeamBrief::clear_captain_player_no() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.captain_player_no_ = ::uint64_t{0u};
+  ClearHasBit(_impl_._has_bits_[0], 0x00000100U);
+}
+inline ::uint64_t OpenTeamBrief::captain_player_no() const {
+  // @@protoc_insertion_point(field_get:pandora.team.v1.OpenTeamBrief.captain_player_no)
+  return _internal_captain_player_no();
+}
+inline void OpenTeamBrief::set_captain_player_no(::uint64_t value) {
+  _internal_set_captain_player_no(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000100U);
+  // @@protoc_insertion_point(field_set:pandora.team.v1.OpenTeamBrief.captain_player_no)
+}
+inline ::uint64_t OpenTeamBrief::_internal_captain_player_no() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.captain_player_no_;
+}
+inline void OpenTeamBrief::_internal_set_captain_player_no(::uint64_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.captain_player_no_ = value;
 }
 
 // -------------------------------------------------------------------
@@ -14027,7 +14209,7 @@ inline void ApplyToTeamResponse::_internal_set_expires_at_ms(::int64_t value) {
 inline void TeamApplication::clear_player_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.player_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
 }
 inline ::uint64_t TeamApplication::player_id() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.TeamApplication.player_id)
@@ -14035,7 +14217,7 @@ inline ::uint64_t TeamApplication::player_id() const {
 }
 inline void TeamApplication::set_player_id(::uint64_t value) {
   _internal_set_player_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.TeamApplication.player_id)
 }
 inline ::uint64_t TeamApplication::_internal_player_id() const {
@@ -14051,7 +14233,7 @@ inline void TeamApplication::_internal_set_player_id(::uint64_t value) {
 inline void TeamApplication::clear_expires_at_ms() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.expires_at_ms_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
 }
 inline ::int64_t TeamApplication::expires_at_ms() const {
   // @@protoc_insertion_point(field_get:pandora.team.v1.TeamApplication.expires_at_ms)
@@ -14059,7 +14241,7 @@ inline ::int64_t TeamApplication::expires_at_ms() const {
 }
 inline void TeamApplication::set_expires_at_ms(::int64_t value) {
   _internal_set_expires_at_ms(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
   // @@protoc_insertion_point(field_set:pandora.team.v1.TeamApplication.expires_at_ms)
 }
 inline ::int64_t TeamApplication::_internal_expires_at_ms() const {
@@ -14069,6 +14251,94 @@ inline ::int64_t TeamApplication::_internal_expires_at_ms() const {
 inline void TeamApplication::_internal_set_expires_at_ms(::int64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.expires_at_ms_ = value;
+}
+
+// string nickname = 3 [json_name = "nickname"];
+inline void TeamApplication::clear_nickname() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.nickname_.ClearToEmpty();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
+inline const ::std::string& TeamApplication::nickname() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.team.v1.TeamApplication.nickname)
+  return _internal_nickname();
+}
+template <typename Arg_, typename... Args_>
+PROTOBUF_ALWAYS_INLINE void TeamApplication::set_nickname(Arg_&& arg, Args_... args) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  _impl_.nickname_.Set(static_cast<Arg_&&>(arg), args..., GetArena());
+  // @@protoc_insertion_point(field_set:pandora.team.v1.TeamApplication.nickname)
+}
+inline ::std::string* PROTOBUF_NONNULL TeamApplication::mutable_nickname()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::std::string* _s = _internal_mutable_nickname();
+  // @@protoc_insertion_point(field_mutable:pandora.team.v1.TeamApplication.nickname)
+  return _s;
+}
+inline const ::std::string& TeamApplication::_internal_nickname() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.nickname_.Get();
+}
+inline void TeamApplication::_internal_set_nickname(const ::std::string& value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.nickname_.Set(value, GetArena());
+}
+inline ::std::string* PROTOBUF_NONNULL TeamApplication::_internal_mutable_nickname() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  return _impl_.nickname_.Mutable( GetArena());
+}
+inline ::std::string* PROTOBUF_NULLABLE TeamApplication::release_nickname() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.team.v1.TeamApplication.nickname)
+  if (!CheckHasBit(_impl_._has_bits_[0], 0x00000001U)) {
+    return nullptr;
+  }
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  auto* released = _impl_.nickname_.Release();
+  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString()) {
+    _impl_.nickname_.Set("", GetArena());
+  }
+  return released;
+}
+inline void TeamApplication::set_allocated_nickname(::std::string* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  }
+  _impl_.nickname_.SetAllocated(value, GetArena());
+  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString() && _impl_.nickname_.IsDefault()) {
+    _impl_.nickname_.Set("", GetArena());
+  }
+  // @@protoc_insertion_point(field_set_allocated:pandora.team.v1.TeamApplication.nickname)
+}
+
+// uint64 player_no = 4 [json_name = "playerNo"];
+inline void TeamApplication::clear_player_no() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.player_no_ = ::uint64_t{0u};
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+}
+inline ::uint64_t TeamApplication::player_no() const {
+  // @@protoc_insertion_point(field_get:pandora.team.v1.TeamApplication.player_no)
+  return _internal_player_no();
+}
+inline void TeamApplication::set_player_no(::uint64_t value) {
+  _internal_set_player_no(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  // @@protoc_insertion_point(field_set:pandora.team.v1.TeamApplication.player_no)
+}
+inline ::uint64_t TeamApplication::_internal_player_no() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.player_no_;
+}
+inline void TeamApplication::_internal_set_player_no(::uint64_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.player_no_ = value;
 }
 
 // -------------------------------------------------------------------

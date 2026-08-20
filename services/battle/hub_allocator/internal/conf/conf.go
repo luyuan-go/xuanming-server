@@ -32,6 +32,29 @@ const (
 	LauncherEditor = "editor"
 )
 
+// EditorLauncherCVarArg 是 launcher=editor 专用的引擎 CVar 覆盖参数(与 ds_allocator 逐字对齐)。
+//
+// 为什么必须加(2026-08-18 实测:PIE 客户端连未 cook 的 editor DS 后秒断秒重连):
+// 未 cook 的 editor DS 把 World Partition runtime cell 注册成 <WorldPackage>/<Cell>,
+// 而 PIE 客户端把同一个 cell 以 /Memory/UEDPIE_<n>_<World>_<Cell> 上报可见性。服务端
+// 在 UNetConnection.cpp:1968 找不到该 package,默认行为是**直接关连接**
+// (ENetCloseResult::MissingLevelPackage)。客户端拿不到这个原因(UE 5.8 在客户端侧把
+// NMT_CloseReason 直接丢弃),只会当成瞬态掉线去重查权威 → 权威照旧把玩家送回同一个
+// DS → 再被踢,形成秒级无限重连循环。大厅是常驻世界、WP cell 更多,更容易撞上。
+//
+// net.SkipMissingLevelDisconnect 是引擎自带的开关(NetConnection.cpp:119,Epic 就是为
+// 同类问题加的):打开后服务端只打一条 Warning 忽略该 package,不再踢人。代价是那批 cell
+// 里的 Actor 不会复制给该客户端,这对"免出包看资源改动"的策划回路显然优于被踢回登录。
+//
+// 刻意只作用于 launcher=editor:packaged 本机 DS 与 k8s Linux DS 跑的都是 cook 过的内容,
+// 那里的 MissingLevelPackage 是**真的**内容不一致,必须保留引擎的踢人保护。
+// 形态选 -DPCVars= 而非 -ExecCmds=:前者是 Key=Value 逗号列表、**不含空格**,经
+// exec.Command 传给 Windows 时不会被引号转义打散;引擎在 PreInit 阶段
+// (LaunchEngineLoop.cpp:2857 InitializeCVarsForActiveDeviceProfile)就应用,
+// 远早于任何客户端连入,且该调用对 DS 同样生效(无 !UE_SERVER 守卫)。
+// 放在 ExtraArgs **之前**:同名 tag 引擎按出现顺序逐条应用、后写的赢,运维仍可覆盖。
+const EditorLauncherCVarArg = "-DPCVars=net.SkipMissingLevelDisconnect=1"
+
 // Config 是 hub_allocator 服务的完整配置。
 type Config struct {
 	config.Base `yaml:",inline" mapstructure:",squash"`

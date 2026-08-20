@@ -25,13 +25,14 @@
 
 from __future__ import annotations
 
-import datetime as _dt
+import asyncio
 from typing import Protocol
 
 from pandora.chat.v1 import chat_pb2
 
 from pandorapy import errcode
 from pandorapy import log as plog
+from pandorapy import snowflake
 
 _C = chat_pb2.ChatChannel
 
@@ -398,3 +399,44 @@ class ChatUsecase:
             target_region=target.region_id,
             cross_region=sender.region_id != target.region_id,
         )
+
+    # ── 私聊历史保留期清理(§9.24)──────────────────────────────────────────
+
+    async def sweep_history(self, now_ms: int) -> None:
+        """跑一轮私聊历史清理(至多一批 sweep_batch)—— 对应 Go 的 SweepHistory。
+
+        不设这道清理的后果:chat_private_messages 每条私聊一行、只增不删,
+        随消息量无界线性增长,最终把 pandora_social 撑爆(§9 不变量 24)。
+
+        ★ 按雪花 message_id 的**时间段单调性**把"发送时间早于 cutoff"翻译成
+        "message_id < min_id_at(cutoff)" —— 时间条件变成**主键范围**条件,
+        无需给 send_time_ms 另建索引,也不会因为索引缺失而全表扫。
+
+        ★ 默认 report_only(只统计不删):自动删生产数据不可逆,由人确认后显式开启。
+        多副本各自跑、无锁 —— DELETE 幂等,并发只多花空批。
+        """
+        cutoff_sec = (now_ms - self._cfg.history_retention_days * 86_400_000) // 1000
+        max_id = snowflake.min_id_at(cutoff_sec)
+        if max_id == 0:
+            # cutoff 早于雪花 Epoch(服务上线未满保留期),无可清理。
+            # ★ 这个提前返回不能省:min_id_at 回落 0 时 `message_id < 0` 恒不命中,
+            # 行为上无害,但每轮都会白跑一条 COUNT/DELETE。
+            return
+        try:
+            out = await self._repo.sweep_messages_before(
+                self._cfg.retention_mode_parsed(), max_id, self._cfg.sweep_batch
+            )
+        except asyncio.CancelledError:
+            # ★ 取消必须穿透:CancelledError 是 BaseException,会被下面那条宽 except 吞掉。
+            # 吞掉之后取消就**不再传播**,停机时这条循环不会真的停,
+            # §9.16 的「先摘流量 → 再排空在途」失效。
+            raise
+        except BaseException as exc:  # noqa: BLE001 —— 单轮失败只丢本轮,下轮继续
+            plog.get().warning("chat_history_sweep_failed", err=str(exc))
+            return
+        if out is not None and out.deleted > 0:
+            plog.get().info(
+                "chat_history_swept",
+                deleted=out.deleted,
+                retention_days=self._cfg.history_retention_days,
+            )

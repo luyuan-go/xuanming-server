@@ -68,6 +68,7 @@ if errorlevel 1 (
 )
 rem Quote it: with the portable build this is a full path, which can contain spaces.
 set "PS=%PANDORA_PWSH%"
+set "PANDORA_PLANNER_FAST_START=1"
 
 "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\scripts\start.ps1" -Mode local -NoDocker -DsLauncher editor -GenTables
 set "RC=%ERRORLEVEL%"

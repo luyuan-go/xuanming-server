@@ -10,12 +10,17 @@
 
 from __future__ import annotations
 
+import datetime as _dt
+import pathlib
+import re
+
 import pytest
 from pandora.chat.v1 import chat_pb2
 
-from pandorapy import errcode
+from pandorapy import errcode, redisx
 from pandorapy.services.chat import biz as cbiz
 from pandorapy.services.chat import conf as cconf
+from pandorapy.services.chat import data as cdata
 
 _C = chat_pb2.ChatChannel
 
@@ -400,7 +405,135 @@ def test_retention_mode_defaults_to_report_only() -> None:
 
 
 def test_retention_mode_typo_is_rejected() -> None:
-    """拼错的 retention_mode 必须报错,不能猜成 delete。"""
+    """拼错的 retention_mode 必须在**启动期**报错,不能猜成 delete。
+
+    ★ 两个方法分工不同(与 Go 的 ValidateRetentionMode / RetentionMode 逐条对应):
+      - validate_retention_mode() 抛 → main 打 chat_retention_mode_invalid 后拒启;
+      - retention_mode_parsed() **回落 report_only** → 任何不确定都不删数据。
+    把 parsed 也做成抛异常的话,后台清理循环每轮抛一次异常(而不是安全地不删),
+    真正的配置错误反而淹没在循环噪声里。
+    """
     cfg = _cfg(retention_mode="delet")
     with pytest.raises(ValueError, match="无法识别"):
-        cfg.retention_mode_parsed()
+        cfg.validate_retention_mode()
+    # 运行期取值绝不能猜成 delete。
+    from pandorapy import dbguard
+
+    assert cfg.retention_mode_parsed() is dbguard.Mode.REPORT_ONLY
+
+
+# ── ★ 与 Go 的跨栈一致性(判据全部取自 Go 源码,不在测试里手抄常量)────────────
+
+_GO_DURATION_UNITS = {
+    "Nanosecond": 1e-9,
+    "Microsecond": 1e-6,
+    "Millisecond": 1e-3,
+    "Second": 1.0,
+    "Minute": 60.0,
+    "Hour": 3600.0,
+}
+
+
+def _go_chat_defaults(repo_root: pathlib.Path) -> dict[str, float]:
+    """抠出 Go 侧 chat 的 Defaults()。
+
+    刻意读源码而不是把数字抄进测试:手抄的常量和被测实现是同一次手抄的产物,
+    抄错时两边一起错,测试永远绿(这一处正是这么漏过去的)。
+    """
+    src = (
+        repo_root / "services" / "social" / "chat" / "internal" / "conf" / "conf.go"
+    ).read_text(encoding="utf-8")
+    body = re.search(r"func \(c \*Config\) Defaults\(\) \{(.*?)\n\}", src, re.S)
+    assert body, "没在 Go 源码里找到 chat 的 Defaults()"
+    out: dict[str, float] = {}
+    for name, num, unit in re.findall(
+        r"c\.Chat\.(\w+) = config\.Duration\((\d+) \* time\.(\w+)\)", body.group(1)
+    ):
+        out[name] = int(num) * _GO_DURATION_UNITS[unit]
+    for name, num in re.findall(r"c\.Chat\.(\w+) = (\d+)\n", body.group(1)):
+        out[name] = int(num)
+    return out
+
+
+def test_defaults_match_go_source(repo_root: pathlib.Path) -> None:
+    """★ 默认值必须与 Go 逐个相等。
+
+    全仓 21 份 yaml 一份都没配 world_cooldown / non_world_cooldown /
+    sweep_interval / sweep_batch —— 默认值就是生产实际值,不是"兜底"。
+    差一点就是同一个玩家在 Go 副本和 Python 副本上限速不同、清理批量不同。
+    """
+    go = _go_chat_defaults(repo_root)
+    cfg = _cfg()
+    assert cfg.max_content_len == go["MaxContentLen"]
+    assert cfg.history_limit == go["HistoryLimit"]
+    assert cfg.history_retention_days == go["HistoryRetentionDays"]
+    assert cfg.world_cooldown_td().total_seconds() == go["WorldCooldown"]
+    assert cfg.non_world_cooldown_td().total_seconds() == go["NonWorldCooldown"]
+    assert cfg.sweep_interval_td().total_seconds() == go["SweepInterval"]
+    assert cfg.sweep_batch == go["SweepBatch"]
+
+
+def test_group_channel_has_no_own_addr_field(repo_root: pathlib.Path) -> None:
+    """★ GROUP 频道**没有**独立地址字段,与 GUILD 共用 guild_addr。
+
+    多出一个 group_addr 不会报错 —— 它恒为空,GROUP 频道就恒走弱依赖降级,
+    消息静默不扇出。这类"合法档"的缺陷只能靠盯字段本身抓。
+    """
+    assert "group_addr" not in cconf.ChatConf.model_fields, "重新长出了 group_addr"
+    main_src = (
+        repo_root / "services" / "social" / "chat" / "cmd" / "chat" / "main.go"
+    ).read_text(encoding="utf-8")
+    assert "NewGrpcGroupReader(cfg.Chat.GuildAddr)" in main_src, "Go 侧不再共用 guild_addr"
+    assert "cfg.Chat.GroupAddr" not in main_src
+
+
+class _KeyCapturingRedis:
+    """只记 key 的假 Redis —— 这组测试验的是 key 拼法,不是 Redis 行为。"""
+
+    def __init__(self) -> None:
+        self.keys: list[str] = []
+
+    async def set(self, key, value, nx=False, px=None):  # noqa: ANN001, ANN201, ARG002
+        self.keys.append(key)
+        return True
+
+
+async def test_world_cooldown_key_matches_go_source(repo_root: pathlib.Path) -> None:
+    """★ 世界频道冷却 key 与 Go 逐字一致。
+
+    迁移期两栈同时在线共用一套 Redis。key 不同 = 同一玩家在两侧各占一个窗,
+    实际冷却被放宽一倍,而两边日志都显示"限流生效中"。
+    """
+    src = (
+        repo_root / "services" / "social" / "chat" / "internal" / "data" / "world_ratelimit.go"
+    ).read_text(encoding="utf-8")
+    m = re.search(
+        r'func worldCooldownKey\([^)]*\)\s*string\s*\{\s*return fmt\.Sprintf\("([^"]+)"', src
+    )
+    assert m, "没在 Go 源码里找到 worldCooldownKey 的格式串"
+    expected = m.group(1).replace("%d", "{}").format(1001)
+
+    rdb = _KeyCapturingRedis()
+    limiter = cdata.RedisRateLimiter(rdb)
+    assert await limiter.allow_world(1001, _dt.timedelta(seconds=3))
+    assert rdb.keys == [expected]
+
+
+async def test_channel_cooldown_key_follows_rl_convention(repo_root: pathlib.Path) -> None:
+    """★ 非世界频道 key 走 pandora:rl:* 规范,域名取自 Go 的 RLKey 调用。
+
+    按 pandora:rl:* 建的限流巡检脚本靠这个前缀发现主体;前缀不对,
+    Python 副本在巡检里整体不可见 —— 没有告警不等于没在被刷。
+    """
+    src = (
+        repo_root / "services" / "social" / "chat" / "internal" / "data" / "world_ratelimit.go"
+    ).read_text(encoding="utf-8")
+    m = re.search(r'redisx\.RLKey\("(\w+)", channel, playerID\)', src)
+    assert m, "Go 侧非世界频道 key 不再走 redisx.RLKey,Python 需要同步"
+    domain = m.group(1)
+
+    rdb = _KeyCapturingRedis()
+    limiter = cdata.RedisRateLimiter(rdb)
+    assert await limiter.allow_channel("team", 1001, _dt.timedelta(seconds=1))
+    assert rdb.keys == [redisx.rl_key(domain, "team", 1001)]
+    assert rdb.keys[0].startswith("pandora:rl:")

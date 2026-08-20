@@ -191,9 +191,18 @@ def test_alloy_extracts_level_as_label(repo_root: pathlib.Path) -> None:
     在此之前它是硬约束。这条测试把"为什么严格"钉在配置事实上,而不是注释里。
     """
     alloy = (repo_root / "deploy" / "alloy" / "config.alloy").read_text(encoding="utf-8")
-    assert "stage.labels" in alloy and "level" in alloy, (
-        "deploy/alloy/config.alloy 已不再把 level 提成 label?"
-        "请复核 test_level_values_use_zap_vocabulary 的严格性是否仍必要"
+
+    # ★ 断言必须落在 **stage.labels 块内部**,不能只查两个词各自出现过。
+    # 原来的写法是 `"stage.labels" in alloy and "level" in alloy` —— 而 "level"
+    # 在这份配置里到处都是(注释、其它 stage、字段名),所以那条断言接近恒真:
+    # 就算哪天真的把 level 从 label 里拿掉,它照样绿,而它存在的唯一意义
+    # 就是回答"上面那条严格性还有没有必要"。
+    block = re.search(r"stage\.labels\s*\{(.*?)\}", alloy, re.S)
+    assert block, "deploy/alloy/config.alloy 里已经没有 stage.labels 块了"
+    labels = set(re.findall(r"(\w+)\s*=", block.group(1)))
+    assert "level" in labels, (
+        f"level 已不在 Alloy 的 label 集合里(当前 {sorted(labels)})—— "
+        f"请复核 test_level_values_use_zap_vocabulary 的严格性是否仍必要"
     )
 
 

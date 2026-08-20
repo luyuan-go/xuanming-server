@@ -59,6 +59,11 @@ class LoginServiceStub(object):
                 request_serializer=pandora_dot_login_dot_v1_dot_login__pb2.VerifyDSTicketRequest.SerializeToString,
                 response_deserializer=pandora_dot_login_dot_v1_dot_login__pb2.VerifyDSTicketResponse.FromString,
                 _registered_method=True)
+        self.ResolvePlayerNosForDS = channel.unary_unary(
+                '/pandora.login.v1.LoginService/ResolvePlayerNosForDS',
+                request_serializer=pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosRequest.SerializeToString,
+                response_deserializer=pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosResponse.FromString,
+                _registered_method=True)
         self.GetResumeContext = channel.unary_unary(
                 '/pandora.login.v1.LoginService/GetResumeContext',
                 request_serializer=pandora_dot_login_dot_v1_dot_login__pb2.GetResumeContextRequest.SerializeToString,
@@ -183,6 +188,18 @@ class LoginServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ResolvePlayerNosForDS(self, request, context):
+        """ResolvePlayerNosForDS 供 UE DS 按 player_id 单批读取账号域权威展示编号。
+        不加 HTTP annotation；客户端 listener 必须 exact 403，DS listener 才 exact allow。
+        redis admission 模式下实现层还会强制 Bearer DS credential + active 权威。
+        buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE DS 与 Team 入口共用同一 canonical batch messages。
+        buf:lint:ignore RPC_REQUEST_STANDARD_NAME 避免复制同形 request 造成协议漂移。
+        buf:lint:ignore RPC_RESPONSE_STANDARD_NAME 避免复制同形 response 造成协议漂移。
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetResumeContext(self, request, context):
         """GetResumeContext 让冷启动/前台恢复重新读取服务端权威路由；客户端不得继续相信
         旧地址、旧票据或本地超时推导。match_stage 可由 matchmaker durable saga 后续补齐。
@@ -238,6 +255,11 @@ def add_LoginServiceServicer_to_server(servicer, server):
                     servicer.VerifyDSTicket,
                     request_deserializer=pandora_dot_login_dot_v1_dot_login__pb2.VerifyDSTicketRequest.FromString,
                     response_serializer=pandora_dot_login_dot_v1_dot_login__pb2.VerifyDSTicketResponse.SerializeToString,
+            ),
+            'ResolvePlayerNosForDS': grpc.unary_unary_rpc_method_handler(
+                    servicer.ResolvePlayerNosForDS,
+                    request_deserializer=pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosRequest.FromString,
+                    response_serializer=pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosResponse.SerializeToString,
             ),
             'GetResumeContext': grpc.unary_unary_rpc_method_handler(
                     servicer.GetResumeContext,
@@ -499,6 +521,33 @@ class LoginService(object):
             _registered_method=True)
 
     @staticmethod
+    def ResolvePlayerNosForDS(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/pandora.login.v1.LoginService/ResolvePlayerNosForDS',
+            pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosRequest.SerializeToString,
+            pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def GetResumeContext(request,
             target,
             options=(),
@@ -515,6 +564,96 @@ class LoginService(object):
             '/pandora.login.v1.LoginService/GetResumeContext',
             pandora_dot_login_dot_v1_dot_login__pb2.GetResumeContextRequest.SerializeToString,
             pandora_dot_login_dot_v1_dot_login__pb2.GetResumeContextResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class LoginInternalServiceStub(object):
+    """LoginInternalService 只供集群内服务读取账号域权威数据。
+
+    它刻意与客户端可见 LoginService 分开，且所有 RPC 均不加 google.api.http 注解：
+    客户端 Envoy 只转发 /pandora.login.v1.LoginService/，不会暴露本服务。实现层还必须
+    校验 request-bound internalrpcauth，不能把“没走 Envoy”误当成调用方身份。
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.ResolvePlayerNos = channel.unary_unary(
+                '/pandora.login.v1.LoginInternalService/ResolvePlayerNos',
+                request_serializer=pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosRequest.SerializeToString,
+                response_deserializer=pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosResponse.FromString,
+                _registered_method=True)
+
+
+class LoginInternalServiceServicer(object):
+    """LoginInternalService 只供集群内服务读取账号域权威数据。
+
+    它刻意与客户端可见 LoginService 分开，且所有 RPC 均不加 google.api.http 注解：
+    客户端 Envoy 只转发 /pandora.login.v1.LoginService/，不会暴露本服务。实现层还必须
+    校验 request-bound internalrpcauth，不能把“没走 Envoy”误当成调用方身份。
+    """
+
+    def ResolvePlayerNos(self, request, context):
+        """ResolvePlayerNos 按 player_id 有界批量解析角色展示编号。
+        输入只接受身份键 player_id；player_no 仅出现在结果中，绝不反向作为业务查询键。
+        buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE Team 与 DS 入口共用同一 canonical batch messages。
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_LoginInternalServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'ResolvePlayerNos': grpc.unary_unary_rpc_method_handler(
+                    servicer.ResolvePlayerNos,
+                    request_deserializer=pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosRequest.FromString,
+                    response_serializer=pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosResponse.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'pandora.login.v1.LoginInternalService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('pandora.login.v1.LoginInternalService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class LoginInternalService(object):
+    """LoginInternalService 只供集群内服务读取账号域权威数据。
+
+    它刻意与客户端可见 LoginService 分开，且所有 RPC 均不加 google.api.http 注解：
+    客户端 Envoy 只转发 /pandora.login.v1.LoginService/，不会暴露本服务。实现层还必须
+    校验 request-bound internalrpcauth，不能把“没走 Envoy”误当成调用方身份。
+    """
+
+    @staticmethod
+    def ResolvePlayerNos(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/pandora.login.v1.LoginInternalService/ResolvePlayerNos',
+            pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosRequest.SerializeToString,
+            pandora_dot_login_dot_v1_dot_login__pb2.ResolvePlayerNosResponse.FromString,
             options,
             channel_credentials,
             insecure,

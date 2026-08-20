@@ -15,6 +15,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $infra = Join-Path (Split-Path -Parent $PSScriptRoot) 'local_infra.ps1'
+$stateLib = Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/local_infra_state.ps1'
 $source = [System.Text.UTF8Encoding]::new($false).GetString([System.IO.File]::ReadAllBytes($infra))
 
 $script:Failed = New-Object 'System.Collections.Generic.List[string]'
@@ -35,6 +36,9 @@ foreach ($name in @('Read-LogTail', 'Get-PortHolder', 'Get-PortReservation', 'Sh
     if ($fn.Count -ne 1) { throw "local_infra.ps1 里找不到唯一的 $name(找到 $($fn.Count) 个)" }
     Invoke-Expression $fn[0].Extent.Text
 }
+# Get-PortHolder 的 listener 数据来自共享快照库；这里加载真实 parser/netstat seam，避免用
+# “函数不存在”异常制造一个假占用者，导致忙端口用例假绿、空闲端口用例假红。
+. $stateLib
 # 提示表是脚本级赋值,不是函数,单独抠。
 $hintAssign = @($ast.FindAll({
             param($n)

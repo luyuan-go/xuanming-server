@@ -111,6 +111,22 @@ try {
     }
     Write-Host "  OK → $ProtoDir/gen/go/" -ForegroundColor Green
 
+    # 3.5 generate python
+    #
+    # ★ 必须和 go 一起生成,不能"要用的时候再手动跑一次"。
+    # python/gen/ 与 proto/gen/go 一样是**入库的生成物**,而这里是全仓唯一的生成入口。
+    # 漏掉它的后果是静默的:改完 proto 只重生成了 Go,Python 侧还在用旧 stub ——
+    # 加字段时表现为"Python 读不到新字段"(不报错,值是默认值),改字段号时表现为
+    # **串字段**。而 CI 的 Python 门跑的是旧 stub,照样全绿。
+    Write-Host ""
+    Write-Host "[3.5] buf generate python" -ForegroundColor Yellow
+    & buf generate --template buf.gen.python.yaml
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERR] python generate failed" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  OK → $ProjectRoot/python/gen/" -ForegroundColor Green
+
     # 4. generate cpp(可选)
     if ($Cpp) {
         Write-Host ""

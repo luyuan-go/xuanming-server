@@ -312,11 +312,11 @@ constexpr TeamMember::ParseTableT_ TeamMember::InternalGenerateParseTable_(const
     {
       PROTOBUF_FIELD_OFFSET(TeamMember, _impl_._has_bits_),
       0, // no _extensions_
-      5, 56,  // max_field_number, fast_idx_mask
+      10, 56,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967264,  // skipmap
+      4294966752,  // skipmap
       offsetof(ParseTableT_, field_entries),
-      5,  // num_field_entries
+      6,  // num_field_entries
       0,  // num_aux_entries
       offsetof(ParseTableT_, field_names),  // no aux_entries
       class_data,
@@ -344,8 +344,8 @@ constexpr TeamMember::ParseTableT_ TeamMember::InternalGenerateParseTable_(const
        {32, 3, 0,
         PROTOBUF_FIELD_OFFSET(TeamMember, _impl_.ready_)}},
       // uint32 hero_id = 5 [json_name = "heroId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(TeamMember, _impl_.hero_id_), 4>(),
-       {40, 4, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(TeamMember, _impl_.hero_id_), 5>(),
+       {40, 5, 0,
         PROTOBUF_FIELD_OFFSET(TeamMember, _impl_.hero_id_)}},
       {::_pbi::TcParser::MiniParse, {}},
       {::_pbi::TcParser::MiniParse, {}},
@@ -361,7 +361,9 @@ constexpr TeamMember::ParseTableT_ TeamMember::InternalGenerateParseTable_(const
       // bool ready = 4 [json_name = "ready"];
       {PROTOBUF_FIELD_OFFSET(TeamMember, _impl_.ready_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kBool)},
       // uint32 hero_id = 5 [json_name = "heroId"];
-      {PROTOBUF_FIELD_OFFSET(TeamMember, _impl_.hero_id_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      {PROTOBUF_FIELD_OFFSET(TeamMember, _impl_.hero_id_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // uint64 player_no = 10 [json_name = "playerNo"];
+      {PROTOBUF_FIELD_OFFSET(TeamMember, _impl_.player_no_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
     }},
     // no aux_entries
     {{
@@ -383,6 +385,7 @@ inline constexpr TeamMember::Impl_::Impl_(
         player_id_{::uint64_t{0u}},
         mmr_{0},
         ready_{false},
+        player_no_{::uint64_t{0u}},
         hero_id_{0u} {}
 
 template <typename>
@@ -667,11 +670,11 @@ constexpr TeamApplication::ParseTableT_ TeamApplication::InternalGenerateParseTa
     {
       PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_._has_bits_),
       0, // no _extensions_
-      2, 8,  // max_field_number, fast_idx_mask
+      4, 24,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967292,  // skipmap
+      4294967280,  // skipmap
       offsetof(ParseTableT_, field_entries),
-      2,  // num_field_entries
+      4,  // num_field_entries
       0,  // num_aux_entries
       offsetof(ParseTableT_, field_names),  // no aux_entries
       class_data,
@@ -681,24 +684,39 @@ constexpr TeamApplication::ParseTableT_ TeamApplication::InternalGenerateParseTa
       ::_pbi::TcParser::GetTable<::pandora::team::v1::TeamApplication>(),  // to_prefetch
       #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
     }, {{
-      // int64 expires_at_ms = 2 [json_name = "expiresAtMs"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(TeamApplication, _impl_.expires_at_ms_), 1>(),
-       {16, 1, 0,
-        PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.expires_at_ms_)}},
+      // uint64 player_no = 4 [json_name = "playerNo"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(TeamApplication, _impl_.player_no_), 3>(),
+       {32, 3, 0,
+        PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.player_no_)}},
       // uint64 player_id = 1 [json_name = "playerId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(TeamApplication, _impl_.player_id_), 0>(),
-       {8, 0, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(TeamApplication, _impl_.player_id_), 1>(),
+       {8, 1, 0,
         PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.player_id_)}},
+      // int64 expires_at_ms = 2 [json_name = "expiresAtMs"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(TeamApplication, _impl_.expires_at_ms_), 2>(),
+       {16, 2, 0,
+        PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.expires_at_ms_)}},
+      // string nickname = 3 [json_name = "nickname"];
+      {::_pbi::TcParser::FastUS1,
+       {26, 0, 0,
+        PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.nickname_)}},
     }}, {{
       65535, 65535
     }}, {{
       // uint64 player_id = 1 [json_name = "playerId"];
-      {PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.player_id_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      {PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.player_id_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // int64 expires_at_ms = 2 [json_name = "expiresAtMs"];
-      {PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.expires_at_ms_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      {PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.expires_at_ms_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // string nickname = 3 [json_name = "nickname"];
+      {PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.nickname_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUtf8String | ::_fl::kRepAString)},
+      // uint64 player_no = 4 [json_name = "playerNo"];
+      {PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.player_no_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
     }},
     // no aux_entries
     {{
+      "\37\0\0\10\0\0\0\0"
+      "pandora.team.v1.TeamApplication"
+      "nickname"
     }},
   };
 }
@@ -708,8 +726,12 @@ inline constexpr TeamApplication::Impl_::Impl_(
     [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
     ::_pbi::ConstantInitialized) noexcept
       : _cached_size_{0},
+        nickname_(
+            &::google::protobuf::internal::fixed_address_empty_string,
+            ::_pbi::ConstantInitialized()),
         player_id_{::uint64_t{0u}},
-        expires_at_ms_{::int64_t{0}} {}
+        expires_at_ms_{::int64_t{0}},
+        player_no_{::uint64_t{0u}} {}
 
 template <typename>
 constexpr TeamApplication::TeamApplication(::_pbi::ConstantInitialized,
@@ -727,7 +749,7 @@ inline void* PROTOBUF_NONNULL TeamApplication::PlacementNew_(
   return ::new (mem) TeamApplication(arena);
 }
 constexpr auto TeamApplication::InternalNewImpl_() {
-  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(TeamApplication), alignof(TeamApplication));
+  return ::google::protobuf::internal::MessageCreator::CopyInit(sizeof(TeamApplication), alignof(TeamApplication));
 }
 constexpr auto TeamApplication::InternalGenerateClassData_(
     const MessageLite& prototype,
@@ -1281,11 +1303,11 @@ constexpr OpenTeamBrief::ParseTableT_ OpenTeamBrief::InternalGenerateParseTable_
     {
       PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_._has_bits_),
       0, // no _extensions_
-      7, 56,  // max_field_number, fast_idx_mask
+      9, 120,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967168,  // skipmap
+      4294966784,  // skipmap
       offsetof(ParseTableT_, field_entries),
-      7,  // num_field_entries
+      9,  // num_field_entries
       0,  // num_aux_entries
       offsetof(ParseTableT_, field_names),  // no aux_entries
       class_data,
@@ -1297,53 +1319,74 @@ constexpr OpenTeamBrief::ParseTableT_ OpenTeamBrief::InternalGenerateParseTable_
     }, {{
       {::_pbi::TcParser::MiniParse, {}},
       // uint64 team_id = 1 [json_name = "teamId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(OpenTeamBrief, _impl_.team_id_), 0>(),
-       {8, 0, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(OpenTeamBrief, _impl_.team_id_), 1>(),
+       {8, 1, 0,
         PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.team_id_)}},
       // uint64 captain_id = 2 [json_name = "captainId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(OpenTeamBrief, _impl_.captain_id_), 1>(),
-       {16, 1, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(OpenTeamBrief, _impl_.captain_id_), 2>(),
+       {16, 2, 0,
         PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.captain_id_)}},
       // uint32 member_count = 3 [json_name = "memberCount"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(OpenTeamBrief, _impl_.member_count_), 2>(),
-       {24, 2, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(OpenTeamBrief, _impl_.member_count_), 3>(),
+       {24, 3, 0,
         PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.member_count_)}},
       // uint32 max_size = 4 [json_name = "maxSize"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(OpenTeamBrief, _impl_.max_size_), 3>(),
-       {32, 3, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(OpenTeamBrief, _impl_.max_size_), 4>(),
+       {32, 4, 0,
         PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.max_size_)}},
       // uint32 map_id = 5 [json_name = "mapId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(OpenTeamBrief, _impl_.map_id_), 5>(),
-       {40, 5, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(OpenTeamBrief, _impl_.map_id_), 6>(),
+       {40, 6, 0,
         PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.map_id_)}},
       // int64 created_at_ms = 6 [json_name = "createdAtMs"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(OpenTeamBrief, _impl_.created_at_ms_), 4>(),
-       {48, 4, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(OpenTeamBrief, _impl_.created_at_ms_), 5>(),
+       {48, 5, 0,
         PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.created_at_ms_)}},
       // .pandora.team.v1.TeamJoinPolicy join_policy = 7 [json_name = "joinPolicy"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(OpenTeamBrief, _impl_.join_policy_), 6>(),
-       {56, 6, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(OpenTeamBrief, _impl_.join_policy_), 7>(),
+       {56, 7, 0,
         PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.join_policy_)}},
+      // string captain_nickname = 8 [json_name = "captainNickname"];
+      {::_pbi::TcParser::FastUS1,
+       {66, 0, 0,
+        PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.captain_nickname_)}},
+      // uint64 captain_player_no = 9 [json_name = "captainPlayerNo"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(OpenTeamBrief, _impl_.captain_player_no_), 8>(),
+       {72, 8, 0,
+        PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.captain_player_no_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
     }}, {{
       65535, 65535
     }}, {{
       // uint64 team_id = 1 [json_name = "teamId"];
-      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.team_id_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.team_id_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // uint64 captain_id = 2 [json_name = "captainId"];
-      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.captain_id_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.captain_id_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // uint32 member_count = 3 [json_name = "memberCount"];
-      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.member_count_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.member_count_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
       // uint32 max_size = 4 [json_name = "maxSize"];
-      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.max_size_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.max_size_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
       // uint32 map_id = 5 [json_name = "mapId"];
-      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.map_id_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.map_id_), _Internal::kHasBitsOffset + 6, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
       // int64 created_at_ms = 6 [json_name = "createdAtMs"];
-      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.created_at_ms_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.created_at_ms_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
       // .pandora.team.v1.TeamJoinPolicy join_policy = 7 [json_name = "joinPolicy"];
-      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.join_policy_), _Internal::kHasBitsOffset + 6, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.join_policy_), _Internal::kHasBitsOffset + 7, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      // string captain_nickname = 8 [json_name = "captainNickname"];
+      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.captain_nickname_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUtf8String | ::_fl::kRepAString)},
+      // uint64 captain_player_no = 9 [json_name = "captainPlayerNo"];
+      {PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.captain_player_no_), _Internal::kHasBitsOffset + 8, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
     }},
     // no aux_entries
     {{
+      "\35\0\0\0\0\0\0\0\20\0\0\0\0\0\0\0"
+      "pandora.team.v1.OpenTeamBrief"
+      "captain_nickname"
     }},
   };
 }
@@ -1353,13 +1396,17 @@ inline constexpr OpenTeamBrief::Impl_::Impl_(
     [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
     ::_pbi::ConstantInitialized) noexcept
       : _cached_size_{0},
+        captain_nickname_(
+            &::google::protobuf::internal::fixed_address_empty_string,
+            ::_pbi::ConstantInitialized()),
         team_id_{::uint64_t{0u}},
         captain_id_{::uint64_t{0u}},
         member_count_{0u},
         max_size_{0u},
         created_at_ms_{::int64_t{0}},
         map_id_{0u},
-        join_policy_{static_cast< ::pandora::team::v1::TeamJoinPolicy >(0)} {}
+        join_policy_{static_cast< ::pandora::team::v1::TeamJoinPolicy >(0)},
+        captain_player_no_{::uint64_t{0u}} {}
 
 template <typename>
 constexpr OpenTeamBrief::OpenTeamBrief(::_pbi::ConstantInitialized,
@@ -1377,7 +1424,7 @@ inline void* PROTOBUF_NONNULL OpenTeamBrief::PlacementNew_(
   return ::new (mem) OpenTeamBrief(arena);
 }
 constexpr auto OpenTeamBrief::InternalNewImpl_() {
-  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(OpenTeamBrief), alignof(OpenTeamBrief));
+  return ::google::protobuf::internal::MessageCreator::CopyInit(sizeof(OpenTeamBrief), alignof(OpenTeamBrief));
 }
 constexpr auto OpenTeamBrief::InternalGenerateClassData_(
     const MessageLite& prototype,
@@ -7127,16 +7174,18 @@ const ::uint32_t
         protodesc_cold) = {
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamMember, _impl_._has_bits_),
-        8, // hasbit index offset
+        9, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamMember, _impl_.player_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamMember, _impl_.nickname_),
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamMember, _impl_.mmr_),
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamMember, _impl_.ready_),
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamMember, _impl_.hero_id_),
+        PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamMember, _impl_.player_no_),
         1,
         0,
         2,
         3,
+        5,
         4,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::Team, _impl_._has_bits_),
@@ -7351,7 +7400,7 @@ const ::uint32_t
         0,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::OpenTeamBrief, _impl_._has_bits_),
-        10, // hasbit index offset
+        12, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::OpenTeamBrief, _impl_.team_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::OpenTeamBrief, _impl_.captain_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::OpenTeamBrief, _impl_.member_count_),
@@ -7359,13 +7408,17 @@ const ::uint32_t
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::OpenTeamBrief, _impl_.map_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::OpenTeamBrief, _impl_.created_at_ms_),
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::OpenTeamBrief, _impl_.join_policy_),
-        0,
+        PROTOBUF_FIELD_OFFSET(::pandora::team::v1::OpenTeamBrief, _impl_.captain_nickname_),
+        PROTOBUF_FIELD_OFFSET(::pandora::team::v1::OpenTeamBrief, _impl_.captain_player_no_),
         1,
         2,
         3,
-        5,
         4,
         6,
+        5,
+        7,
+        0,
+        8,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::ListOpenTeamsRequest, _impl_._has_bits_),
         5, // hasbit index offset
@@ -7398,11 +7451,15 @@ const ::uint32_t
         3,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamApplication, _impl_._has_bits_),
-        5, // hasbit index offset
+        7, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamApplication, _impl_.player_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamApplication, _impl_.expires_at_ms_),
-        0,
+        PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamApplication, _impl_.nickname_),
+        PROTOBUF_FIELD_OFFSET(::pandora::team::v1::TeamApplication, _impl_.player_no_),
         1,
+        2,
+        0,
+        3,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::team::v1::ListTeamApplicationsRequest, _impl_._has_bits_),
         4, // hasbit index offset
@@ -7518,49 +7575,49 @@ const ::uint32_t
 static const ::_pbi::MigrationSchema
     schemas[] ABSL_ATTRIBUTE_SECTION_VARIABLE(protodesc_cold) = {
         {0, sizeof(::pandora::team::v1::TeamMember)},
-        {13, sizeof(::pandora::team::v1::Team)},
-        {32, sizeof(::pandora::team::v1::TeamMemberStorageRecord)},
-        {45, sizeof(::pandora::team::v1::TeamStorageRecord)},
-        {72, sizeof(::pandora::team::v1::MatchStartReceipt)},
-        {85, sizeof(::pandora::team::v1::CreateTeamRequest)},
-        {86, sizeof(::pandora::team::v1::CreateTeamResponse)},
-        {95, sizeof(::pandora::team::v1::InviteRequest)},
-        {102, sizeof(::pandora::team::v1::InviteResponse)},
-        {113, sizeof(::pandora::team::v1::AcceptInviteRequest)},
-        {120, sizeof(::pandora::team::v1::AcceptInviteResponse)},
-        {127, sizeof(::pandora::team::v1::LeaveTeamRequest)},
-        {132, sizeof(::pandora::team::v1::LeaveTeamResponse)},
-        {139, sizeof(::pandora::team::v1::KickRequest)},
-        {146, sizeof(::pandora::team::v1::KickResponse)},
-        {153, sizeof(::pandora::team::v1::SetReadyRequest)},
-        {162, sizeof(::pandora::team::v1::SetReadyResponse)},
-        {169, sizeof(::pandora::team::v1::GetTeamRequest)},
-        {174, sizeof(::pandora::team::v1::GetTeamResponse)},
-        {181, sizeof(::pandora::team::v1::GetMyTeamRequest)},
-        {182, sizeof(::pandora::team::v1::GetMyTeamResponse)},
-        {191, sizeof(::pandora::team::v1::ListMyPendingInvitesRequest)},
-        {192, sizeof(::pandora::team::v1::PendingInvite)},
-        {203, sizeof(::pandora::team::v1::ListMyPendingInvitesResponse)},
-        {210, sizeof(::pandora::team::v1::SetTeamMapRequest)},
-        {217, sizeof(::pandora::team::v1::SetTeamMapResponse)},
-        {224, sizeof(::pandora::team::v1::OpenTeamBrief)},
-        {241, sizeof(::pandora::team::v1::ListOpenTeamsRequest)},
-        {248, sizeof(::pandora::team::v1::ListOpenTeamsResponse)},
-        {255, sizeof(::pandora::team::v1::ApplyToTeamRequest)},
-        {260, sizeof(::pandora::team::v1::ApplyToTeamResponse)},
-        {271, sizeof(::pandora::team::v1::TeamApplication)},
-        {278, sizeof(::pandora::team::v1::ListTeamApplicationsRequest)},
-        {283, sizeof(::pandora::team::v1::ListTeamApplicationsResponse)},
-        {290, sizeof(::pandora::team::v1::HandleTeamApplicationRequest)},
-        {299, sizeof(::pandora::team::v1::HandleTeamApplicationResponse)},
-        {306, sizeof(::pandora::team::v1::TeamUpdateEvent)},
-        {321, sizeof(::pandora::team::v1::TeamInviteEvent)},
-        {336, sizeof(::pandora::team::v1::BeginTeamMatchRequest)},
-        {349, sizeof(::pandora::team::v1::BeginTeamMatchResponse)},
-        {360, sizeof(::pandora::team::v1::EndTeamMatchRequest)},
-        {369, sizeof(::pandora::team::v1::EndTeamMatchResponse)},
-        {374, sizeof(::pandora::team::v1::GetPlayerTeamRequest)},
-        {379, sizeof(::pandora::team::v1::GetPlayerTeamResponse)},
+        {15, sizeof(::pandora::team::v1::Team)},
+        {34, sizeof(::pandora::team::v1::TeamMemberStorageRecord)},
+        {47, sizeof(::pandora::team::v1::TeamStorageRecord)},
+        {74, sizeof(::pandora::team::v1::MatchStartReceipt)},
+        {87, sizeof(::pandora::team::v1::CreateTeamRequest)},
+        {88, sizeof(::pandora::team::v1::CreateTeamResponse)},
+        {97, sizeof(::pandora::team::v1::InviteRequest)},
+        {104, sizeof(::pandora::team::v1::InviteResponse)},
+        {115, sizeof(::pandora::team::v1::AcceptInviteRequest)},
+        {122, sizeof(::pandora::team::v1::AcceptInviteResponse)},
+        {129, sizeof(::pandora::team::v1::LeaveTeamRequest)},
+        {134, sizeof(::pandora::team::v1::LeaveTeamResponse)},
+        {141, sizeof(::pandora::team::v1::KickRequest)},
+        {148, sizeof(::pandora::team::v1::KickResponse)},
+        {155, sizeof(::pandora::team::v1::SetReadyRequest)},
+        {164, sizeof(::pandora::team::v1::SetReadyResponse)},
+        {171, sizeof(::pandora::team::v1::GetTeamRequest)},
+        {176, sizeof(::pandora::team::v1::GetTeamResponse)},
+        {183, sizeof(::pandora::team::v1::GetMyTeamRequest)},
+        {184, sizeof(::pandora::team::v1::GetMyTeamResponse)},
+        {193, sizeof(::pandora::team::v1::ListMyPendingInvitesRequest)},
+        {194, sizeof(::pandora::team::v1::PendingInvite)},
+        {205, sizeof(::pandora::team::v1::ListMyPendingInvitesResponse)},
+        {212, sizeof(::pandora::team::v1::SetTeamMapRequest)},
+        {219, sizeof(::pandora::team::v1::SetTeamMapResponse)},
+        {226, sizeof(::pandora::team::v1::OpenTeamBrief)},
+        {247, sizeof(::pandora::team::v1::ListOpenTeamsRequest)},
+        {254, sizeof(::pandora::team::v1::ListOpenTeamsResponse)},
+        {261, sizeof(::pandora::team::v1::ApplyToTeamRequest)},
+        {266, sizeof(::pandora::team::v1::ApplyToTeamResponse)},
+        {277, sizeof(::pandora::team::v1::TeamApplication)},
+        {288, sizeof(::pandora::team::v1::ListTeamApplicationsRequest)},
+        {293, sizeof(::pandora::team::v1::ListTeamApplicationsResponse)},
+        {300, sizeof(::pandora::team::v1::HandleTeamApplicationRequest)},
+        {309, sizeof(::pandora::team::v1::HandleTeamApplicationResponse)},
+        {316, sizeof(::pandora::team::v1::TeamUpdateEvent)},
+        {331, sizeof(::pandora::team::v1::TeamInviteEvent)},
+        {346, sizeof(::pandora::team::v1::BeginTeamMatchRequest)},
+        {359, sizeof(::pandora::team::v1::BeginTeamMatchResponse)},
+        {370, sizeof(::pandora::team::v1::EndTeamMatchRequest)},
+        {379, sizeof(::pandora::team::v1::EndTeamMatchResponse)},
+        {384, sizeof(::pandora::team::v1::GetPlayerTeamRequest)},
+        {389, sizeof(::pandora::team::v1::GetPlayerTeamResponse)},
 };
 static const ::_pbi::MessageGlobalsBase* PROTOBUF_NONNULL const
     file_message_globals[] = {
@@ -7612,219 +7669,224 @@ static const ::_pbi::MessageGlobalsBase* PROTOBUF_NONNULL const
 const char descriptor_table_protodef_pandora_2fteam_2fv1_2fteam_2eproto[] ABSL_ATTRIBUTE_SECTION_VARIABLE(
     protodesc_cold) = {
     "\n\032pandora/team/v1/team.proto\022\017pandora.te"
-    "am.v1\032\037pandora/common/v1/errcode.proto\"\214"
+    "am.v1\032\037pandora/common/v1/errcode.proto\"\251"
     "\001\n\nTeamMember\022\033\n\tplayer_id\030\001 \001(\004R\010player"
     "Id\022\032\n\010nickname\030\002 \001(\tR\010nickname\022\020\n\003mmr\030\003 "
     "\001(\005R\003mmr\022\024\n\005ready\030\004 \001(\010R\005ready\022\027\n\007hero_i"
-    "d\030\005 \001(\rR\006heroIdJ\004\010\006\020\n\"\305\002\n\004Team\022\027\n\007team_i"
-    "d\030\001 \001(\004R\006teamId\022\035\n\ncaptain_id\030\002 \001(\004R\tcap"
-    "tainId\0225\n\007members\030\003 \003(\0132\033.pandora.team.v"
-    "1.TeamMemberR\007members\0220\n\005state\030\004 \001(\0162\032.p"
-    "andora.team.v1.TeamStateR\005state\022\"\n\rcreat"
-    "ed_at_ms\030\005 \001(\003R\013createdAtMs\022\031\n\010max_size\030"
-    "\006 \001(\005R\007maxSize\022\025\n\006map_id\030\n \001(\rR\005mapId\022@\n"
-    "\013join_policy\030\013 \001(\0162\037.pandora.team.v1.Tea"
-    "mJoinPolicyR\njoinPolicyJ\004\010\007\020\n\"\231\001\n\027TeamMe"
-    "mberStorageRecord\022\033\n\tplayer_id\030\001 \001(\004R\010pl"
-    "ayerId\022\032\n\010nickname\030\002 \001(\tR\010nickname\022\020\n\003mm"
-    "r\030\003 \001(\005R\003mmr\022\024\n\005ready\030\004 \001(\010R\005ready\022\027\n\007he"
-    "ro_id\030\005 \001(\rR\006heroIdJ\004\010\006\020\n\"\254\004\n\021TeamStorag"
-    "eRecord\022\027\n\007team_id\030\001 \001(\004R\006teamId\022\035\n\ncapt"
-    "ain_id\030\002 \001(\004R\tcaptainId\0220\n\005state\030\003 \001(\0162\032"
-    ".pandora.team.v1.TeamStateR\005state\022B\n\007mem"
-    "bers\030\004 \003(\0132(.pandora.team.v1.TeamMemberS"
-    "torageRecordR\007members\022\"\n\rcreated_at_ms\030\005"
-    " \001(\003R\013createdAtMs\022\"\n\rupdated_at_ms\030\006 \001(\003"
-    "R\013updatedAtMs\022\031\n\010max_size\030\007 \001(\005R\007maxSize"
-    "\022\025\n\006map_id\030\n \001(\rR\005mapId\022-\n\023match_lock_un"
-    "til_ms\030\013 \001(\003R\020matchLockUntilMs\0225\n\027match_"
-    "lock_operation_id\030\014 \001(\tR\024matchLockOperat"
-    "ionId\022)\n\020ready_generation\030\r \001(\004R\017readyGe"
-    "neration\022R\n\023match_start_receipt\030\017 \001(\0132\"."
-    "pandora.team.v1.MatchStartReceiptR\021match"
-    "StartReceiptJ\004\010\010\020\nJ\004\010\016\020\017\"\210\002\n\021MatchStartR"
-    "eceipt\022\035\n\nattempt_id\030\001 \001(\tR\tattemptId\022@\n"
-    "\006roster\030\002 \003(\0132(.pandora.team.v1.TeamMemb"
-    "erStorageRecordR\006roster\022:\n\031consumed_read"
-    "y_generation\030\003 \001(\004R\027consumedReadyGenerat"
-    "ion\0222\n\025post_ready_generation\030\004 \001(\004R\023post"
-    "ReadyGeneration\022\"\n\rcreated_at_ms\030\005 \001(\003R\013"
-    "createdAtMs\"$\n\021CreateTeamRequestJ\004\010\001\020\002R\t"
-    "player_id\"\210\001\n\022CreateTeamResponse\022.\n\004code"
-    "\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004code"
-    "\022\027\n\007team_id\030\002 \001(\004R\006teamId\022)\n\004team\030\003 \001(\0132"
-    "\025.pandora.team.v1.TeamR\004team\"d\n\rInviteRe"
-    "quest\022\027\n\007team_id\030\001 \001(\004R\006teamId\022(\n\020target"
-    "_player_id\030\003 \001(\004R\016targetPlayerIdJ\004\010\002\020\003R\n"
-    "inviter_id\"\254\001\n\016InviteResponse\022.\n\004code\030\001 "
-    "\001(\0162\032.pandora.common.v1.ErrCodeR\004code\022)\n"
-    "\004team\030\002 \001(\0132\025.pandora.team.v1.TeamR\004team"
-    "\022\033\n\tinvite_id\030\003 \001(\004R\010inviteId\022\"\n\rexpires"
-    "_at_ms\030\004 \001(\003R\013expiresAtMs\"\\\n\023AcceptInvit"
-    "eRequest\022\027\n\007team_id\030\002 \001(\004R\006teamId\022\033\n\tinv"
-    "ite_id\030\003 \001(\004R\010inviteIdJ\004\010\001\020\002R\tplayer_id\""
-    "q\n\024AcceptInviteResponse\022.\n\004code\030\001 \001(\0162\032."
-    "pandora.common.v1.ErrCodeR\004code\022)\n\004team\030"
-    "\002 \001(\0132\025.pandora.team.v1.TeamR\004team\"<\n\020Le"
-    "aveTeamRequest\022\027\n\007team_id\030\001 \001(\004R\006teamIdJ"
-    "\004\010\002\020\003R\tplayer_id\"n\n\021LeaveTeamResponse\022.\n"
-    "\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR"
-    "\004code\022)\n\004team\030\002 \001(\0132\025.pandora.team.v1.Te"
-    "amR\004team\"b\n\013KickRequest\022\027\n\007team_id\030\001 \001(\004"
-    "R\006teamId\022(\n\020target_player_id\030\003 \001(\004R\016targ"
-    "etPlayerIdJ\004\010\002\020\003R\ncaptain_id\"i\n\014KickResp"
+    "d\030\005 \001(\rR\006heroId\022\033\n\tplayer_no\030\n \001(\004R\010play"
+    "erNoJ\004\010\006\020\n\"\305\002\n\004Team\022\027\n\007team_id\030\001 \001(\004R\006te"
+    "amId\022\035\n\ncaptain_id\030\002 \001(\004R\tcaptainId\0225\n\007m"
+    "embers\030\003 \003(\0132\033.pandora.team.v1.TeamMembe"
+    "rR\007members\0220\n\005state\030\004 \001(\0162\032.pandora.team"
+    ".v1.TeamStateR\005state\022\"\n\rcreated_at_ms\030\005 "
+    "\001(\003R\013createdAtMs\022\031\n\010max_size\030\006 \001(\005R\007maxS"
+    "ize\022\025\n\006map_id\030\n \001(\rR\005mapId\022@\n\013join_polic"
+    "y\030\013 \001(\0162\037.pandora.team.v1.TeamJoinPolicy"
+    "R\njoinPolicyJ\004\010\007\020\n\"\231\001\n\027TeamMemberStorage"
+    "Record\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\032\n\010n"
+    "ickname\030\002 \001(\tR\010nickname\022\020\n\003mmr\030\003 \001(\005R\003mm"
+    "r\022\024\n\005ready\030\004 \001(\010R\005ready\022\027\n\007hero_id\030\005 \001(\r"
+    "R\006heroIdJ\004\010\006\020\n\"\254\004\n\021TeamStorageRecord\022\027\n\007"
+    "team_id\030\001 \001(\004R\006teamId\022\035\n\ncaptain_id\030\002 \001("
+    "\004R\tcaptainId\0220\n\005state\030\003 \001(\0162\032.pandora.te"
+    "am.v1.TeamStateR\005state\022B\n\007members\030\004 \003(\0132"
+    "(.pandora.team.v1.TeamMemberStorageRecor"
+    "dR\007members\022\"\n\rcreated_at_ms\030\005 \001(\003R\013creat"
+    "edAtMs\022\"\n\rupdated_at_ms\030\006 \001(\003R\013updatedAt"
+    "Ms\022\031\n\010max_size\030\007 \001(\005R\007maxSize\022\025\n\006map_id\030"
+    "\n \001(\rR\005mapId\022-\n\023match_lock_until_ms\030\013 \001("
+    "\003R\020matchLockUntilMs\0225\n\027match_lock_operat"
+    "ion_id\030\014 \001(\tR\024matchLockOperationId\022)\n\020re"
+    "ady_generation\030\r \001(\004R\017readyGeneration\022R\n"
+    "\023match_start_receipt\030\017 \001(\0132\".pandora.tea"
+    "m.v1.MatchStartReceiptR\021matchStartReceip"
+    "tJ\004\010\010\020\nJ\004\010\016\020\017\"\210\002\n\021MatchStartReceipt\022\035\n\na"
+    "ttempt_id\030\001 \001(\tR\tattemptId\022@\n\006roster\030\002 \003"
+    "(\0132(.pandora.team.v1.TeamMemberStorageRe"
+    "cordR\006roster\022:\n\031consumed_ready_generatio"
+    "n\030\003 \001(\004R\027consumedReadyGeneration\0222\n\025post"
+    "_ready_generation\030\004 \001(\004R\023postReadyGenera"
+    "tion\022\"\n\rcreated_at_ms\030\005 \001(\003R\013createdAtMs"
+    "\"$\n\021CreateTeamRequestJ\004\010\001\020\002R\tplayer_id\"\210"
+    "\001\n\022CreateTeamResponse\022.\n\004code\030\001 \001(\0162\032.pa"
+    "ndora.common.v1.ErrCodeR\004code\022\027\n\007team_id"
+    "\030\002 \001(\004R\006teamId\022)\n\004team\030\003 \001(\0132\025.pandora.t"
+    "eam.v1.TeamR\004team\"d\n\rInviteRequest\022\027\n\007te"
+    "am_id\030\001 \001(\004R\006teamId\022(\n\020target_player_id\030"
+    "\003 \001(\004R\016targetPlayerIdJ\004\010\002\020\003R\ninviter_id\""
+    "\254\001\n\016InviteResponse\022.\n\004code\030\001 \001(\0162\032.pando"
+    "ra.common.v1.ErrCodeR\004code\022)\n\004team\030\002 \001(\013"
+    "2\025.pandora.team.v1.TeamR\004team\022\033\n\tinvite_"
+    "id\030\003 \001(\004R\010inviteId\022\"\n\rexpires_at_ms\030\004 \001("
+    "\003R\013expiresAtMs\"\\\n\023AcceptInviteRequest\022\027\n"
+    "\007team_id\030\002 \001(\004R\006teamId\022\033\n\tinvite_id\030\003 \001("
+    "\004R\010inviteIdJ\004\010\001\020\002R\tplayer_id\"q\n\024AcceptIn"
+    "viteResponse\022.\n\004code\030\001 \001(\0162\032.pandora.com"
+    "mon.v1.ErrCodeR\004code\022)\n\004team\030\002 \001(\0132\025.pan"
+    "dora.team.v1.TeamR\004team\"<\n\020LeaveTeamRequ"
+    "est\022\027\n\007team_id\030\001 \001(\004R\006teamIdJ\004\010\002\020\003R\tplay"
+    "er_id\"n\n\021LeaveTeamResponse\022.\n\004code\030\001 \001(\016"
+    "2\032.pandora.common.v1.ErrCodeR\004code\022)\n\004te"
+    "am\030\002 \001(\0132\025.pandora.team.v1.TeamR\004team\"b\n"
+    "\013KickRequest\022\027\n\007team_id\030\001 \001(\004R\006teamId\022(\n"
+    "\020target_player_id\030\003 \001(\004R\016targetPlayerIdJ"
+    "\004\010\002\020\003R\ncaptain_id\"i\n\014KickResponse\022.\n\004cod"
+    "e\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004cod"
+    "e\022)\n\004team\030\002 \001(\0132\025.pandora.team.v1.TeamR\004"
+    "team\"j\n\017SetReadyRequest\022\027\n\007team_id\030\001 \001(\004"
+    "R\006teamId\022\024\n\005ready\030\003 \001(\010R\005ready\022\027\n\007hero_i"
+    "d\030\004 \001(\rR\006heroIdJ\004\010\002\020\003R\tplayer_id\"m\n\020SetR"
+    "eadyResponse\022.\n\004code\030\001 \001(\0162\032.pandora.com"
+    "mon.v1.ErrCodeR\004code\022)\n\004team\030\002 \001(\0132\025.pan"
+    "dora.team.v1.TeamR\004team\")\n\016GetTeamReques"
+    "t\022\027\n\007team_id\030\001 \001(\004R\006teamId\"l\n\017GetTeamRes"
+    "ponse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1."
+    "ErrCodeR\004code\022)\n\004team\030\002 \001(\0132\025.pandora.te"
+    "am.v1.TeamR\004team\"#\n\020GetMyTeamRequestJ\004\010\001"
+    "\020\002R\tplayer_id\"\220\001\n\021GetMyTeamResponse\022.\n\004c"
+    "ode\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004c"
+    "ode\022 \n\014has_team_msg\030\002 \001(\010R\nhasTeamMsg\022)\n"
+    "\004team\030\003 \001(\0132\025.pandora.team.v1.TeamR\004team"
+    "\"\035\n\033ListMyPendingInvitesRequest\"\210\001\n\rPend"
+    "ingInvite\022\027\n\007team_id\030\001 \001(\004R\006teamId\022\033\n\tin"
+    "vite_id\030\002 \001(\004R\010inviteId\022\035\n\ninviter_id\030\003 "
+    "\001(\004R\tinviterId\022\"\n\rexpires_at_ms\030\004 \001(\003R\013e"
+    "xpiresAtMs\"\210\001\n\034ListMyPendingInvitesRespo"
+    "nse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.Er"
+    "rCodeR\004code\0228\n\007invites\030\002 \003(\0132\036.pandora.t"
+    "eam.v1.PendingInviteR\007invites\"C\n\021SetTeam"
+    "MapRequest\022\027\n\007team_id\030\001 \001(\004R\006teamId\022\025\n\006m"
+    "ap_id\030\002 \001(\rR\005mapId\"o\n\022SetTeamMapResponse"
+    "\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCo"
+    "deR\004code\022)\n\004team\030\002 \001(\0132\025.pandora.team.v1"
+    ".TeamR\004team\"\331\002\n\rOpenTeamBrief\022\027\n\007team_id"
+    "\030\001 \001(\004R\006teamId\022\035\n\ncaptain_id\030\002 \001(\004R\tcapt"
+    "ainId\022!\n\014member_count\030\003 \001(\rR\013memberCount"
+    "\022\031\n\010max_size\030\004 \001(\rR\007maxSize\022\025\n\006map_id\030\005 "
+    "\001(\rR\005mapId\022\"\n\rcreated_at_ms\030\006 \001(\003R\013creat"
+    "edAtMs\022@\n\013join_policy\030\007 \001(\0162\037.pandora.te"
+    "am.v1.TeamJoinPolicyR\njoinPolicy\022)\n\020capt"
+    "ain_nickname\030\010 \001(\tR\017captainNickname\022*\n\021c"
+    "aptain_player_no\030\t \001(\004R\017captainPlayerNo\""
+    "C\n\024ListOpenTeamsRequest\022\025\n\006map_id\030\001 \001(\rR"
+    "\005mapId\022\024\n\005limit\030\002 \001(\rR\005limit\"}\n\025ListOpen"
+    "TeamsResponse\022.\n\004code\030\001 \001(\0162\032.pandora.co"
+    "mmon.v1.ErrCodeR\004code\0224\n\005teams\030\002 \003(\0132\036.p"
+    "andora.team.v1.OpenTeamBriefR\005teams\"-\n\022A"
+    "pplyToTeamRequest\022\027\n\007team_id\030\001 \001(\004R\006team"
+    "Id\"\254\001\n\023ApplyToTeamResponse\022.\n\004code\030\001 \001(\016"
+    "2\032.pandora.common.v1.ErrCodeR\004code\022\026\n\006jo"
+    "ined\030\002 \001(\010R\006joined\022)\n\004team\030\003 \001(\0132\025.pando"
+    "ra.team.v1.TeamR\004team\022\"\n\rexpires_at_ms\030\004"
+    " \001(\003R\013expiresAtMs\"\213\001\n\017TeamApplication\022\033\n"
+    "\tplayer_id\030\001 \001(\004R\010playerId\022\"\n\rexpires_at"
+    "_ms\030\002 \001(\003R\013expiresAtMs\022\032\n\010nickname\030\003 \001(\t"
+    "R\010nickname\022\033\n\tplayer_no\030\004 \001(\004R\010playerNo\""
+    "6\n\033ListTeamApplicationsRequest\022\027\n\007team_i"
+    "d\030\001 \001(\004R\006teamId\"\224\001\n\034ListTeamApplications"
+    "Response\022.\n\004code\030\001 \001(\0162\032.pandora.common."
+    "v1.ErrCodeR\004code\022D\n\014applications\030\002 \003(\0132 "
+    ".pandora.team.v1.TeamApplicationR\014applic"
+    "ations\"r\n\034HandleTeamApplicationRequest\022\027"
+    "\n\007team_id\030\001 \001(\004R\006teamId\022!\n\014applicant_id\030"
+    "\002 \001(\004R\013applicantId\022\026\n\006accept\030\003 \001(\010R\006acce"
+    "pt\"z\n\035HandleTeamApplicationResponse\022.\n\004c"
+    "ode\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004c"
+    "ode\022)\n\004team\030\002 \001(\0132\025.pandora.team.v1.Team"
+    "R\004team\"\211\002\n\017TeamUpdateEvent\022)\n\004team\030\001 \001(\013"
+    "2\025.pandora.team.v1.TeamR\004team\022 \n\014by_play"
+    "er_id\030\003 \001(\004R\nbyPlayerId\022 \n\014to_player_id\030"
+    "\004 \001(\004R\ntoPlayerId\022\023\n\005ts_ms\030\005 \001(\003R\004tsMs\0229"
+    "\n\006reason\030\n \001(\0162!.pandora.team.v1.TeamUpd"
+    "ateReasonR\006reason\022\033\n\tinvite_id\030\013 \001(\004R\010in"
+    "viteIdJ\004\010\002\020\003J\004\010\006\020\nR\016change_summary\"\307\001\n\017T"
+    "eamInviteEvent\022\027\n\007team_id\030\001 \001(\004R\006teamId\022"
+    "\033\n\tinvite_id\030\002 \001(\004R\010inviteId\022\035\n\ninviter_"
+    "id\030\003 \001(\004R\tinviterId\022 \n\014to_player_id\030\004 \001("
+    "\004R\ntoPlayerId\022\023\n\005ts_ms\030\005 \001(\003R\004tsMs\022\"\n\rex"
+    "pires_at_ms\030\006 \001(\003R\013expiresAtMsJ\004\010\007\020\n\"\262\001\n"
+    "\025BeginTeamMatchRequest\022\027\n\007team_id\030\001 \001(\004R"
+    "\006teamId\022\035\n\ncaptain_id\030\002 \001(\004R\tcaptainId\022!"
+    "\n\014operation_id\030\003 \001(\tR\013operationId\022\031\n\010lea"
+    "se_ms\030\004 \001(\003R\007leaseMs\022#\n\rrequire_ready\030\005 "
+    "\001(\010R\014requireReady\"\315\001\n\026BeginTeamMatchResp"
     "onse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.E"
     "rrCodeR\004code\022)\n\004team\030\002 \001(\0132\025.pandora.tea"
-    "m.v1.TeamR\004team\"j\n\017SetReadyRequest\022\027\n\007te"
-    "am_id\030\001 \001(\004R\006teamId\022\024\n\005ready\030\003 \001(\010R\005read"
-    "y\022\027\n\007hero_id\030\004 \001(\rR\006heroIdJ\004\010\002\020\003R\tplayer"
-    "_id\"m\n\020SetReadyResponse\022.\n\004code\030\001 \001(\0162\032."
-    "pandora.common.v1.ErrCodeR\004code\022)\n\004team\030"
-    "\002 \001(\0132\025.pandora.team.v1.TeamR\004team\")\n\016Ge"
-    "tTeamRequest\022\027\n\007team_id\030\001 \001(\004R\006teamId\"l\n"
-    "\017GetTeamResponse\022.\n\004code\030\001 \001(\0162\032.pandora"
-    ".common.v1.ErrCodeR\004code\022)\n\004team\030\002 \001(\0132\025"
-    ".pandora.team.v1.TeamR\004team\"#\n\020GetMyTeam"
-    "RequestJ\004\010\001\020\002R\tplayer_id\"\220\001\n\021GetMyTeamRe"
-    "sponse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1"
-    ".ErrCodeR\004code\022 \n\014has_team_msg\030\002 \001(\010R\nha"
-    "sTeamMsg\022)\n\004team\030\003 \001(\0132\025.pandora.team.v1"
-    ".TeamR\004team\"\035\n\033ListMyPendingInvitesReque"
-    "st\"\210\001\n\rPendingInvite\022\027\n\007team_id\030\001 \001(\004R\006t"
-    "eamId\022\033\n\tinvite_id\030\002 \001(\004R\010inviteId\022\035\n\nin"
-    "viter_id\030\003 \001(\004R\tinviterId\022\"\n\rexpires_at_"
-    "ms\030\004 \001(\003R\013expiresAtMs\"\210\001\n\034ListMyPendingI"
-    "nvitesResponse\022.\n\004code\030\001 \001(\0162\032.pandora.c"
-    "ommon.v1.ErrCodeR\004code\0228\n\007invites\030\002 \003(\0132"
-    "\036.pandora.team.v1.PendingInviteR\007invites"
-    "\"C\n\021SetTeamMapRequest\022\027\n\007team_id\030\001 \001(\004R\006"
-    "teamId\022\025\n\006map_id\030\002 \001(\rR\005mapId\"o\n\022SetTeam"
-    "MapResponse\022.\n\004code\030\001 \001(\0162\032.pandora.comm"
-    "on.v1.ErrCodeR\004code\022)\n\004team\030\002 \001(\0132\025.pand"
-    "ora.team.v1.TeamR\004team\"\202\002\n\rOpenTeamBrief"
-    "\022\027\n\007team_id\030\001 \001(\004R\006teamId\022\035\n\ncaptain_id\030"
-    "\002 \001(\004R\tcaptainId\022!\n\014member_count\030\003 \001(\rR\013"
-    "memberCount\022\031\n\010max_size\030\004 \001(\rR\007maxSize\022\025"
-    "\n\006map_id\030\005 \001(\rR\005mapId\022\"\n\rcreated_at_ms\030\006"
-    " \001(\003R\013createdAtMs\022@\n\013join_policy\030\007 \001(\0162\037"
-    ".pandora.team.v1.TeamJoinPolicyR\njoinPol"
-    "icy\"C\n\024ListOpenTeamsRequest\022\025\n\006map_id\030\001 "
-    "\001(\rR\005mapId\022\024\n\005limit\030\002 \001(\rR\005limit\"}\n\025List"
-    "OpenTeamsResponse\022.\n\004code\030\001 \001(\0162\032.pandor"
-    "a.common.v1.ErrCodeR\004code\0224\n\005teams\030\002 \003(\013"
-    "2\036.pandora.team.v1.OpenTeamBriefR\005teams\""
-    "-\n\022ApplyToTeamRequest\022\027\n\007team_id\030\001 \001(\004R\006"
-    "teamId\"\254\001\n\023ApplyToTeamResponse\022.\n\004code\030\001"
-    " \001(\0162\032.pandora.common.v1.ErrCodeR\004code\022\026"
-    "\n\006joined\030\002 \001(\010R\006joined\022)\n\004team\030\003 \001(\0132\025.p"
-    "andora.team.v1.TeamR\004team\022\"\n\rexpires_at_"
-    "ms\030\004 \001(\003R\013expiresAtMs\"R\n\017TeamApplication"
-    "\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\"\n\rexpires"
-    "_at_ms\030\002 \001(\003R\013expiresAtMs\"6\n\033ListTeamApp"
-    "licationsRequest\022\027\n\007team_id\030\001 \001(\004R\006teamI"
-    "d\"\224\001\n\034ListTeamApplicationsResponse\022.\n\004co"
-    "de\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004co"
-    "de\022D\n\014applications\030\002 \003(\0132 .pandora.team."
-    "v1.TeamApplicationR\014applications\"r\n\034Hand"
-    "leTeamApplicationRequest\022\027\n\007team_id\030\001 \001("
-    "\004R\006teamId\022!\n\014applicant_id\030\002 \001(\004R\013applica"
-    "ntId\022\026\n\006accept\030\003 \001(\010R\006accept\"z\n\035HandleTe"
-    "amApplicationResponse\022.\n\004code\030\001 \001(\0162\032.pa"
-    "ndora.common.v1.ErrCodeR\004code\022)\n\004team\030\002 "
-    "\001(\0132\025.pandora.team.v1.TeamR\004team\"\211\002\n\017Tea"
-    "mUpdateEvent\022)\n\004team\030\001 \001(\0132\025.pandora.tea"
-    "m.v1.TeamR\004team\022 \n\014by_player_id\030\003 \001(\004R\nb"
-    "yPlayerId\022 \n\014to_player_id\030\004 \001(\004R\ntoPlaye"
-    "rId\022\023\n\005ts_ms\030\005 \001(\003R\004tsMs\0229\n\006reason\030\n \001(\016"
-    "2!.pandora.team.v1.TeamUpdateReasonR\006rea"
-    "son\022\033\n\tinvite_id\030\013 \001(\004R\010inviteIdJ\004\010\002\020\003J\004"
-    "\010\006\020\nR\016change_summary\"\307\001\n\017TeamInviteEvent"
-    "\022\027\n\007team_id\030\001 \001(\004R\006teamId\022\033\n\tinvite_id\030\002"
-    " \001(\004R\010inviteId\022\035\n\ninviter_id\030\003 \001(\004R\tinvi"
-    "terId\022 \n\014to_player_id\030\004 \001(\004R\ntoPlayerId\022"
-    "\023\n\005ts_ms\030\005 \001(\003R\004tsMs\022\"\n\rexpires_at_ms\030\006 "
-    "\001(\003R\013expiresAtMsJ\004\010\007\020\n\"\262\001\n\025BeginTeamMatc"
-    "hRequest\022\027\n\007team_id\030\001 \001(\004R\006teamId\022\035\n\ncap"
-    "tain_id\030\002 \001(\004R\tcaptainId\022!\n\014operation_id"
-    "\030\003 \001(\tR\013operationId\022\031\n\010lease_ms\030\004 \001(\003R\007l"
-    "easeMs\022#\n\rrequire_ready\030\005 \001(\010R\014requireRe"
-    "ady\"\315\001\n\026BeginTeamMatchResponse\022.\n\004code\030\001"
-    " \001(\0162\032.pandora.common.v1.ErrCodeR\004code\022)"
-    "\n\004team\030\002 \001(\0132\025.pandora.team.v1.TeamR\004tea"
-    "m\022-\n\023lease_expires_at_ms\030\003 \001(\003R\020leaseExp"
-    "iresAtMs\022)\n\020ready_generation\030\004 \001(\004R\017read"
-    "yGeneration\"\211\001\n\023EndTeamMatchRequest\022\027\n\007t"
-    "eam_id\030\001 \001(\004R\006teamId\022\035\n\nplayer_ids\030\002 \003(\004"
-    "R\tplayerIds\022:\n\031expected_ready_generation"
-    "\030\003 \001(\004R\027expectedReadyGeneration\"F\n\024EndTe"
-    "amMatchResponse\022.\n\004code\030\001 \001(\0162\032.pandora."
-    "common.v1.ErrCodeR\004code\"3\n\024GetPlayerTeam"
-    "Request\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\"{\n\025"
-    "GetPlayerTeamResponse\022.\n\004code\030\001 \001(\0162\032.pa"
-    "ndora.common.v1.ErrCodeR\004code\022\031\n\010has_tea"
-    "m\030\002 \001(\010R\007hasTeam\022\027\n\007team_id\030\003 \001(\004R\006teamI"
-    "d*\242\001\n\tTeamState\022\032\n\026TEAM_STATE_UNSPECIFIE"
-    "D\020\000\022\026\n\022TEAM_STATE_FORMING\020\001\022\024\n\020TEAM_STAT"
-    "E_READY\020\002\022\027\n\023TEAM_STATE_MATCHING\020\003\022\030\n\024TE"
-    "AM_STATE_IN_BATTLE\020\004\022\030\n\024TEAM_STATE_DISBA"
-    "NDED\020\005*l\n\016TeamJoinPolicy\022 \n\034TEAM_JOIN_PO"
-    "LICY_UNSPECIFIED\020\000\022\035\n\031TEAM_JOIN_POLICY_A"
-    "PPROVAL\020\001\022\031\n\025TEAM_JOIN_POLICY_OPEN\020\002*Z\n\021"
-    "TeamPushEventType\022$\n TEAM_PUSH_EVENT_TYP"
-    "E_UNSPECIFIED\020\000\022\037\n\033TEAM_PUSH_EVENT_TYPE_"
-    "INVITE\020\001*\202\004\n\020TeamUpdateReason\022\"\n\036TEAM_UP"
-    "DATE_REASON_UNSPECIFIED\020\000\022$\n TEAM_UPDATE"
-    "_REASON_MEMBER_JOINED\020\001\022\"\n\036TEAM_UPDATE_R"
-    "EASON_MEMBER_LEFT\020\002\022$\n TEAM_UPDATE_REASO"
-    "N_MEMBER_KICKED\020\003\022#\n\037TEAM_UPDATE_REASON_"
-    "MEMBER_READY\020\004\022#\n\037TEAM_UPDATE_REASON_HER"
-    "O_CHANGED\020\005\022\'\n#TEAM_UPDATE_REASON_CAPTAI"
-    "N_TRANSFER\020\006\022$\n TEAM_UPDATE_REASON_STATE"
-    "_CHANGED\020\007\022 \n\034TEAM_UPDATE_REASON_DISBAND"
-    "ED\020\010\022\"\n\036TEAM_UPDATE_REASON_INVITE_SENT\020\t"
-    "\022+\n\'TEAM_UPDATE_REASON_APPLICATION_RECEI"
-    "VED\020\n\022\"\n\036TEAM_UPDATE_REASON_MAP_CHANGED\020"
-    "\013\022*\n&TEAM_UPDATE_REASON_MEMBER_OFFLINE_L"
-    "EFT\020\0142\253\014\n\013TeamService\022U\n\nCreateTeam\022\".pa"
-    "ndora.team.v1.CreateTeamRequest\032#.pandor"
-    "a.team.v1.CreateTeamResponse\022I\n\006Invite\022\036"
-    ".pandora.team.v1.InviteRequest\032\037.pandora"
-    ".team.v1.InviteResponse\022[\n\014AcceptInvite\022"
-    "$.pandora.team.v1.AcceptInviteRequest\032%."
-    "pandora.team.v1.AcceptInviteResponse\022R\n\t"
-    "LeaveTeam\022!.pandora.team.v1.LeaveTeamReq"
-    "uest\032\".pandora.team.v1.LeaveTeamResponse"
-    "\022C\n\004Kick\022\034.pandora.team.v1.KickRequest\032\035"
-    ".pandora.team.v1.KickResponse\022O\n\010SetRead"
-    "y\022 .pandora.team.v1.SetReadyRequest\032!.pa"
-    "ndora.team.v1.SetReadyResponse\022L\n\007GetTea"
-    "m\022\037.pandora.team.v1.GetTeamRequest\032 .pan"
-    "dora.team.v1.GetTeamResponse\022R\n\tGetMyTea"
-    "m\022!.pandora.team.v1.GetMyTeamRequest\032\".p"
-    "andora.team.v1.GetMyTeamResponse\022s\n\024List"
-    "MyPendingInvites\022,.pandora.team.v1.ListM"
-    "yPendingInvitesRequest\032-.pandora.team.v1"
-    ".ListMyPendingInvitesResponse\022U\n\nSetTeam"
-    "Map\022\".pandora.team.v1.SetTeamMapRequest\032"
-    "#.pandora.team.v1.SetTeamMapResponse\022^\n\r"
-    "ListOpenTeams\022%.pandora.team.v1.ListOpen"
-    "TeamsRequest\032&.pandora.team.v1.ListOpenT"
-    "eamsResponse\022X\n\013ApplyToTeam\022#.pandora.te"
-    "am.v1.ApplyToTeamRequest\032$.pandora.team."
-    "v1.ApplyToTeamResponse\022s\n\024ListTeamApplic"
-    "ations\022,.pandora.team.v1.ListTeamApplica"
-    "tionsRequest\032-.pandora.team.v1.ListTeamA"
-    "pplicationsResponse\022v\n\025HandleTeamApplica"
-    "tion\022-.pandora.team.v1.HandleTeamApplica"
-    "tionRequest\032..pandora.team.v1.HandleTeam"
-    "ApplicationResponse\022a\n\016BeginTeamMatch\022&."
-    "pandora.team.v1.BeginTeamMatchRequest\032\'."
-    "pandora.team.v1.BeginTeamMatchResponse\022["
-    "\n\014EndTeamMatch\022$.pandora.team.v1.EndTeam"
-    "MatchRequest\032%.pandora.team.v1.EndTeamMa"
-    "tchResponse\022^\n\rGetPlayerTeam\022%.pandora.t"
-    "eam.v1.GetPlayerTeamRequest\032&.pandora.te"
-    "am.v1.GetPlayerTeamResponseb\006proto3"
+    "m.v1.TeamR\004team\022-\n\023lease_expires_at_ms\030\003"
+    " \001(\003R\020leaseExpiresAtMs\022)\n\020ready_generati"
+    "on\030\004 \001(\004R\017readyGeneration\"\211\001\n\023EndTeamMat"
+    "chRequest\022\027\n\007team_id\030\001 \001(\004R\006teamId\022\035\n\npl"
+    "ayer_ids\030\002 \003(\004R\tplayerIds\022:\n\031expected_re"
+    "ady_generation\030\003 \001(\004R\027expectedReadyGener"
+    "ation\"F\n\024EndTeamMatchResponse\022.\n\004code\030\001 "
+    "\001(\0162\032.pandora.common.v1.ErrCodeR\004code\"3\n"
+    "\024GetPlayerTeamRequest\022\033\n\tplayer_id\030\001 \001(\004"
+    "R\010playerId\"{\n\025GetPlayerTeamResponse\022.\n\004c"
+    "ode\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004c"
+    "ode\022\031\n\010has_team\030\002 \001(\010R\007hasTeam\022\027\n\007team_i"
+    "d\030\003 \001(\004R\006teamId*\242\001\n\tTeamState\022\032\n\026TEAM_ST"
+    "ATE_UNSPECIFIED\020\000\022\026\n\022TEAM_STATE_FORMING\020"
+    "\001\022\024\n\020TEAM_STATE_READY\020\002\022\027\n\023TEAM_STATE_MA"
+    "TCHING\020\003\022\030\n\024TEAM_STATE_IN_BATTLE\020\004\022\030\n\024TE"
+    "AM_STATE_DISBANDED\020\005*l\n\016TeamJoinPolicy\022 "
+    "\n\034TEAM_JOIN_POLICY_UNSPECIFIED\020\000\022\035\n\031TEAM"
+    "_JOIN_POLICY_APPROVAL\020\001\022\031\n\025TEAM_JOIN_POL"
+    "ICY_OPEN\020\002*Z\n\021TeamPushEventType\022$\n TEAM_"
+    "PUSH_EVENT_TYPE_UNSPECIFIED\020\000\022\037\n\033TEAM_PU"
+    "SH_EVENT_TYPE_INVITE\020\001*\202\004\n\020TeamUpdateRea"
+    "son\022\"\n\036TEAM_UPDATE_REASON_UNSPECIFIED\020\000\022"
+    "$\n TEAM_UPDATE_REASON_MEMBER_JOINED\020\001\022\"\n"
+    "\036TEAM_UPDATE_REASON_MEMBER_LEFT\020\002\022$\n TEA"
+    "M_UPDATE_REASON_MEMBER_KICKED\020\003\022#\n\037TEAM_"
+    "UPDATE_REASON_MEMBER_READY\020\004\022#\n\037TEAM_UPD"
+    "ATE_REASON_HERO_CHANGED\020\005\022\'\n#TEAM_UPDATE"
+    "_REASON_CAPTAIN_TRANSFER\020\006\022$\n TEAM_UPDAT"
+    "E_REASON_STATE_CHANGED\020\007\022 \n\034TEAM_UPDATE_"
+    "REASON_DISBANDED\020\010\022\"\n\036TEAM_UPDATE_REASON"
+    "_INVITE_SENT\020\t\022+\n\'TEAM_UPDATE_REASON_APP"
+    "LICATION_RECEIVED\020\n\022\"\n\036TEAM_UPDATE_REASO"
+    "N_MAP_CHANGED\020\013\022*\n&TEAM_UPDATE_REASON_ME"
+    "MBER_OFFLINE_LEFT\020\0142\253\014\n\013TeamService\022U\n\nC"
+    "reateTeam\022\".pandora.team.v1.CreateTeamRe"
+    "quest\032#.pandora.team.v1.CreateTeamRespon"
+    "se\022I\n\006Invite\022\036.pandora.team.v1.InviteReq"
+    "uest\032\037.pandora.team.v1.InviteResponse\022[\n"
+    "\014AcceptInvite\022$.pandora.team.v1.AcceptIn"
+    "viteRequest\032%.pandora.team.v1.AcceptInvi"
+    "teResponse\022R\n\tLeaveTeam\022!.pandora.team.v"
+    "1.LeaveTeamRequest\032\".pandora.team.v1.Lea"
+    "veTeamResponse\022C\n\004Kick\022\034.pandora.team.v1"
+    ".KickRequest\032\035.pandora.team.v1.KickRespo"
+    "nse\022O\n\010SetReady\022 .pandora.team.v1.SetRea"
+    "dyRequest\032!.pandora.team.v1.SetReadyResp"
+    "onse\022L\n\007GetTeam\022\037.pandora.team.v1.GetTea"
+    "mRequest\032 .pandora.team.v1.GetTeamRespon"
+    "se\022R\n\tGetMyTeam\022!.pandora.team.v1.GetMyT"
+    "eamRequest\032\".pandora.team.v1.GetMyTeamRe"
+    "sponse\022s\n\024ListMyPendingInvites\022,.pandora"
+    ".team.v1.ListMyPendingInvitesRequest\032-.p"
+    "andora.team.v1.ListMyPendingInvitesRespo"
+    "nse\022U\n\nSetTeamMap\022\".pandora.team.v1.SetT"
+    "eamMapRequest\032#.pandora.team.v1.SetTeamM"
+    "apResponse\022^\n\rListOpenTeams\022%.pandora.te"
+    "am.v1.ListOpenTeamsRequest\032&.pandora.tea"
+    "m.v1.ListOpenTeamsResponse\022X\n\013ApplyToTea"
+    "m\022#.pandora.team.v1.ApplyToTeamRequest\032$"
+    ".pandora.team.v1.ApplyToTeamResponse\022s\n\024"
+    "ListTeamApplications\022,.pandora.team.v1.L"
+    "istTeamApplicationsRequest\032-.pandora.tea"
+    "m.v1.ListTeamApplicationsResponse\022v\n\025Han"
+    "dleTeamApplication\022-.pandora.team.v1.Han"
+    "dleTeamApplicationRequest\032..pandora.team"
+    ".v1.HandleTeamApplicationResponse\022a\n\016Beg"
+    "inTeamMatch\022&.pandora.team.v1.BeginTeamM"
+    "atchRequest\032\'.pandora.team.v1.BeginTeamM"
+    "atchResponse\022[\n\014EndTeamMatch\022$.pandora.t"
+    "eam.v1.EndTeamMatchRequest\032%.pandora.tea"
+    "m.v1.EndTeamMatchResponse\022^\n\rGetPlayerTe"
+    "am\022%.pandora.team.v1.GetPlayerTeamReques"
+    "t\032&.pandora.team.v1.GetPlayerTeamRespons"
+    "eb\006proto3"
 };
 static const ::_pbi::DescriptorTable* PROTOBUF_NONNULL const
     descriptor_table_pandora_2fteam_2fv1_2fteam_2eproto_deps[1] = {
@@ -7834,7 +7896,7 @@ static ::absl::once_flag descriptor_table_pandora_2fteam_2fv1_2fteam_2eproto_onc
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_pandora_2fteam_2fv1_2fteam_2eproto = {
     false,
     false,
-    8555,
+    8729,
     descriptor_table_protodef_pandora_2fteam_2fv1_2fteam_2eproto,
     "pandora/team/v1/team.proto",
     &descriptor_table_pandora_2fteam_2fv1_2fteam_2eproto_once,
@@ -7988,7 +8050,7 @@ PROTOBUF_NOINLINE void TeamMember::Clear() {
   if (CheckHasBit(cached_has_bits, 0x00000001U)) {
     _impl_.nickname_.ClearNonDefaultToEmpty();
   }
-  if (BatchCheckHasBit(cached_has_bits, 0x0000001eU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000003eU)) {
     ::memset(&_impl_.player_id_, 0, static_cast<::size_t>(
         reinterpret_cast<char*>(&_impl_.hero_id_) -
         reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.hero_id_));
@@ -8054,11 +8116,20 @@ PROTOBUF_NOINLINE void TeamMember::Clear() {
   }
 
   // uint32 hero_id = 5 [json_name = "heroId"];
-  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
     if (this_._internal_hero_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
           5, this_._internal_hero_id(), target);
+    }
+  }
+
+  // uint64 player_no = 10 [json_name = "playerNo"];
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (this_._internal_player_no() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          10, this_._internal_player_no(), target);
     }
   }
 
@@ -8087,7 +8158,7 @@ PROTOBUF_NOINLINE void TeamMember::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
     // string nickname = 2 [json_name = "nickname"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (!this_._internal_nickname().empty()) {
@@ -8115,8 +8186,15 @@ PROTOBUF_NOINLINE void TeamMember::Clear() {
         total_size += 2;
       }
     }
-    // uint32 hero_id = 5 [json_name = "heroId"];
+    // uint64 player_no = 10 [json_name = "playerNo"];
     if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (this_._internal_player_no() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
+            this_._internal_player_no());
+      }
+    }
+    // uint32 hero_id = 5 [json_name = "heroId"];
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (this_._internal_hero_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
             this_._internal_hero_id());
@@ -8140,7 +8218,7 @@ void TeamMember::MergeImpl(::google::protobuf::MessageLite& to_msg,
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (!from._internal_nickname().empty()) {
         _this->_internal_set_nickname(from._internal_nickname());
@@ -8166,6 +8244,11 @@ void TeamMember::MergeImpl(::google::protobuf::MessageLite& to_msg,
       }
     }
     if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (from._internal_player_no() != 0) {
+        _this->_impl_.player_no_ = from._impl_.player_no_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (from._internal_hero_id() != 0) {
         _this->_impl_.hero_id_ = from._impl_.hero_id_;
       }
@@ -14374,30 +14457,52 @@ OpenTeamBrief::OpenTeamBrief(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
   SharedCtor(arena);
   // @@protoc_insertion_point(arena_constructor:pandora.team.v1.OpenTeamBrief)
 }
+PROTOBUF_NDEBUG_INLINE OpenTeamBrief::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+    [[maybe_unused]] const ::pandora::team::v1::OpenTeamBrief& from_msg)
+      : _has_bits_{from._has_bits_},
+        _cached_size_{0},
+        captain_nickname_(arena, from.captain_nickname_) {}
+
 OpenTeamBrief::OpenTeamBrief(
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const OpenTeamBrief& from)
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena,
+    const OpenTeamBrief& from)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
-    : ::google::protobuf::Message(arena, OpenTeamBrief_get_class_data()),
+    : ::google::protobuf::Message(arena, OpenTeamBrief_get_class_data()) {
+
 #else   // PROTOBUF_CUSTOM_VTABLE
-    : ::google::protobuf::Message(arena),
+    : ::google::protobuf::Message(arena) {
 #endif  // PROTOBUF_CUSTOM_VTABLE
-      _impl_(from._impl_) {
+  OpenTeamBrief* const _this = this;
+  (void)_this;
   _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
       from._internal_metadata_);
+  new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  ::memcpy(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, team_id_),
+           reinterpret_cast<const char*>(&from._impl_) +
+               offsetof(Impl_, team_id_),
+           offsetof(Impl_, captain_player_no_) -
+               offsetof(Impl_, team_id_) +
+               sizeof(Impl_::captain_player_no_));
+
+  // @@protoc_insertion_point(copy_constructor:pandora.team.v1.OpenTeamBrief)
 }
 PROTOBUF_NDEBUG_INLINE OpenTeamBrief::Impl_::Impl_(
     [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
     [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
-      : _cached_size_{0} {}
+      : _cached_size_{0},
+        captain_nickname_(arena) {}
 
 inline void OpenTeamBrief::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   new (&_impl_) Impl_(internal_visibility(), arena);
   ::memset(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, team_id_),
            0,
-           offsetof(Impl_, join_policy_) -
+           offsetof(Impl_, captain_player_no_) -
                offsetof(Impl_, team_id_) +
-               sizeof(Impl_::join_policy_));
+               sizeof(Impl_::captain_player_no_));
 }
 OpenTeamBrief::~OpenTeamBrief() {
   // @@protoc_insertion_point(destructor:pandora.team.v1.OpenTeamBrief)
@@ -14410,6 +14515,7 @@ inline void OpenTeamBrief::SharedDtor(MessageLite& self) {
   }
   this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
   ABSL_DCHECK(this_.GetArena() == nullptr);
+  this_._impl_.captain_nickname_.Destroy();
   this_._impl_.~Impl_();
 }
 
@@ -14447,11 +14553,15 @@ PROTOBUF_NOINLINE void OpenTeamBrief::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    _impl_.captain_nickname_.ClearNonDefaultToEmpty();
+  }
+  if (BatchCheckHasBit(cached_has_bits, 0x000000feU)) {
     ::memset(&_impl_.team_id_, 0, static_cast<::size_t>(
         reinterpret_cast<char*>(&_impl_.join_policy_) -
         reinterpret_cast<char*>(&_impl_.team_id_)) + sizeof(_impl_.join_policy_));
   }
+  _impl_.captain_player_no_ = ::uint64_t{0u};
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
 }
@@ -14476,7 +14586,7 @@ PROTOBUF_NOINLINE void OpenTeamBrief::Clear() {
 
   cached_has_bits = this_._impl_._has_bits_[0];
   // uint64 team_id = 1 [json_name = "teamId"];
-  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
     if (this_._internal_team_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
@@ -14485,7 +14595,7 @@ PROTOBUF_NOINLINE void OpenTeamBrief::Clear() {
   }
 
   // uint64 captain_id = 2 [json_name = "captainId"];
-  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
     if (this_._internal_captain_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
@@ -14494,7 +14604,7 @@ PROTOBUF_NOINLINE void OpenTeamBrief::Clear() {
   }
 
   // uint32 member_count = 3 [json_name = "memberCount"];
-  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
     if (this_._internal_member_count() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
@@ -14503,7 +14613,7 @@ PROTOBUF_NOINLINE void OpenTeamBrief::Clear() {
   }
 
   // uint32 max_size = 4 [json_name = "maxSize"];
-  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
     if (this_._internal_max_size() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
@@ -14512,7 +14622,7 @@ PROTOBUF_NOINLINE void OpenTeamBrief::Clear() {
   }
 
   // uint32 map_id = 5 [json_name = "mapId"];
-  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000040U)) {
     if (this_._internal_map_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
@@ -14521,7 +14631,7 @@ PROTOBUF_NOINLINE void OpenTeamBrief::Clear() {
   }
 
   // int64 created_at_ms = 6 [json_name = "createdAtMs"];
-  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
     if (this_._internal_created_at_ms() != 0) {
       target =
           ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<6>(
@@ -14530,11 +14640,30 @@ PROTOBUF_NOINLINE void OpenTeamBrief::Clear() {
   }
 
   // .pandora.team.v1.TeamJoinPolicy join_policy = 7 [json_name = "joinPolicy"];
-  if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000080U)) {
     if (this_._internal_join_policy() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteEnumToArray(
           7, this_._internal_join_policy(), target);
+    }
+  }
+
+  // string captain_nickname = 8 [json_name = "captainNickname"];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    if (!this_._internal_captain_nickname().empty()) {
+      const ::std::string& _s = this_._internal_captain_nickname();
+      ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+          _s.data(), static_cast<int>(_s.length()), ::google::protobuf::internal::WireFormatLite::SERIALIZE, "pandora.team.v1.OpenTeamBrief.captain_nickname");
+      target = stream->WriteStringMaybeAliased(8, _s, target);
+    }
+  }
+
+  // uint64 captain_player_no = 9 [json_name = "captainPlayerNo"];
+  if (CheckHasBit(cached_has_bits, 0x00000100U)) {
+    if (this_._internal_captain_player_no() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          9, this_._internal_captain_player_no(), target);
     }
   }
 
@@ -14563,54 +14692,70 @@ PROTOBUF_NOINLINE void OpenTeamBrief::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
-    // uint64 team_id = 1 [json_name = "teamId"];
+  if (BatchCheckHasBit(cached_has_bits, 0x000000ffU)) {
+    // string captain_nickname = 8 [json_name = "captainNickname"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      if (!this_._internal_captain_nickname().empty()) {
+        total_size += 1 + ::google::protobuf::internal::WireFormatLite::StringSize(
+                                        this_._internal_captain_nickname());
+      }
+    }
+    // uint64 team_id = 1 [json_name = "teamId"];
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
       if (this_._internal_team_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_team_id());
       }
     }
     // uint64 captain_id = 2 [json_name = "captainId"];
-    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (this_._internal_captain_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_captain_id());
       }
     }
     // uint32 member_count = 3 [json_name = "memberCount"];
-    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (this_._internal_member_count() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
             this_._internal_member_count());
       }
     }
     // uint32 max_size = 4 [json_name = "maxSize"];
-    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (this_._internal_max_size() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
             this_._internal_max_size());
       }
     }
     // int64 created_at_ms = 6 [json_name = "createdAtMs"];
-    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (this_._internal_created_at_ms() != 0) {
         total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
             this_._internal_created_at_ms());
       }
     }
     // uint32 map_id = 5 [json_name = "mapId"];
-    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
       if (this_._internal_map_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
             this_._internal_map_id());
       }
     }
     // .pandora.team.v1.TeamJoinPolicy join_policy = 7 [json_name = "joinPolicy"];
-    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000080U)) {
       if (this_._internal_join_policy() != 0) {
         total_size += 1 +
                       ::_pbi::WireFormatLite::EnumSize(this_._internal_join_policy());
+      }
+    }
+  }
+   {
+    // uint64 captain_player_no = 9 [json_name = "captainPlayerNo"];
+    if (CheckHasBit(cached_has_bits, 0x00000100U)) {
+      if (this_._internal_captain_player_no() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
+            this_._internal_captain_player_no());
       }
     }
   }
@@ -14631,41 +14776,55 @@ void OpenTeamBrief::MergeImpl(::google::protobuf::MessageLite& to_msg,
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x000000ffU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      if (!from._internal_captain_nickname().empty()) {
+        _this->_internal_set_captain_nickname(from._internal_captain_nickname());
+      } else {
+        if (_this->_impl_.captain_nickname_.IsDefault()) {
+          _this->_internal_set_captain_nickname("");
+        }
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
       if (from._internal_team_id() != 0) {
         _this->_impl_.team_id_ = from._impl_.team_id_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (from._internal_captain_id() != 0) {
         _this->_impl_.captain_id_ = from._impl_.captain_id_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (from._internal_member_count() != 0) {
         _this->_impl_.member_count_ = from._impl_.member_count_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (from._internal_max_size() != 0) {
         _this->_impl_.max_size_ = from._impl_.max_size_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (from._internal_created_at_ms() != 0) {
         _this->_impl_.created_at_ms_ = from._impl_.created_at_ms_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
       if (from._internal_map_id() != 0) {
         _this->_impl_.map_id_ = from._impl_.map_id_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000080U)) {
       if (from._internal_join_policy() != 0) {
         _this->_impl_.join_policy_ = from._impl_.join_policy_;
       }
+    }
+  }
+  if (CheckHasBit(cached_has_bits, 0x00000100U)) {
+    if (from._internal_captain_player_no() != 0) {
+      _this->_impl_.captain_player_no_ = from._impl_.captain_player_no_;
     }
   }
   _this->_impl_._has_bits_[0] |= cached_has_bits;
@@ -14683,11 +14842,14 @@ void OpenTeamBrief::CopyFrom(const OpenTeamBrief& from) {
 
 void OpenTeamBrief::InternalSwap(OpenTeamBrief* PROTOBUF_RESTRICT PROTOBUF_NONNULL other) {
   using ::std::swap;
+  auto* arena = GetArena();
+  ABSL_DCHECK_EQ(arena, other->GetArena());
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
+  ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.captain_nickname_, &other->_impl_.captain_nickname_, arena);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.join_policy_)
-      + sizeof(OpenTeamBrief::_impl_.join_policy_)
+      PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.captain_player_no_)
+      + sizeof(OpenTeamBrief::_impl_.captain_player_no_)
       - PROTOBUF_FIELD_OFFSET(OpenTeamBrief, _impl_.team_id_)>(
           reinterpret_cast<char*>(&_impl_.team_id_),
           reinterpret_cast<char*>(&other->_impl_.team_id_));
@@ -15671,30 +15833,52 @@ TeamApplication::TeamApplication(::google::protobuf::Arena* PROTOBUF_NULLABLE ar
   SharedCtor(arena);
   // @@protoc_insertion_point(arena_constructor:pandora.team.v1.TeamApplication)
 }
+PROTOBUF_NDEBUG_INLINE TeamApplication::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+    [[maybe_unused]] const ::pandora::team::v1::TeamApplication& from_msg)
+      : _has_bits_{from._has_bits_},
+        _cached_size_{0},
+        nickname_(arena, from.nickname_) {}
+
 TeamApplication::TeamApplication(
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const TeamApplication& from)
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena,
+    const TeamApplication& from)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
-    : ::google::protobuf::Message(arena, TeamApplication_get_class_data()),
+    : ::google::protobuf::Message(arena, TeamApplication_get_class_data()) {
+
 #else   // PROTOBUF_CUSTOM_VTABLE
-    : ::google::protobuf::Message(arena),
+    : ::google::protobuf::Message(arena) {
 #endif  // PROTOBUF_CUSTOM_VTABLE
-      _impl_(from._impl_) {
+  TeamApplication* const _this = this;
+  (void)_this;
   _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
       from._internal_metadata_);
+  new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  ::memcpy(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, player_id_),
+           reinterpret_cast<const char*>(&from._impl_) +
+               offsetof(Impl_, player_id_),
+           offsetof(Impl_, player_no_) -
+               offsetof(Impl_, player_id_) +
+               sizeof(Impl_::player_no_));
+
+  // @@protoc_insertion_point(copy_constructor:pandora.team.v1.TeamApplication)
 }
 PROTOBUF_NDEBUG_INLINE TeamApplication::Impl_::Impl_(
     [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
     [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
-      : _cached_size_{0} {}
+      : _cached_size_{0},
+        nickname_(arena) {}
 
 inline void TeamApplication::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   new (&_impl_) Impl_(internal_visibility(), arena);
   ::memset(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, player_id_),
            0,
-           offsetof(Impl_, expires_at_ms_) -
+           offsetof(Impl_, player_no_) -
                offsetof(Impl_, player_id_) +
-               sizeof(Impl_::expires_at_ms_));
+               sizeof(Impl_::player_no_));
 }
 TeamApplication::~TeamApplication() {
   // @@protoc_insertion_point(destructor:pandora.team.v1.TeamApplication)
@@ -15707,6 +15891,7 @@ inline void TeamApplication::SharedDtor(MessageLite& self) {
   }
   this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
   ABSL_DCHECK(this_.GetArena() == nullptr);
+  this_._impl_.nickname_.Destroy();
   this_._impl_.~Impl_();
 }
 
@@ -15744,10 +15929,13 @@ PROTOBUF_NOINLINE void TeamApplication::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    _impl_.nickname_.ClearNonDefaultToEmpty();
+  }
+  if (BatchCheckHasBit(cached_has_bits, 0x0000000eU)) {
     ::memset(&_impl_.player_id_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.expires_at_ms_) -
-        reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.expires_at_ms_));
+        reinterpret_cast<char*>(&_impl_.player_no_) -
+        reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.player_no_));
   }
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
@@ -15773,7 +15961,7 @@ PROTOBUF_NOINLINE void TeamApplication::Clear() {
 
   cached_has_bits = this_._impl_._has_bits_[0];
   // uint64 player_id = 1 [json_name = "playerId"];
-  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
     if (this_._internal_player_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
@@ -15782,11 +15970,30 @@ PROTOBUF_NOINLINE void TeamApplication::Clear() {
   }
 
   // int64 expires_at_ms = 2 [json_name = "expiresAtMs"];
-  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
     if (this_._internal_expires_at_ms() != 0) {
       target =
           ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<2>(
               stream, this_._internal_expires_at_ms(), target);
+    }
+  }
+
+  // string nickname = 3 [json_name = "nickname"];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    if (!this_._internal_nickname().empty()) {
+      const ::std::string& _s = this_._internal_nickname();
+      ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+          _s.data(), static_cast<int>(_s.length()), ::google::protobuf::internal::WireFormatLite::SERIALIZE, "pandora.team.v1.TeamApplication.nickname");
+      target = stream->WriteStringMaybeAliased(3, _s, target);
+    }
+  }
+
+  // uint64 player_no = 4 [json_name = "playerNo"];
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    if (this_._internal_player_no() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          4, this_._internal_player_no(), target);
     }
   }
 
@@ -15815,19 +16022,33 @@ PROTOBUF_NOINLINE void TeamApplication::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
-    // uint64 player_id = 1 [json_name = "playerId"];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000000fU)) {
+    // string nickname = 3 [json_name = "nickname"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      if (!this_._internal_nickname().empty()) {
+        total_size += 1 + ::google::protobuf::internal::WireFormatLite::StringSize(
+                                        this_._internal_nickname());
+      }
+    }
+    // uint64 player_id = 1 [json_name = "playerId"];
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
       if (this_._internal_player_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_player_id());
       }
     }
     // int64 expires_at_ms = 2 [json_name = "expiresAtMs"];
-    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (this_._internal_expires_at_ms() != 0) {
         total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
             this_._internal_expires_at_ms());
+      }
+    }
+    // uint64 player_no = 4 [json_name = "playerNo"];
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      if (this_._internal_player_no() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
+            this_._internal_player_no());
       }
     }
   }
@@ -15848,15 +16069,29 @@ void TeamApplication::MergeImpl(::google::protobuf::MessageLite& to_msg,
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000000fU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      if (!from._internal_nickname().empty()) {
+        _this->_internal_set_nickname(from._internal_nickname());
+      } else {
+        if (_this->_impl_.nickname_.IsDefault()) {
+          _this->_internal_set_nickname("");
+        }
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
       if (from._internal_player_id() != 0) {
         _this->_impl_.player_id_ = from._impl_.player_id_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (from._internal_expires_at_ms() != 0) {
         _this->_impl_.expires_at_ms_ = from._impl_.expires_at_ms_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      if (from._internal_player_no() != 0) {
+        _this->_impl_.player_no_ = from._impl_.player_no_;
       }
     }
   }
@@ -15875,11 +16110,14 @@ void TeamApplication::CopyFrom(const TeamApplication& from) {
 
 void TeamApplication::InternalSwap(TeamApplication* PROTOBUF_RESTRICT PROTOBUF_NONNULL other) {
   using ::std::swap;
+  auto* arena = GetArena();
+  ABSL_DCHECK_EQ(arena, other->GetArena());
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
+  ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.nickname_, &other->_impl_.nickname_, arena);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.expires_at_ms_)
-      + sizeof(TeamApplication::_impl_.expires_at_ms_)
+      PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.player_no_)
+      + sizeof(TeamApplication::_impl_.player_no_)
       - PROTOBUF_FIELD_OFFSET(TeamApplication, _impl_.player_id_)>(
           reinterpret_cast<char*>(&_impl_.player_id_),
           reinterpret_cast<char*>(&other->_impl_.player_id_));

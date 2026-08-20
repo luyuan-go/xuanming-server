@@ -158,6 +158,26 @@ def compute_admit_not_before_ms(
     return now
 
 
+def release_noop_reason(
+    found: bool, rec: "OwnerRecord", owner_epoch: int, operation_id: str
+) -> str:
+    """迟到 Release 被判 no-op 的具体理由 —— 对应 Go 的 releaseNoopReason。
+
+    理由必须逐项分开,不能只打一句"no-op":四种成因的处置完全不同 ——
+    already_released 是正常重放,epoch_mismatch / operation_mismatch 说明调用方
+    拿着过期上下文在释放(可能是另一条链的残留),record_absent 则是权威侧丢了记录。
+    """
+    if not found:
+        return "record_absent"
+    if rec.owner_epoch != owner_epoch:
+        return "epoch_mismatch"
+    if rec.operation_id != operation_id:
+        return "operation_mismatch"
+    if rec.owner_type == OWNER_TYPE_NONE:
+        return "already_released"
+    return "unknown"
+
+
 def admit_mismatch_reason(
     found: bool,
     rec: OwnerRecord,
@@ -229,14 +249,24 @@ def log_barrier_not_open(player_id: int, rec: OwnerRecord, wait_ms: int) -> None
         logger.debug("owner_admit_barrier_not_open", **fields)
 
 
-def barrier_not_open_error(wait_ms: int) -> errcode.PandoraError:
+def barrier_not_open_error(
+    wait_ms: int, record: "OwnerRecord | None" = None
+) -> errcode.PandoraError:
     """屏障未开 —— 调用方按 retry_after 退避重查,**保留 session 与原 operation_id**。
 
     §9.23:脑裂时安全优先但不能永久卡流程 —— 返回带明确原因和 retry_after 的 WAIT,
     由同一 coordinator 的 watchdog 到期重查,不能等旧 DS 某个可能永不到达的回调。
+
+    ★ wait_ms 与当前记录必须**随错误一起**带出去。Go 侧 Admit 的签名是
+    `(rec, retryAfterMs, err)` 三元,三样一起返回;Python 用异常传播,不显式挂上
+    就等于丢掉 —— 调用方收到 `retry_after_ms=0` 的 WAIT,只能空转或干等,
+    §9.23「不得无出口等待」当场被打穿,而且**没有任何报错**。
     """
-    return errcode.PandoraError(
+    err = errcode.PandoraError(
         errcode.ErrOwnerBarrierNotOpen,
         "admission barrier not open, retry after %dms",
         wait_ms,
     )
+    err.retry_after_ms = wait_ms
+    err.current_record = record
+    return err

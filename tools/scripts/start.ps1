@@ -77,6 +77,13 @@ param(
     #           代价:DS 启动慢(加载一大批编辑器模块 + 读未 cook 的散装资产),首次进图可能等一两分钟;
     #           allocator 会自动把 ready 等待/心跳超时放宽到 300s/120s。
     #           (不包括编 shader:-server 下引擎跳过全局与材质着色器编译。)
+    #           另:allocator 只给 editor 形态自动加 -DPCVars=net.SkipMissingLevelDisconnect=1。
+    #           未 cook 的 DS 把 World Partition runtime cell 注册成 <WorldPackage>/<Cell>,而 PIE
+    #           客户端把同一个 cell 报成 /Memory/UEDPIE_<n>_<World>_<Cell>,服务端找不到就**直接踢人**;
+    #           客户端拿不到踢人原因(UE 5.8 在客户端侧丢弃 NMT_CloseReason),只会当瞬态掉线一遍遍
+    #           连回同一个 DS,形成秒级无限重连(2026-08-18 实测)。关掉后服务端只打 Warning 忽略,
+    #           副作用是那批 cell 里的 Actor 不复制给该客户端(可能少看到点东西)。
+    #           packaged 与 k8s Linux DS 不加,那里的内容不一致是真问题,保留引擎的踢人保护。
     [ValidateSet('', 'packaged', 'editor')]
     [string]$DsLauncher = '',
     # editor:Pandora.uproject 路径。留空则自动探测「与本仓库平级的客户端仓」,策划零手改。
@@ -176,6 +183,7 @@ $ErrorActionPreference = 'Stop'
 $ScriptDir   = $PSScriptRoot
 $ProjectRoot = (Resolve-Path "$ScriptDir/../..").Path
 . (Join-Path $ScriptDir 'lib/local_infra_state.ps1')
+. (Join-Path $ScriptDir 'lib/planner_mysql_startup.ps1')
 
 # 本脚本也会由长期运行的 web 进程拉起。Windows 进程只在启动时继承一次 PATH；之后安装
 # minikube 等工具，即使已经写入机器/用户 PATH，web 创建的新控制台仍会继承旧快照。
@@ -3776,19 +3784,32 @@ function Ensure-Go {
 # 第一次起完不停、再点一次就报端口被占,而人根本没起别的东西(本机实测踩到)。
 # 注:监听方显示的是 com.docker.backend / wslrelay 这类 Docker 转发进程,从 PID 根本
 # 反查不到是哪个容器,故改从 docker 实际发布端口这一侧认。
-function Test-EdgePortHeldByOwnEnvoy([int]$Port) {
+function Test-EdgePortHeldByOwnEnvoy([int]$Port, [object[]]$ListenerRecords = $null) {
     # 先按**进程映像路径**认自己人。免 Docker 路线的 Envoy 是宿主原生进程
     # (run/localinfra/dist/envoy/envoy.exe),`docker port` 永远查不到它 —— 上一轮没停干净时
     # 就会被当成「外人占端口」硬阻断一键启动,而 local_infra.ps1 起 Envoy 前本来就会把它停掉
     # 重建(见那边的 Stop-Component 'envoy' + Stop-OrphanPortHolder),纯属误报。
     $native = [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'run/localinfra/dist/envoy/envoy.exe'))
-    foreach ($c in @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)) {
+    if ($null -eq $ListenerRecords) {
+        try { $ListenerRecords = @(Get-PandoraTcpListenerRecords) }
+        catch { return $false }
+    }
+    $portListeners = @($ListenerRecords | Where-Object { [int]$_.LocalPort -eq $Port })
+    $nativeOwned = 0
+    $notNativeOwned = 0
+    foreach ($c in $portListeners) {
         $proc = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
-        if (-not $proc) { continue }
+        if (-not $proc) { $notNativeOwned++; continue }
         # 受保护进程读 .Path 会抛;认不出来就当外人,不能让它中断整个前置检查。
         $exe = $null
         try { $exe = $proc.Path } catch { $exe = $null }
-        if ($exe -and [IO.Path]::GetFullPath($exe) -eq $native) { return $true }
+        if ($exe -and [IO.Path]::GetFullPath($exe) -eq $native) { $nativeOwned++ }
+        else { $notNativeOwned++ }
+    }
+    # 一条自家记录不能替同端口上的外部/未知 blocker 背书；原生路线必须证明全部
+    # 真正会挡住目标 bind 的 listener 都来自这个工作区的 Envoy。
+    if ($nativeOwned -gt 0) {
+        return ($notNativeOwned -eq 0 -and $nativeOwned -eq $portListeners.Count)
     }
 
     # docker 分支放最后,且只在**确实有 docker** 时问:策划机压根没装 docker,而本文件是
@@ -3806,9 +3827,15 @@ function Assert-LocalEdgePortsFree {
         @{ Port = 8444; Host = $(if ($env:PANDORA_DS_EDGE_BIND_HOST) { $env:PANDORA_DS_EDGE_BIND_HOST } else { '127.0.0.1' }); Face = 'DS 面   ' }
     )
 
+    try { $allListeners = @(Get-PandoraTcpListenerRecords) }
+    catch {
+        Write-Err "无法确认本机边缘端口 listener；不会把未知状态当空闲:$($_.Exception.Message)"
+        return $false
+    }
+
     $ok = $true
     foreach ($t in $targets) {
-        $listens = @(Get-NetTCPConnection -State Listen -LocalPort $t.Port -ErrorAction SilentlyContinue)
+        $listens = @($allListeners | Where-Object { [int]$_.LocalPort -eq [int]$t.Port })
         if ($listens.Count -eq 0) { continue }
 
         # 宿主要绑 X,已有监听在 Y:仅当 X/Y 相同,或任一方是通配地址时才真正冲突。
@@ -3818,7 +3845,7 @@ function Assert-LocalEdgePortsFree {
             })
         if ($blocking.Count -eq 0) { continue }
 
-        if (Test-EdgePortHeldByOwnEnvoy -Port $t.Port) {
+        if (Test-EdgePortHeldByOwnEnvoy -Port $t.Port -ListenerRecords $blocking) {
             Write-Info ("Envoy {0} {1}:{2} 当前是本项目自己的 Envoy 占着(上一轮没停),会被直接重建,不算冲突。" -f $t.Face.Trim(), $t.Host, $t.Port)
             continue
         }
@@ -4316,7 +4343,7 @@ function Invoke-ConfigTableGen {
 
     $before = Get-ConfigTableDistVersion
 
-    & "$ScriptDir/configtable_gen.ps1"
+    & "$ScriptDir/configtable_gen.ps1" -SkipIfInputsUnchanged
     $rc = $LASTEXITCODE
     if ($rc -ne 0) {
         Write-Host ""
@@ -4467,24 +4494,40 @@ function Invoke-LocalDsOnly {
     Write-Step "只重启本机 DS(基础设施与其余 go 服务原样不动)"
 
     $localMysqlPort = 3307
+    $mysqlEndpointHost = '127.0.0.1'
+    $expectedProfileFingerprint = ''
+    $plannerMysqlMode = if ($NoDocker) { Get-PandoraPlannerMysqlStartupMode -ProjectRoot $ProjectRoot } else { 'docker' }
     if ($NoDocker) {
-        $mysqlState = Get-PandoraLocalInfraPortState $ProjectRoot
-        if (-not $mysqlState) {
-            Write-Info '免 Docker MySQL 尚无已验证身份状态；回落到完整启动流程。'
-            return $false
-        }
-        $localMysqlPort = [int]$mysqlState.MysqlPort
-        if (-not (Get-PandoraLocalMysqlOwnedProcess $ProjectRoot $mysqlState)) {
-            Write-Info "免 Docker MySQL :$localMysqlPort 当前 listener 未通过 PID + exe + my.ini 归属复核；回落完整启动，绝不复用外部 MySQL。"
-            return $false
+        if ($plannerMysqlMode -ceq 'central-managed') {
+            try {
+                $profile = Get-PandoraMysqlRuntimeProfile -ProjectRoot $ProjectRoot
+                $localMysqlPort = [int]$profile.endpoint.port
+                $mysqlEndpointHost = "$($profile.endpoint.host)"
+                $expectedProfileFingerprint = "$($profile.fingerprint)"
+            } catch {
+                Write-Info "中心 MySQL profile 未就绪或已损坏；回落完整启动流程重新登记，不回退本机 MySQL。详情:$($_.Exception.Message)"
+                return $false
+            }
+        } else {
+            $mysqlState = Get-PandoraLocalInfraPortState $ProjectRoot
+            if (-not $mysqlState) {
+                Write-Info '免 Docker MySQL 尚无已验证身份状态；回落到完整启动流程。'
+                return $false
+            }
+            $localMysqlPort = [int]$mysqlState.MysqlPort
+            if (-not (Get-PandoraLocalMysqlOwnedProcess $ProjectRoot $mysqlState)) {
+                Write-Info "免 Docker MySQL :$localMysqlPort 当前 listener 未通过 PID + exe + my.ini 归属复核；回落完整启动，绝不复用外部 MySQL。"
+                return $false
+            }
         }
     }
-    $expectedRuntimeMode = if ($NoDocker) { 'nodocker' } else { 'docker' }
+    $expectedRuntimeMode = if ($plannerMysqlMode -ceq 'central-managed') { 'central' } elseif ($NoDocker) { 'nodocker' } else { 'docker' }
     $expectedSocialOnMysql = [bool]$NoDocker
     $appliedRuntime = Get-PandoraServiceAppliedMysqlState $ProjectRoot
     if (-not $appliedRuntime -or $appliedRuntime.Mode -ne $expectedRuntimeMode -or
         [int]$appliedRuntime.MysqlPort -ne $localMysqlPort -or
-        [bool]$appliedRuntime.SocialOnMysql -ne $expectedSocialOnMysql) {
+        [bool]$appliedRuntime.SocialOnMysql -ne $expectedSocialOnMysql -or
+        ($expectedRuntimeMode -ceq 'central' -and "$($appliedRuntime.ProfileFingerprint)" -cne $expectedProfileFingerprint)) {
         $actualRuntime = if ($appliedRuntime) { "$($appliedRuntime.Mode)/:$($appliedRuntime.MysqlPort)/social_mysql=$($appliedRuntime.SocialOnMysql)" } else { '未登记/旧版' }
         Write-Info "业务服务已应用运行态为 $actualRuntime，当前要求 $expectedRuntimeMode/:$localMysqlPort/social_mysql=$expectedSocialOnMysql；回落完整启动以统一刷新全部 DSN。"
         return $false
@@ -4498,7 +4541,7 @@ function Invoke-LocalDsOnly {
     )
     $required = @(
         @{ Name = 'Redis'; Port = 6380 }
-        @{ Name = 'MySQL'; Port = $localMysqlPort }
+        @{ Name = 'MySQL'; Host = $mysqlEndpointHost; Port = $localMysqlPort }
         @{ Name = 'Kafka'; Port = 9093 }
     )
     # etcd 只有 docker 路线才起:免 Docker 模式刻意不起它(dev 配置里 etcd_endpoints 全是
@@ -4510,7 +4553,11 @@ function Invoke-LocalDsOnly {
         @{ Name = 'login'; Port = 20001 }
     )
 
-    $missing = @($required | Where-Object { -not (Test-LocalTcpPort $_.Port) })
+    $missing = @($required | Where-Object {
+        if ($_.Host -and $_.Host -cne '127.0.0.1') {
+            -not (Test-NetConnection -ComputerName $_.Host -Port $_.Port -InformationLevel Quiet -WarningAction SilentlyContinue)
+        } else { -not (Test-LocalTcpPort $_.Port) }
+    })
     if ($missing.Count -gt 0) {
         Write-Info "后端还没跑起来(缺:$(($missing | ForEach-Object { "$($_.Name):$($_.Port)" }) -join ', '))。"
         Write-Info "那这次不是「重启 DS」而是「启动整套后端」,自动改走完整启动流程(会慢一些,属正常)。"
@@ -4594,7 +4641,7 @@ function Invoke-LocalDsOnly {
         Write-Warn "两个 allocator 已重启,但没能确认 Hub DS 就绪(原因见上)。"
         Write-Info "可以直接去客户端试;真进不去就按上面点名的日志排查。"
     }
-    Write-Info "改了 go 服务代码 / 换了 run/artifacts 里的二进制 → 请改走完整启动(策划一键启动-改资源即时生效.cmd)。"
+    Write-Info "改了 go 服务代码 / 换了 run/artifacts 里的二进制 → 请改走完整启动(策划一键启动-免Docker-测试版.cmd)。"
     return $true
 }
 

@@ -74,7 +74,13 @@ type LoginServiceHTTPServer interface {
 	// account_id 取自账号态 JWT 的 sub(Envoy 注入 x-pandora-account-id),请求体不含
 	// account_id ——只能列自己的角色(§9.6 不信客户端自报身份)。
 	//
-	// 幂等只读。Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
+	// 幂等,但**不是纯读**:响应里的 effective_nickname 来自 player.EnsureProfile,
+	// 它对「档案不存在」的角色会顺带建档(INSERT IGNORE 语义,已存在则原样返回)。
+	// 之所以不换成看起来更"只读"的 GetProfile:player.GetProfile 内部同样先调
+	// repo.EnsureProfile,而且播的是默认名 Player_<id> —— 在 Login 播种之前先调它,
+	// 会把默认名抢先写死(INSERT IGNORE 先到先得),账号名就永远播不进去了。
+	//
+	// Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
 	// (比如创建角色功能上线后新建完角色回到列表)。
 	ListAccountRoles(context.Context, *ListAccountRolesRequest) (*ListAccountRolesResponse, error)
 	// Login Login 立即完成型(synchronous),response 含完整 session_token + hub 地址
@@ -378,7 +384,13 @@ type LoginServiceHTTPClient interface {
 	// account_id 取自账号态 JWT 的 sub(Envoy 注入 x-pandora-account-id),请求体不含
 	// account_id ——只能列自己的角色(§9.6 不信客户端自报身份)。
 	//
-	// 幂等只读。Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
+	// 幂等,但**不是纯读**:响应里的 effective_nickname 来自 player.EnsureProfile,
+	// 它对「档案不存在」的角色会顺带建档(INSERT IGNORE 语义,已存在则原样返回)。
+	// 之所以不换成看起来更"只读"的 GetProfile:player.GetProfile 内部同样先调
+	// repo.EnsureProfile,而且播的是默认名 Player_<id> —— 在 Login 播种之前先调它,
+	// 会把默认名抢先写死(INSERT IGNORE 先到先得),账号名就永远播不进去了。
+	//
+	// Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
 	// (比如创建角色功能上线后新建完角色回到列表)。
 	ListAccountRoles(ctx context.Context, req *ListAccountRolesRequest, opts ...http.CallOption) (rsp *ListAccountRolesResponse, err error)
 	// Login Login 立即完成型(synchronous),response 含完整 session_token + hub 地址
@@ -515,7 +527,13 @@ func (c *LoginServiceHTTPClientImpl) IssueDSTicket(ctx context.Context, in *Issu
 // account_id 取自账号态 JWT 的 sub(Envoy 注入 x-pandora-account-id),请求体不含
 // account_id ——只能列自己的角色(§9.6 不信客户端自报身份)。
 //
-// 幂等只读。Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
+// 幂等,但**不是纯读**:响应里的 effective_nickname 来自 player.EnsureProfile,
+// 它对「档案不存在」的角色会顺带建档(INSERT IGNORE 语义,已存在则原样返回)。
+// 之所以不换成看起来更"只读"的 GetProfile:player.GetProfile 内部同样先调
+// repo.EnsureProfile,而且播的是默认名 Player_<id> —— 在 Login 播种之前先调它,
+// 会把默认名抢先写死(INSERT IGNORE 先到先得),账号名就永远播不进去了。
+//
+// Login 的响应里已经带了同一份列表,本 RPC 用于选角界面停留期间的刷新
 // (比如创建角色功能上线后新建完角色回到列表)。
 func (c *LoginServiceHTTPClientImpl) ListAccountRoles(ctx context.Context, in *ListAccountRolesRequest, opts ...http.CallOption) (*ListAccountRolesResponse, error) {
 	var out ListAccountRolesResponse

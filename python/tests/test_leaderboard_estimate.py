@@ -16,6 +16,8 @@ import tempfile
 
 import pytest
 
+import goparity
+
 from pandorapy.services.leaderboard import estimate as est
 
 # 与 tests 里的导出程序共用同一套输入。
@@ -73,7 +75,15 @@ def _go_bucket_table() -> list[tuple[int, int, int]]:
         except (OSError, subprocess.TimeoutExpired):
             return []
     if proc.returncode != 0:
-        return []
+        # ★ 「go 不在 PATH」与「go 在、但编译/运行失败」必须分两条路:
+        #   前者 = 环境不具备      → skip
+        #   后者 = **对拍对象变了** → fail,并把 stderr 带出来
+        # 合成一条(rc!=0 就返回空表 → skip)的后果最坏:Go 侧真改了签名时,
+        # 这道 parity 门**恰好在最该响的那一刻不响**,文案还指控环境不可用。
+        pytest.fail(
+            "跨语言对拍程序编译/运行失败 —— 多半是 internal/data/board_store.go 的直方图 变了,"
+            "**不是**环境问题。stderr:\n" + (proc.stderr or "(空)")[:2000]
+        )
     rows: list[tuple[int, int, int]] = []
     for line in proc.stdout.splitlines():
         parts = line.split("\t")
@@ -245,3 +255,40 @@ def test_default_bucket_width_matches_go() -> None:
     """桶宽默认值与 Go 侧同值(MMR 量纲)。"""
     assert est.DEFAULT_ESTIMATE_BUCKET_WIDTH == 25
     assert est.MAX_BUCKET_IDX == 1 << 20
+
+
+# ── ★ 手抄件必须与真源逐字一致 ──────────────────────────────────────────
+
+_GO_BUCKET_SOURCE = "services/runtime/leaderboard/internal/data/board_store.go"
+
+
+def test_hand_copied_go_matches_the_real_source(repo_root: pathlib.Path) -> None:
+    """★ 上面那段 `_GO_DUMP_PROGRAM` 是**手抄**的 —— 这条负责证明它没过期。
+
+    没有这条时的形状:手抄件与被测 Python 是同一次理解的产物,Go 侧真改了两边都不红。
+    实测过 —— 把 board_store.go 的 `q--` 改成 `q++`(负分 floor 补偿),
+    本文件仍然 13 passed;而 `go test ./services/runtime/leaderboard/internal/data/`
+    也全绿(该包没有负分样本)。也就是说 bucketOf 的负分语义在**全仓零覆盖**,
+    而这个用例的失败文案却写着"多半是 board_store.go 的直方图变了" —— 那个文件
+    从头到尾没被打开过。
+
+    为什么不像 test_kafkax_parity 那样直接 import 真包:`bucketOf` 是
+    `internal/data` 包内**未导出**函数,且 leaderboard 是**独立 go module**
+    (services/runtime/leaderboard/go.mod),外部 `package main` 两条路都走不通。
+    所以按 test_protosql_type_parity 的先例解析源码逐字核对。
+
+    保留跨语言执行那一半(它抓的是 `//` floor vs `/` 截断这类**语言语义**差异),
+    这一条补的是**实现漂移**那一半。两条缺一不可,别把 _GO_DUMP_PROGRAM 删了。
+    """
+    go_src = (repo_root / _GO_BUCKET_SOURCE).read_text(encoding="utf-8")
+    real = goparity.normalize(goparity.go_func(go_src, "bucketOf"))
+    copied = goparity.normalize(goparity.go_func(_GO_DUMP_PROGRAM, "bucketOf"))
+    assert copied == real, (
+        f"手抄的 bucketOf 与 {_GO_BUCKET_SOURCE} 已经不一致 —— "
+        f"跨语言对拍对的是一份过期副本,等于没对。\n真源:\n{real}\n手抄:\n{copied}"
+    )
+    # 钳制常量单独核:它不在函数体里,改了同样会让桶索引上限漂移。
+    assert goparity.go_const(go_src, "maxBucketIdx") == goparity.go_const(
+        _GO_DUMP_PROGRAM, "maxBucketIdx"
+    ), "maxBucketIdx 与真源不一致"
+    assert est.MAX_BUCKET_IDX == 1 << 20, "Python 侧的钳制上限也要跟着改"

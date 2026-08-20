@@ -14,6 +14,7 @@ from pandora.mail.v1 import mail_pb2
 
 from pandorapy import errcode
 from pandorapy.services.mail import biz as mbiz
+from pandorapy.services.mail import conf as mconf
 
 
 class FakeRepo:
@@ -66,9 +67,14 @@ class RecordingGranter:
         await self._record(player_id, len(atts), key)
 
 
-class Cfg:
-    def __init__(self, allow_noop_grant: bool = False) -> None:
-        self.allow_noop_grant = allow_noop_grant
+def Cfg(allow_noop_grant: bool = False):  # noqa: N802 —— 沿用既有调用点写法
+    """用**真实**的 MailConf 而不是手搭的桩。
+
+    ★ 手搭桩只带 allow_noop_grant 一个字段时,biz 里任何新读到的配置项都会
+    退回默认值而测试照绿 —— 上限类字段(max_instances_per_mail 等)一旦被读错,
+    这份测试完全看不见。用真类型能让"字段名写错"当场 AttributeError。
+    """
+    return mconf.MailConf(allow_noop_grant=allow_noop_grant)
 
 
 def _payload(*atts) -> bytes:

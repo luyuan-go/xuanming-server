@@ -44,8 +44,22 @@ _TYPE_MAP: dict[int, str] = {
     FieldDescriptor.TYPE_FIXED64: "BIGINT UNSIGNED",
     FieldDescriptor.TYPE_FIXED32: "INT UNSIGNED",
     FieldDescriptor.TYPE_BOOL: "TINYINT(1)",
-    FieldDescriptor.TYPE_STRING: "VARCHAR(255)",
-    FieldDescriptor.TYPE_BYTES: "VARBINARY(4096)",
+    # ★ string / bytes 必须与 Go 的 proto2mysql 一致(v0.0.18 proto2mysql.go:152/159:
+    # StringKind→MEDIUMTEXT、BytesKind→MEDIUMBLOB),**哪怕它比 §9.24 期望的更宽**。
+    #
+    # 原先这里是 VARCHAR(255) / VARBINARY(4096)。看起来更符合 §9.24「能用 VARBINARY(N)
+    # 就不用 LONGBLOB」的偏好,但在 strangler 迁移期是错的:两栈写**同一张表**,
+    # 表由先启动的那个服务建。列窄的一侧会让同一条写入
+    #   Go 副本成功 / Python 副本报 1406
+    # ——同一个玩家的同一次改名,成功与否取决于请求落到了哪个副本,而且**不可复现**。
+    # 2026-08-19 实测撞到:dev 库 player_data 被 Python 重建后 nickname 从 mediumtext
+    # 变成 varchar(255),等于替 Go 服务收窄了列。
+    #
+    # §9.24 的写入侧上限**不靠列类型**兜底 —— 它要求的是「单元素 / 条目数 / 整体字节」
+    # 三道写入侧闸(见 dbguard.check_payload),那三道仍然生效。列类型只是最后一道
+    # 物理上限,与 Go 保持一致比自己收窄更重要。
+    FieldDescriptor.TYPE_STRING: "MEDIUMTEXT",
+    FieldDescriptor.TYPE_BYTES: "MEDIUMBLOB",
     FieldDescriptor.TYPE_UINT32: "INT UNSIGNED",
     FieldDescriptor.TYPE_ENUM: "INT",
     FieldDescriptor.TYPE_SFIXED32: "INT",

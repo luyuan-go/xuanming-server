@@ -16,6 +16,8 @@ import tempfile
 
 import pytest
 
+import goparity
+
 from pandorapy.services.player import experience as exp
 
 _GO_DUMP_PROGRAM = """package main
@@ -99,7 +101,15 @@ def _go_table() -> list[tuple[int, int, int, int, int, int, int]]:
         except (OSError, subprocess.TimeoutExpired):
             return []
     if proc.returncode != 0:
-        return []
+        # ★ 「go 不在 PATH」与「go 在、但编译/运行失败」必须分两条路:
+        #   前者 = 环境不具备      → skip
+        #   后者 = **对拍对象变了** → fail,并把 stderr 带出来
+        # 合成一条(rc!=0 就返回空表 → skip)的后果最坏:Go 侧真改了签名时,
+        # 这道 parity 门**恰好在最该响的那一刻不响**,文案还指控环境不可用。
+        pytest.fail(
+            "跨语言对拍程序编译/运行失败 —— 多半是 internal/data/experience_repo.go 的经验曲线 变了,"
+            "**不是**环境问题。stderr:\n" + (proc.stderr or "(空)")[:2000]
+        )
     rows = []
     for line in proc.stdout.splitlines():
         parts = line.split("\t")
@@ -227,3 +237,27 @@ def test_decorate_disabled_passes_through() -> None:
     """功能关闭 / 曲线未配置 → 不标满级、exp 原样(与历史行为一致)。"""
     assert exp.decorate_experience(99, 500, [100], enabled=False) == (500, False)
     assert exp.decorate_experience(99, 500, []) == (500, False)
+
+
+# ── ★ 手抄件必须与真源逐字一致 ──────────────────────────────────────────
+
+_GO_EXP_SOURCE = "services/account/player/internal/data/experience_repo.go"
+
+
+def test_hand_copied_go_matches_the_real_source(repo_root: pathlib.Path) -> None:
+    """★ `_GO_DUMP_PROGRAM` 是**手抄**的 —— 这条证明它没过期。理由见
+    tests/goparity.py 与 test_leaderboard_estimate 里的同名用例。
+
+    这一半比 leaderboard 那半轻:实测把 `exp = 0`(升到满级瞬间清零)改成别的值,
+    Go 侧自己的 TestAdvanceExperience_ReachMaxClampsExp / _WrapGuard 会当场变红,
+    所以 Go 改坏了合并前会被拦住;缺的只是"Python 侧不会自动跟着红"。
+    即便如此仍要有这条 —— strangler 共存期两栈同时对外服务,
+    等级/经验算错在两边表现不同是玩家可见的。
+    """
+    go_src = (repo_root / _GO_EXP_SOURCE).read_text(encoding="utf-8")
+    real = goparity.normalize(goparity.go_func(go_src, "AdvanceExperience"))
+    copied = goparity.normalize(goparity.go_func(_GO_DUMP_PROGRAM, "AdvanceExperience"))
+    assert copied == real, (
+        f"手抄的 AdvanceExperience 与 {_GO_EXP_SOURCE} 已经不一致 —— "
+        f"跨语言对拍对的是一份过期副本。\n真源:\n{real}\n手抄:\n{copied}"
+    )

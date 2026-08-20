@@ -21,9 +21,15 @@ Go 侧口径(pkg/snowflake/snowflake.go:22):
    一定会错。每节点每秒上限 32768 个 ID,超了就阻塞到下一秒(与 Go 一致,不是丢号)。
 
 node_id 唯一性:
-    Go 侧有 pkg/snowflake/etcdnode 做 etcd 自动抢占 + 失租退出。Python 侧本轮只实现
-    static 模式(读 yaml 的 node.node_id),够 dialogue 单副本用。多副本部署前必须先
-    补 etcd 抢占,否则会重号 —— 见 CLAUDE.md §9 不变量 11。
+    本模块只管**用**给定的 node_id 发号,不管这个号从哪来。号的来源由
+    `pandorapy/snowflake_etcd.provide_node` 按 `snowflake.node_id_source` 二选一:
+
+        ""/"static"  读 yaml 的 node.node_id(单副本 / dev 默认,不碰 etcd)
+        "etcd"       etcd 自动抢占 + **失租即退出进程**
+
+    ⚠️ 多副本部署必须走 etcd 档:两个副本用同一个 node_id 会重号(§9 不变量 11),
+    而重号在背包域表现为 DuplicateGuid fail-closed 卡住玩家领取 —— 现场看到的是
+    "玩家领不了奖",查不到这里。
 """
 
 from __future__ import annotations
@@ -96,6 +102,26 @@ class Node:
                 self._step = 0
             return (self._last_sec << _TIME_SHIFT) | self._node_shifted | self._step
 
+    def generate_into(self, dst: list[int]) -> None:
+        """批量铸号,原地填满 dst。对应 Go 的 Node.GenerateInto。
+
+        语义与逐个 generate() 完全一致:严格递增、互不重复、可与 generate() 混用;
+        **只保证递增+唯一,不保证连续**(跨秒会有空洞)——调用方按下标取用即可,
+        任何"相邻 ID 差 1"的假设都是错的。
+
+        ★ dst 由调用方分配,和 Go 一样不按外部输入决定分配大小:
+        件数是可被上游数据放大的量(一封邮件的附件 count 是 uint32),
+        在这里按传入数量自行 malloc 就等于把它变成内存 DoS 面。
+        数量上限必须由业务侧(mail 的 max_instances_per_mail)在分配**之前**卡死。
+
+        实现刻意是"循环调用 generate()"而不是 Go 那种一次 CAS 预留整段:
+        Python 侧 Node 本就是锁实现(见类注释),预留段只会多一份自己的
+        step/秒边界处理代码,而那正是最容易与 generate() 漂移的地方 ——
+        两条铸号路径口径不一致 = 重号,且只在跨秒边界偶发。
+        """
+        for i in range(len(dst)):
+            dst[i] = self.generate()
+
 
 def _now_epoch() -> int:
     """当前时间距 Epoch 的**秒**数。时钟早于 Epoch 直接硬失败。"""
@@ -131,3 +157,21 @@ def node_of(snowflake_id: int) -> int:
 def step_of(snowflake_id: int) -> int:
     """从 ID 反解逻辑秒内序号。"""
     return snowflake_id & _STEP_MASK
+
+
+def min_id_at(unix_sec: int) -> int:
+    """unix_sec 时刻可能生成的**最小** ID(时间段取该秒,node/step 全零)。
+
+    对应 Go 的 snowflake.MinIDAt。用途是把"创建时间早于 cutoff"翻译成
+    "mail_id < min_id_at(cutoff)" —— 时间条件变成主键范围条件,清理走索引扫描
+    而不是全表 + 反解时间。
+
+    ★ 不设这个换算的话,player_mail_claim 这类"按创建时间保留 N 天"的清理只能
+    要么全表扫、要么另存一列创建时间(多一份会漂移的真相)。
+
+    unix_sec 早于 Epoch 时返回 0(该时刻之前不存在任何 ID),与 Go 一致 ——
+    返回负数会让 `mail_id < x` 这种无符号比较翻车。
+    """
+    if unix_sec < EPOCH:
+        return 0
+    return (int(unix_sec) - EPOCH) << _TIME_SHIFT

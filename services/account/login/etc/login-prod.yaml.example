@@ -61,6 +61,9 @@ locker:
 login:
   session_token_ttl: "24h"
   ds_ticket_ttl: "5m"               # 不变量 §3:DS 票据短时效
+  # team→login ResolvePlayerNos 入站鉴权；与 team resolver 配置一致，独立于其它密钥。
+  player_no_resolve_auth_secret: "__PLAYER_NO_RESOLVE_AUTH_SECRET_32B_CHANGE_ME__"
+  player_no_resolve_auth_audience: "login:player-no"
   # 滚动兼容默认 false；Activation Job 机械确认所有 writer 具备绑定能力后才改 true。
   # true 后 login 只接受 hub_allocator 权威签发且绑定 Redis 当前 assignment 的 hub 票。
   require_hub_assignment_binding: false

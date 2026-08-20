@@ -367,6 +367,28 @@ class GetPlayerNoResponse(_message.Message):
     player_no: int
     def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., player_no: _Optional[int] = ...) -> None: ...
 
+class ResolvePlayerNosRequest(_message.Message):
+    __slots__ = ("player_ids",)
+    PLAYER_IDS_FIELD_NUMBER: _ClassVar[int]
+    player_ids: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, player_ids: _Optional[_Iterable[int]] = ...) -> None: ...
+
+class ResolvedPlayerNo(_message.Message):
+    __slots__ = ("player_id", "player_no")
+    PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
+    PLAYER_NO_FIELD_NUMBER: _ClassVar[int]
+    player_id: int
+    player_no: int
+    def __init__(self, player_id: _Optional[int] = ..., player_no: _Optional[int] = ...) -> None: ...
+
+class ResolvePlayerNosResponse(_message.Message):
+    __slots__ = ("code", "entries")
+    CODE_FIELD_NUMBER: _ClassVar[int]
+    ENTRIES_FIELD_NUMBER: _ClassVar[int]
+    code: _errcode_pb2.ErrCode
+    entries: _containers.RepeatedCompositeFieldContainer[ResolvedPlayerNo]
+    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., entries: _Optional[_Iterable[_Union[ResolvedPlayerNo, _Mapping]]] = ...) -> None: ...
+
 class GetRegisterNoRequest(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...

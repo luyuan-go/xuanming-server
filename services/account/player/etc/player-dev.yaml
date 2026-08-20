@@ -50,6 +50,9 @@ player:
   default_nickname_prefix: "Player_"
   # max_nickname_len: 昵称最大长度
   max_nickname_len: 32
+  # team→player ResolvePlayerNames 的 request-bound HMAC；与 team-dev.yaml 出站配置一致。
+  player_name_resolve_auth_secret: "pandora-dev-team-player-name-auth-key-v1!"
+  player_name_resolve_auth_audience: "player:name"
   # hero_selection_enabled: 出战英雄选择开关(demo 阶段默认 false 跳过选英雄;联调养成时置 true)
   hero_selection_enabled: false
   # loadout_customize_enabled: 出战装备预设 / 天赋树自定义开关。

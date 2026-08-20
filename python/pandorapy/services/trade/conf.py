@@ -11,9 +11,75 @@ from typing import Any
 from pydantic import Field
 
 from pandorapy import config as pconfig
+from pandorapy import kafkax
 
 DEFAULT_GRPC_ADDR = ":20012"
 DEFAULT_HTTP_ADDR = ":21012"
+
+
+class KafkaConf(pconfig.BaseModel):
+    """对应 Go 的 pkg/config.KafkaConfig。
+
+    ★ 本该建在共享的 pandorapy/config.py 的 BaseConf 上(Go 侧就在 config.Base 里),
+    但那个文件本轮由别的会话持有,所以先落在 trade 私有 conf 上。**必须建模、不能
+    留给 BaseConf 的 extra**:落进 extra 的字段"配了却不生效"且零信号 ——
+    brokers 写在 yaml 里、审计流一条也没发出去,而日志全绿(RedisConf 那次的同型缺陷)。
+
+    ⚠️ idempotent 默认 **False**,与 Go 的结构体零值一致(Go 侧没有任何地方给它填
+    默认值,yaml 注释里的"默认 true"是过期说明)。Python 的 kafkax.ProducerConf
+    默认是 True —— 所以这里必须**逐字段显式**构造 ProducerConf,不能只填一半靠默认,
+    否则同一份 yaml 在两个实现上跑出不同的幂等语义而两边都不报错。
+    """
+
+    brokers: list[str] = Field(default_factory=list)
+    group_id: str = ""
+    partition_cnt: int = 0
+    initial_partition: int = 0
+    dial_timeout: str = ""
+    read_timeout: str = ""
+    write_timeout: str = ""
+    retry_max: int = 0
+    retry_backoff: str = ""
+    channel_buffer: int = 0
+    sync_interval: str = ""
+    stats_interval: str = ""
+    compression_type: str = ""
+    idempotent: bool = False
+    max_open_requests: int = 0
+    retention_ms: int = 0
+
+    def producer_conf(self) -> kafkax.ProducerConf:
+        """yaml kafka 段 → kafkax.ProducerConf,对应 Go 的 buildProducerConfig。
+
+        只映射 producer 侧真正被消费的字段;read_timeout / channel_buffer 等
+        Python 客户端没有对应旋钮的,**刻意不假装映射**(映射到别的旋钮上会让
+        yaml 的意图和实际行为悄悄分叉)。
+        """
+        return kafkax.ProducerConf(
+            brokers=tuple(self.brokers),
+            partition_cnt=self.partition_cnt,
+            retry_max=self.retry_max,
+            retry_backoff_ms=_ms(self.retry_backoff),
+            compression_type=self.compression_type,
+            idempotent=self.idempotent,
+            dial_timeout_ms=_ms(self.dial_timeout),
+        )
+
+
+class SessionGateConf(pconfig.BaseModel):
+    """对应 Go 的 pkg/config.SessionGateConf(trade 只用到 require)。
+
+    require=true 是 prod 强制档(gen_cluster_config.ps1 机械置):会话权威端点漏配
+    直接拒启,带会话证据的请求在 gate 未装配时一律 fail-closed。
+    留空(dev)= 宽松档:仅漏配端点时跳过判定,gate 已装配时顶号 / 登出照常拒。
+    """
+
+    require: bool = False
+
+
+def _ms(raw: str) -> int:
+    """Go duration 文本 → 毫秒整数;空 / 零一律 0(= 沿用客户端库默认)。"""
+    return int(pconfig.parse_duration(raw).total_seconds() * 1000)
 
 
 class TradeConf(pconfig.BaseModel):
@@ -51,6 +117,10 @@ class Config(pconfig.BaseConf):
     """trade 完整配置。"""
 
     trade: TradeConf = Field(default_factory=TradeConf)
+    # kafka / session_gate 在 Go 侧属于 config.Base(全服务共有);Python 侧的 BaseConf
+    # 还没建到它们,先在这里补上。见 KafkaConf 头注释里"为什么不能留给 extra"。
+    kafka: KafkaConf = Field(default_factory=KafkaConf)
+    session_gate: SessionGateConf = Field(default_factory=SessionGateConf)
 
     def apply_defaults(self) -> None:
         """默认值必须与 Go 侧 Defaults() 逐个相同 —— 端口尤其重要(Envoy cluster 钉在上面)。"""

@@ -16,18 +16,17 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 
 import pytest
+
+from mysqlfixture import MYSQL_DSN as DSN
+from mysqlfixture import ensure_database, parse_go_dsn, skip_only_if_mysql_is_down
 
 from pandorapy import errcode, placement
 from pandorapy.services.owner import data as odata
 from pandorapy.services.owner import repo as orepo
 
-DSN = os.getenv(
-    "PANDORA_TEST_MYSQL_DSN", "root:pandora_dev_root@tcp(127.0.0.1:13306)/"
-)
 
 # 与 deploy/mysql-init/15-owner-tables.sql 同构(TiDB 侧 02-owner-tidb.sql 同 DDL)。
 _DDL = [
@@ -72,21 +71,6 @@ _DDL = [
 ]
 
 
-def _parse_dsn(dsn: str) -> dict:
-    """解析 Go 风格 DSN `user:pass@tcp(host:port)/db`。"""
-    cred, _, rest = dsn.partition("@tcp(")
-    user, _, password = cred.partition(":")
-    hostport, _, dbpart = rest.partition(")/")
-    host, _, port = hostport.partition(":")
-    return {
-        "user": user,
-        "password": password,
-        "host": host or "127.0.0.1",
-        "port": int(port or 3306),
-        "db": (dbpart.split("?")[0] or "pandora_owner"),
-    }
-
-
 @pytest.fixture
 async def pool():
     """每个用例一个连接池 —— **必须 function 作用域**。
@@ -109,9 +93,22 @@ async def pool():
         "cryptography",
         reason="MySQL 8.x 默认 caching_sha2_password 认证,Python 驱动需要 cryptography",
     )
-    cfg = _parse_dsn(DSN)
-    cfg["db"] = cfg["db"] or "pandora_owner"
-    try:
+    cfg = parse_go_dsn(DSN, default_db="pandora_owner")
+    # * 只有"MySQL 没起来"才允许跳过 —— 夹具自己的代码(ensure_database / cfg 取键 /
+    #   create_pool 形参)抛的异常必须原样冒红。判据、放行集与 CI 文案契约
+    #   见 tests/mysqlfixture.py 的 skip_only_if_mysql_is_down。
+    with skip_only_if_mysql_is_down(
+        cfg,
+        "owner 数据层测试",
+        hint=(
+            "起一个:docker run -d -p 13306:3306 -e MYSQL_ROOT_PASSWORD=pandora_dev_root "
+            "-e MYSQL_DATABASE=pandora_owner mysql:8.4 "
+            '--sql-mode="STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"'
+        ),
+    ):
+        # CI 的 DSN 无库名且 ci-db 的 mysql 没有 init 脚本 —— 库得自己建,
+        # 与 Go 侧 *_mysql_test.go 同做法。理由见 tests/mysqlfixture.py 头注释。
+        await ensure_database(asyncmy, cfg)
         p = await asyncio.wait_for(
             asyncmy.create_pool(
                 host=cfg["host"], port=cfg["port"], user=cfg["user"],
@@ -119,14 +116,6 @@ async def pool():
                 autocommit=True,
             ),
             timeout=8,
-        )
-    except Exception as exc:  # noqa: BLE001
-        pytest.skip(
-            f"MySQL 不可用 @ {cfg['host']}:{cfg['port']} ({exc}) —— "
-            f"owner 数据层测试整体跳过(不假装通过)。"
-            f"起一个:docker run -d -p 13306:3306 -e MYSQL_ROOT_PASSWORD=pandora_dev_root "
-            f"-e MYSQL_DATABASE=pandora_owner mysql:8.4 "
-            f'--sql-mode="STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"'
         )
     try:
         async with p.acquire() as conn, conn.cursor() as cur:
@@ -418,14 +407,68 @@ async def test_stale_source_revision_rejected(repo) -> None:
     assert exc.value.code == errcode.ErrOwnerSourceRevisionStale
 
 
-async def test_legacy_zero_revision_is_allowed(repo) -> None:
-    """source_revision=0 = 调用方尚未滚上本协议(兼容窗)→ 放行,且不覆盖高水位。"""
+async def test_legacy_zero_revision_allowed_only_before_any_version(repo) -> None:
+    """source_revision=0(兼容窗)只在该玩家**从未见过版本**时放行,且不推进高水位。"""
     op1, op2 = _op(), _op()
     a = _target(instance_uid="uid-A")
     b = _target(instance_uid="uid-B", assignment_or_allocation_id="assign-2")
-    await repo.begin_transition(14001, 0, op1, odata.OWNER_TYPE_HUB, a, 60, SKEW)
+    await repo.begin_transition(14001, 0, op1, odata.OWNER_TYPE_HUB, a, 0, SKEW)
     rec = await repo.begin_transition(14001, 1, op2, odata.OWNER_TYPE_HUB, b, 0, SKEW)
-    assert rec.hub_source_revision == 60, "legacy 写者把高水位抹掉了"
+    assert rec.hub_source_revision == 0
+    assert rec.owner_epoch == 2, "兼容窗内的 legacy 迁移应该正常推进 epoch"
+
+
+async def test_legacy_zero_revision_rejected_after_a_version_was_seen(repo) -> None:
+    """★ 见过非零版本之后,legacy(=0)必须被**永久拒绝**。
+
+    这是整道门的关键,也是 INC-20260818-003 的事故形状本身:
+    0 与任何非零 revision **不可比**,不能当成"最小值"放行 ——
+    否则旧 hub_allocator 只要"不带版本"就能绕过整道门,把玩家写回旧 Hub,
+    而 Redis 与 Owner 从此分叉(静默失主,没有任何运行期信号)。
+
+    这条曾经是反着钉死的:老实现写的是 `if source_revision > 0:`(=0 整条跳过闸),
+    配套用例还断言"放行且不覆盖高水位"。测试全绿,门却是开的。
+    """
+    op1, op2 = _op(), _op()
+    a = _target(instance_uid="uid-A")
+    b = _target(instance_uid="uid-B", assignment_or_allocation_id="assign-2")
+    await repo.begin_transition(14101, 0, op1, odata.OWNER_TYPE_HUB, a, 60, SKEW)
+    with pytest.raises(errcode.PandoraError) as exc:
+        await repo.begin_transition(14101, 1, op2, odata.OWNER_TYPE_HUB, b, 0, SKEW)
+    assert exc.value.code == errcode.ErrOwnerSourceRevisionStale
+    assert "legacy_after_versioned" in str(exc.value)
+    # 高水位不能被这次被拒的写动到
+    assert (await repo.query(14101)).hub_source_revision == 60
+
+
+async def test_same_revision_different_target_is_rejected(repo) -> None:
+    """★ 同一版本号指向**不同** target = 铸号被复制(两个写者共用了同一任期)。
+
+    这不是"旧写者迟到"(那是 stale),是全序前提本身被打破 —— 必须拒。
+    老实现用的是严格 `<`,相等一律放行,于是两个共用任期的写者可以互相覆盖。
+    """
+    op1, op2 = _op(), _op()
+    a = _target(instance_uid="uid-A")
+    b = _target(instance_uid="uid-B", assignment_or_allocation_id="assign-2")
+    await repo.begin_transition(14201, 0, op1, odata.OWNER_TYPE_HUB, a, 70, SKEW)
+    with pytest.raises(errcode.PandoraError) as exc:
+        await repo.begin_transition(14201, 1, op2, odata.OWNER_TYPE_HUB, b, 70, SKEW)
+    assert exc.value.code == errcode.ErrOwnerSourceRevisionStale
+    assert "same_revision_different_target" in str(exc.value)
+
+
+async def test_global_legacy_gate_rejects_even_before_any_version(repo) -> None:
+    """rollout 最后一步:全局门打开后,连兼容窗内的 legacy 也一律拒。"""
+    op = _op()
+    repo.set_reject_legacy_source_revision(True)
+    try:
+        with pytest.raises(errcode.PandoraError) as exc:
+            await repo.begin_transition(
+                14301, 0, op, odata.OWNER_TYPE_HUB, _target(instance_uid="uid-A"), 0, SKEW
+            )
+        assert "legacy_rejected_globally" in str(exc.value)
+    finally:
+        repo.set_reject_legacy_source_revision(False)
 
 
 # ── 审计 ────────────────────────────────────────────────────────────────────
@@ -464,3 +507,198 @@ async def test_oversized_detail_does_not_fail_transition(repo) -> None:
     )
     rec = await repo.begin_transition(16001, 0, op, odata.OWNER_TYPE_HUB, huge, 0, SKEW)
     assert rec.owner_epoch == 1
+
+
+# ══ 2026-08-19 与 Go 逐条对照时抓到的三处移植缺陷 ═════════════════════════════
+#
+# 三条的共同点:**功能全对、测试全绿、diff 也看不出来**,只有把 Go 与 Python 起在
+# 同一个库上跑同一份场景才暴露。所以每条都在这里钉一个机械判据。
+
+
+async def test_source_revision_gate_runs_before_noop_branches(repo) -> None:
+    """★ 来源版本闸必须排在 **no-op 早退分支之前**(INC-20260818-003)。
+
+    移植时把顺序写成了「同 target no-op → epoch CAS → 版本闸」,后果是
+    **重复投递整条跳过版本校验**:旧 hub_allocator 拿着更旧的 revision 重投同一
+    target,权威照样回 OK。
+
+    为什么 epoch 检查兜不住:事故反例里旧 binary 手上握着一个**合法**的
+    expect_epoch(它先 Begin 后 CAS),epoch 一致 —— 能判定"谁的来源更新"的只有本闸。
+    """
+    pid = 9101
+    high, low = (1 << 24) | 2, (1 << 24) | 1
+    target = _target(instance_uid="uid-rev-a")
+    await repo.begin_transition(pid, 0, _op(), odata.OWNER_TYPE_HUB, target, high, SKEW)
+
+    with pytest.raises(errcode.PandoraError) as exc:
+        # 同一个 target(会命中 no-op 分支),但 revision 更旧
+        await repo.begin_transition(pid, 1, _op(), odata.OWNER_TYPE_HUB, target, low, SKEW)
+    assert exc.value.code == errcode.ErrOwnerSourceRevisionStale, (
+        "同 target 的重复投递绕过了来源版本闸 —— 闸被排在 no-op 之后了"
+    )
+
+
+async def test_high_water_advances_on_noop_branch(repo) -> None:
+    """★ 高水位必须在 no-op 早退分支里**也推进**。
+
+    hub 侧把存量 legacy(0)补成 R 时,target 一个字节都不变 —— 这次 Begin 必然落到
+    幂等重放 / same_target 的 return。推水位的代码若只写在下游就永远走不到,水位
+    永久停在旧值,「某玩家见过非零版本就永久拒 legacy」这条逐玩家防线对这批玩家
+    **从不 arm**,只剩全局开关一道保护。
+
+    判据用"后续更旧的版本会不会被拒",而不是直接读水位 —— 读到的数对不对是表象,
+    门有没有 arm 才是要的东西。
+    """
+    pid = 9102
+    r1, r2 = (1 << 24) | 1, (1 << 24) | 2
+    target = _target(instance_uid="uid-rev-b")
+    await repo.begin_transition(pid, 0, _op(), odata.OWNER_TYPE_HUB, target, r1, SKEW)
+
+    # 同 target 重投更高版本 → 走 no-op 分支,但水位必须推到 r2
+    noop = await repo.begin_transition(pid, 1, _op(), odata.OWNER_TYPE_HUB, target, r2, SKEW)
+    assert noop.hub_source_revision == r2, "no-op 分支没有推进高水位"
+
+    # 换 target 用回 r1 → 必须被拒(证明水位真的 arm 了,不只是返回值好看)
+    with pytest.raises(errcode.PandoraError) as exc:
+        await repo.begin_transition(
+            pid, 1, _op(), odata.OWNER_TYPE_HUB, _target(instance_uid="uid-rev-c"), r1, SKEW
+        )
+    assert exc.value.code == errcode.ErrOwnerSourceRevisionStale
+
+
+async def test_barrier_error_carries_retry_after_and_record(repo) -> None:
+    """★ 屏障未开的错误必须**同时**带 retry_after_ms 与当前记录。
+
+    Go 的 Admit 签名是 `(rec, retryAfterMs, err)` 三元,三样一起返回;Python 用异常
+    传播,不显式挂上就等于丢掉 —— 调用方收到 `retry_after_ms=0` 的 WAIT,只能空转
+    或干等,§9.23「不得无出口等待」当场被打穿,而且**没有任何报错**。
+    """
+    pid = 9103
+    battle = _target(
+        pod_name="battle-r", instance_uid="uid-rev-d", assignment_or_allocation_id="al-r"
+    )
+    await repo.renew_instance_lease(battle, 20)
+    await repo.begin_transition(pid, 0, _op(), odata.OWNER_TYPE_BATTLE, battle, 0, SKEW)
+    op2 = _op()
+    nxt = _target(
+        pod_name="battle-r2", instance_uid="uid-rev-e", assignment_or_allocation_id="al-r2"
+    )
+    await repo.begin_transition(pid, 1, op2, odata.OWNER_TYPE_BATTLE, nxt, 0, SKEW)
+
+    with pytest.raises(errcode.PandoraError) as exc:
+        await repo.admit(pid, 2, op2, nxt)
+    assert exc.value.code == errcode.ErrOwnerBarrierNotOpen
+    assert exc.value.retry_after_ms > 0, (
+        "屏障未开却没给 retry_after_ms —— 调用方无法退避,只能空转或干等"
+    )
+    assert exc.value.current_record is not None, "屏障未开时没有附当前记录"
+    assert exc.value.current_record.owner_epoch == 2
+
+
+async def test_release_preserves_operation_and_barrier_columns(repo) -> None:
+    """★ Release 不得清 operation_id / admit_not_before_ms / hub_source_revision。
+
+    清掉 hub_source_revision 的后果:「打完一局 / 掉一次线」就把该玩家的门重新对
+    legacy(0)敞开,滚动窗口里的旧写者随即又能写进来。
+
+    清掉 operation_id 的后果更隐蔽:「已释放」这个状态失去锚点,迟到 Release 的判定
+    只能靠 operation 对不上来兜 —— 而那与「另一条链拿着过期 operation 来释放」
+    在日志里完全无法区分,两者都只剩 operation_mismatch。
+    """
+    pid = 9104
+    rev = (1 << 24) | 5
+    op = _op()
+    target = _target(instance_uid="uid-rev-f")
+    await repo.begin_transition(pid, 0, op, odata.OWNER_TYPE_HUB, target, rev, SKEW)
+    await repo.admit(pid, 1, op, target)
+
+    released = await repo.release(pid, 1, op)
+    assert released.owner_type == odata.OWNER_TYPE_NONE
+    assert released.owner_epoch == 1, "epoch 被清零 —— 下一次 Begin 的 expect_epoch=0 会通过"
+    assert released.hub_source_revision == rev, "释放把来源版本高水位一起抹掉了"
+    assert released.operation_id == op, "释放清掉了 operation_id"
+
+    # 重放的 Release 必须是 no-op(靠守卫里的 owner_type == NONE 拦下,
+    # 而不是靠"operation_id 已被清空"这种副作用)
+    again = await repo.release(pid, 1, op)
+    assert again.owner_type == odata.OWNER_TYPE_NONE
+    assert again.hub_source_revision == rev
+
+
+async def test_release_noop_reason_distinguishes_causes(repo) -> None:
+    """★ 迟到 Release 的四种成因必须能分开 —— 处置完全不同。
+
+    already_released 是正常重放;epoch_mismatch / operation_mismatch 说明调用方拿着
+    过期上下文在释放(可能是另一条链的残留);record_absent 是权威侧丢了记录。
+    只打一句"no-op"的话,值班的人分不出该不该管。
+    """
+    rec = odata.OwnerRecord(
+        player_id=1, owner_epoch=7, owner_type=odata.OWNER_TYPE_HUB, operation_id="op-x"
+    )
+    assert odata.release_noop_reason(False, rec, 7, "op-x") == "record_absent"
+    assert odata.release_noop_reason(True, rec, 8, "op-x") == "epoch_mismatch"
+    assert odata.release_noop_reason(True, rec, 7, "op-y") == "operation_mismatch"
+    freed = odata.OwnerRecord(
+        player_id=1, owner_epoch=7, owner_type=odata.OWNER_TYPE_NONE, operation_id="op-x"
+    )
+    assert odata.release_noop_reason(True, freed, 7, "op-x") == "already_released"
+
+
+# ── autocommit=False 下归还连接会不会留下未提交事务(2026-08-19 实测定谳)──────
+#
+# 起因:owner/repo.py 的 `query()` 是**唯一**既不 commit 也不 rollback 的路径,而池建成
+# `autocommit=False`。审计当时把它列为"需要证据"的疑点,mail/main.py 的注释也断言
+# 「建成 False 会让连接归池后带着旧快照被复用,读到陈旧数据且零报错」。
+#
+# **实测结论:这个危险在 asyncmy 的池上不成立。** 用 maxsize=1 强制复用同一条连接,
+# 第一次 SELECT 后不提交就归还,另一条独立连接插入并提交,再借出同一条连接 ——
+# 能读到新行(隔离级别确认是 REPEATABLE-READ)。说明池在归还/借出时重置了事务。
+#
+# 所以:
+#   - owner.query() 缺 rollback **不是** live bug,不要按那个理由去"修"它;
+#   - mail 选 autocommit=True 的正当理由是**与 Go 的 database/sql 默认语义对齐**,
+#     不是"否则会读到陈旧数据"。
+#
+# 这条测试把该行为钉住:asyncmy 换版本改掉这个语义时要能当场发现,
+# 因为那时 owner.query() 就**真的**需要补 rollback 了。
+
+
+async def test_pool_reset_transaction_on_release_with_autocommit_false(pool) -> None:
+    """★ 池归还连接时必须重置事务,否则 owner.query() 的无提交读会污染下一个请求。"""
+    asyncmy = pytest.importorskip("asyncmy")
+    table = "autocommit_probe"
+
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(f"DROP TABLE IF EXISTS {table}")
+        await cur.execute(f"CREATE TABLE {table} (id INT PRIMARY KEY)")
+        await conn.commit()
+
+    # ① 复刻 owner.query() 的形状:只读、**不提交**就归还
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(f"SELECT COUNT(*) FROM {table}")
+        before = (await cur.fetchone())[0]
+
+    # ② 用一条**完全独立**的连接写入并提交(不走这个池)
+    cfg = parse_go_dsn(DSN, default_db="pandora_owner")
+    other = await asyncmy.connect(
+        host=cfg["host"], port=cfg["port"], user=cfg["user"],
+        password=cfg["password"], db=cfg["db"], autocommit=True,
+    )
+    try:
+        async with other.cursor() as cur:
+            await cur.execute(f"INSERT INTO {table} (id) VALUES (1)")
+    finally:
+        await other.ensure_closed()
+
+    # ③ 再从池里读:读不到新行 = 旧快照跟着连接回到了池里
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(f"SELECT COUNT(*) FROM {table}")
+        after = (await cur.fetchone())[0]
+        await cur.execute(f"DROP TABLE IF EXISTS {table}")
+        await conn.commit()
+
+    assert after == before + 1, (
+        "归还连接时没有重置事务 —— 上一个请求的未提交只读事务把 REPEATABLE READ 快照"
+        "带给了下一个请求。此时 owner.query() 必须补 rollback/commit,"
+        "否则归属权威会基于过期事实判定(§9.22)。"
+    )

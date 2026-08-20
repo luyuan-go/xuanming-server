@@ -68,18 +68,20 @@ TEAM_UPDATE_REASON_MAP_CHANGED: TeamUpdateReason
 TEAM_UPDATE_REASON_MEMBER_OFFLINE_LEFT: TeamUpdateReason
 
 class TeamMember(_message.Message):
-    __slots__ = ("player_id", "nickname", "mmr", "ready", "hero_id")
+    __slots__ = ("player_id", "nickname", "mmr", "ready", "hero_id", "player_no")
     PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
     NICKNAME_FIELD_NUMBER: _ClassVar[int]
     MMR_FIELD_NUMBER: _ClassVar[int]
     READY_FIELD_NUMBER: _ClassVar[int]
     HERO_ID_FIELD_NUMBER: _ClassVar[int]
+    PLAYER_NO_FIELD_NUMBER: _ClassVar[int]
     player_id: int
     nickname: str
     mmr: int
     ready: bool
     hero_id: int
-    def __init__(self, player_id: _Optional[int] = ..., nickname: _Optional[str] = ..., mmr: _Optional[int] = ..., ready: bool = ..., hero_id: _Optional[int] = ...) -> None: ...
+    player_no: int
+    def __init__(self, player_id: _Optional[int] = ..., nickname: _Optional[str] = ..., mmr: _Optional[int] = ..., ready: bool = ..., hero_id: _Optional[int] = ..., player_no: _Optional[int] = ...) -> None: ...
 
 class Team(_message.Message):
     __slots__ = ("team_id", "captain_id", "members", "state", "created_at_ms", "max_size", "map_id", "join_policy")
@@ -324,7 +326,7 @@ class SetTeamMapResponse(_message.Message):
     def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., team: _Optional[_Union[Team, _Mapping]] = ...) -> None: ...
 
 class OpenTeamBrief(_message.Message):
-    __slots__ = ("team_id", "captain_id", "member_count", "max_size", "map_id", "created_at_ms", "join_policy")
+    __slots__ = ("team_id", "captain_id", "member_count", "max_size", "map_id", "created_at_ms", "join_policy", "captain_nickname", "captain_player_no")
     TEAM_ID_FIELD_NUMBER: _ClassVar[int]
     CAPTAIN_ID_FIELD_NUMBER: _ClassVar[int]
     MEMBER_COUNT_FIELD_NUMBER: _ClassVar[int]
@@ -332,6 +334,8 @@ class OpenTeamBrief(_message.Message):
     MAP_ID_FIELD_NUMBER: _ClassVar[int]
     CREATED_AT_MS_FIELD_NUMBER: _ClassVar[int]
     JOIN_POLICY_FIELD_NUMBER: _ClassVar[int]
+    CAPTAIN_NICKNAME_FIELD_NUMBER: _ClassVar[int]
+    CAPTAIN_PLAYER_NO_FIELD_NUMBER: _ClassVar[int]
     team_id: int
     captain_id: int
     member_count: int
@@ -339,7 +343,9 @@ class OpenTeamBrief(_message.Message):
     map_id: int
     created_at_ms: int
     join_policy: TeamJoinPolicy
-    def __init__(self, team_id: _Optional[int] = ..., captain_id: _Optional[int] = ..., member_count: _Optional[int] = ..., max_size: _Optional[int] = ..., map_id: _Optional[int] = ..., created_at_ms: _Optional[int] = ..., join_policy: _Optional[_Union[TeamJoinPolicy, str]] = ...) -> None: ...
+    captain_nickname: str
+    captain_player_no: int
+    def __init__(self, team_id: _Optional[int] = ..., captain_id: _Optional[int] = ..., member_count: _Optional[int] = ..., max_size: _Optional[int] = ..., map_id: _Optional[int] = ..., created_at_ms: _Optional[int] = ..., join_policy: _Optional[_Union[TeamJoinPolicy, str]] = ..., captain_nickname: _Optional[str] = ..., captain_player_no: _Optional[int] = ...) -> None: ...
 
 class ListOpenTeamsRequest(_message.Message):
     __slots__ = ("map_id", "limit")
@@ -376,12 +382,16 @@ class ApplyToTeamResponse(_message.Message):
     def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., joined: bool = ..., team: _Optional[_Union[Team, _Mapping]] = ..., expires_at_ms: _Optional[int] = ...) -> None: ...
 
 class TeamApplication(_message.Message):
-    __slots__ = ("player_id", "expires_at_ms")
+    __slots__ = ("player_id", "expires_at_ms", "nickname", "player_no")
     PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
     EXPIRES_AT_MS_FIELD_NUMBER: _ClassVar[int]
+    NICKNAME_FIELD_NUMBER: _ClassVar[int]
+    PLAYER_NO_FIELD_NUMBER: _ClassVar[int]
     player_id: int
     expires_at_ms: int
-    def __init__(self, player_id: _Optional[int] = ..., expires_at_ms: _Optional[int] = ...) -> None: ...
+    nickname: str
+    player_no: int
+    def __init__(self, player_id: _Optional[int] = ..., expires_at_ms: _Optional[int] = ..., nickname: _Optional[str] = ..., player_no: _Optional[int] = ...) -> None: ...
 
 class ListTeamApplicationsRequest(_message.Message):
     __slots__ = ("team_id",)

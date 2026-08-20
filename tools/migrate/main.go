@@ -6,17 +6,22 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +35,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	migratemysql "github.com/golang-migrate/migrate/v4/database/mysql"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/luyuancpp/pandora/tools/migrate/workspacedb"
 )
 
 const (
@@ -56,6 +62,11 @@ var (
 		`^([0-9]+)_[a-z0-9_]+\.up\.sql$`,
 	)
 	mysqlAccountPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,32}$`)
+	// 真实 quarantine 只认 canonical/workspace 库；额外这一项仅供本文件的真库集成测试，
+	// 且钉死 time.Now().UnixNano() 当前生成的 19 位十进制后缀，不能退回宽泛前缀。
+	pandoraPlayerMigrationIntegrationDatabasePattern = regexp.MustCompile(
+		`^pandora_player_mig_it_[0-9]{19}$`,
+	)
 )
 
 // migrationsFS 烘焙进 scratch 镜像，无需运行期 ConfigMap 或可写卷。
@@ -74,6 +85,7 @@ type migrationTarget struct {
 	MigrationSet             string `json:"migration_set"`
 	Database                 string `json:"database"`
 	DSNFile                  string `json:"dsn_file"`
+	TLSCAFile                string `json:"tls_ca_file,omitempty"`
 	BootstrapAdminDSNFile    string `json:"bootstrap_admin_dsn_file,omitempty"`
 	TimeoutSeconds           int    `json:"timeout_seconds,omitempty"`
 	LockWaitTimeoutSeconds   int    `json:"lock_wait_timeout_seconds,omitempty"`
@@ -91,6 +103,8 @@ type commandConfig struct {
 	ExpectedTargets string
 	Environment     string
 	Bootstrap       bool
+	WorkspaceID     string
+	VerifyOnly      bool
 	WorkerTarget    string
 }
 
@@ -129,19 +143,26 @@ func run(args []string) error {
 	if err := validateExpectedTargets(manifest.Targets, expectedTargets); err != nil {
 		return err
 	}
-	requireTLS := !isDevelopmentEnvironment(cfg.Environment)
+	if err := validateWorkspaceTargets(manifest.Targets, cfg.WorkspaceID); err != nil {
+		return fmt.Errorf("workspace 目标校验失败: %w", err)
+	}
+	requireTLS := cfg.VerifyOnly || requiresVerifiedTLS(cfg.Environment, cfg.WorkspaceID)
 	if err := preflightTargets(manifest.Targets, cfg.Bootstrap, requireTLS); err != nil {
 		return fmt.Errorf("目标预检失败: %w", err)
 	}
 
-	// worker 只迁移父进程指定的单目标。父进程用操作系统级进程超时兜底，避免某条
-	// DDL 或驱动调用永久卡住。
+	// worker 只处理父进程指定的单目标。父进程用操作系统级进程超时兜底，避免迁移 DDL、
+	// TLS 握手或只读验收查询永久卡住。
 	if cfg.WorkerTarget != "" {
 		target, ok := findTarget(manifest.Targets, cfg.WorkerTarget)
 		if !ok {
 			return fmt.Errorf("worker 目标 %q 不在清单中", cfg.WorkerTarget)
 		}
-		return migrateTarget(target, requireTLS)
+		return executeWorkerTargetMode(
+			cfg.VerifyOnly,
+			func() error { return verifyTarget(target, requireTLS) },
+			func() error { return migrateTarget(target, requireTLS) },
+		)
 	}
 
 	if cfg.Bootstrap {
@@ -154,18 +175,38 @@ func run(args []string) error {
 	}
 
 	for _, target := range manifest.Targets {
-		if err := runTargetWithDeadline(cfg.TargetsFile, cfg.Environment, expectedTargets, target); err != nil {
+		if err := runTargetWithDeadline(
+			cfg.TargetsFile, cfg.Environment, cfg.WorkspaceID, cfg.VerifyOnly, expectedTargets, target,
+		); err != nil {
 			return err
 		}
 	}
-	log.Printf("[migrate] 全部 %d 个物理目标迁移并验收完成", len(manifest.Targets))
+	if cfg.VerifyOnly {
+		log.Printf("[migrate] 全部 %d 个物理目标只读预检完成", len(manifest.Targets))
+	} else {
+		log.Printf("[migrate] 全部 %d 个物理目标迁移并验收完成", len(manifest.Targets))
+	}
 	return nil
+}
+
+func executeWorkerTargetMode(verifyOnly bool, verify, migrate func() error) error {
+	if verifyOnly {
+		return verify()
+	}
+	return migrate()
 }
 
 func parseCommandConfig(args []string) (commandConfig, error) {
 	bootstrapDefault, err := strictEnvBool("MIGRATE_BOOTSTRAP_DB", false)
 	if err != nil {
 		return commandConfig{}, err
+	}
+	verifyOnlyDefault := false
+	if !hasExplicitBoolFlag(args, "verify-only") {
+		verifyOnlyDefault, err = strictEnvBool("MIGRATE_VERIFY_ONLY", false)
+		if err != nil {
+			return commandConfig{}, err
+		}
 	}
 
 	set := flag.NewFlagSet("pandora-migrate", flag.ContinueOnError)
@@ -179,6 +220,10 @@ func parseCommandConfig(args []string) (commandConfig, error) {
 		"环境名；bootstrap 只允许 local/dev/development")
 	set.BoolVar(&cfg.Bootstrap, "bootstrap", bootstrapDefault,
 		"仅开发环境显式建库并给迁移账号授权，默认 false")
+	set.StringVar(&cfg.WorkspaceID, "workspace-id", os.Getenv("MIGRATE_WORKSPACE_ID"),
+		"中心开发库的稳定 workspace ID；workspace 目标必须显式提供")
+	set.BoolVar(&cfg.VerifyOnly, "verify-only", verifyOnlyDefault,
+		"只读校验连接、TLS 与 schema 版本，不执行迁移或建库")
 	set.StringVar(&cfg.WorkerTarget, "worker-target", "", "内部参数：只执行一个迁移目标")
 	if err := set.Parse(args); err != nil {
 		return commandConfig{}, fmt.Errorf("解析参数: %w", err)
@@ -203,7 +248,33 @@ func parseCommandConfig(args []string) (commandConfig, error) {
 	if cfg.Environment == "" {
 		cfg.Environment = "production"
 	}
+	cfg.WorkspaceID = strings.TrimSpace(cfg.WorkspaceID)
+	if cfg.WorkspaceID != "" {
+		if err := workspacedb.ValidateWorkspaceID(cfg.WorkspaceID); err != nil {
+			return commandConfig{}, err
+		}
+		if cfg.Bootstrap {
+			return commandConfig{}, errors.New("workspace 目标禁止使用客户端 bootstrap/admin DSN；必须由中心 provisioner 建库授权")
+		}
+	}
+	if cfg.VerifyOnly && cfg.Bootstrap {
+		return commandConfig{}, errors.New("verify-only 与 bootstrap 互斥，只读预检不得建库或授权")
+	}
 	return cfg, nil
+}
+
+func hasExplicitBoolFlag(args []string, name string) bool {
+	short := "-" + name
+	long := "--" + name
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if arg == short || arg == long || strings.HasPrefix(arg, short+"=") || strings.HasPrefix(arg, long+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func loadTargetManifest(path string) (targetManifest, error) {
@@ -246,9 +317,29 @@ func loadTargetManifest(path string) (targetManifest, error) {
 		}
 		if !validMigrationDatabaseMapping(target.MigrationSet, target.Database) {
 			return targetManifest{}, fmt.Errorf(
-				"目标 %s 的 database=%q 必须等于 migration_set=%q 或使用其下划线分片前缀",
+				"目标 %s 的 database=%q 必须等于 migration_set=%q、使用合法 workspace 名或其下划线分片前缀",
 				target.Name, target.Database, target.MigrationSet,
 			)
+		}
+		target.TLSCAFile = strings.TrimSpace(target.TLSCAFile)
+		_, workspaceTarget := workspacedb.ParsePhysicalDatabaseName(target.MigrationSet, target.Database)
+		if workspaceTarget {
+			if target.TLSCAFile == "" {
+				return targetManifest{}, fmt.Errorf("目标 %s 的 workspace 库必须提供 tls_ca_file", target.Name)
+			}
+			if !filepath.IsAbs(target.TLSCAFile) {
+				return targetManifest{}, fmt.Errorf("目标 %s 的 tls_ca_file 必须是绝对路径", target.Name)
+			}
+			target.TLSCAFile = filepath.Clean(target.TLSCAFile)
+			info, err := os.Stat(target.TLSCAFile)
+			if err != nil {
+				return targetManifest{}, fmt.Errorf("目标 %s 的 tls_ca_file 不可读: %w", target.Name, err)
+			}
+			if !info.Mode().IsRegular() {
+				return targetManifest{}, fmt.Errorf("目标 %s 的 tls_ca_file 必须是普通文件", target.Name)
+			}
+		} else if target.TLSCAFile != "" {
+			return targetManifest{}, fmt.Errorf("目标 %s 不是 workspace 库，不得设置 tls_ca_file", target.Name)
 		}
 		if strings.TrimSpace(target.DSNFile) == "" {
 			return targetManifest{}, fmt.Errorf("目标 %s 缺少 dsn_file", target.Name)
@@ -382,7 +473,44 @@ func formatExpectedTargetInventory(descriptors []targetDescriptor) string {
 }
 
 func validMigrationDatabaseMapping(migrationSet, database string) bool {
-	return database == migrationSet || strings.HasPrefix(database, migrationSet+"_")
+	if database == migrationSet {
+		return true
+	}
+	if strings.HasPrefix(database, migrationSet+"_w_") {
+		_, ok := workspacedb.ParsePhysicalDatabaseName(migrationSet, database)
+		return ok
+	}
+	return strings.HasPrefix(database, migrationSet+"_")
+}
+
+// validateWorkspaceTargets 把 workspace ID 当作独立的 fail-closed guard，而不是从
+// database 字符串反推授权。workspace 清单缺 guard、混入 canonical/shard 库或串到另一个
+// workspace 都会在读取 DSN 和连库前失败。
+func validateWorkspaceTargets(targets []migrationTarget, workspaceID string) error {
+	if workspaceID != "" {
+		if err := workspacedb.ValidateWorkspaceID(workspaceID); err != nil {
+			return err
+		}
+	}
+	for _, target := range targets {
+		actualID, isWorkspace := workspacedb.ParsePhysicalDatabaseName(target.MigrationSet, target.Database)
+		if strings.HasPrefix(target.Database, target.MigrationSet+"_w_") && !isWorkspace {
+			return fmt.Errorf("目标 %s 的 database=%q 使用保留 _w_ 命名空间但不是合法 workspace 库", target.Name, target.Database)
+		}
+		if workspaceID == "" {
+			if isWorkspace {
+				return fmt.Errorf("目标 %s 指向 workspace 库 %q，但缺少 -workspace-id guard", target.Name, target.Database)
+			}
+			continue
+		}
+		if !isWorkspace {
+			return fmt.Errorf("目标 %s 的 database=%q 不是 workspace %s 的精确物理库", target.Name, target.Database, workspaceID)
+		}
+		if actualID != workspaceID {
+			return fmt.Errorf("目标 %s 的 database 属于 workspace %s，不是本次 guard=%s", target.Name, actualID, workspaceID)
+		}
+	}
+	return nil
 }
 
 func latestMigrationVersion(migrationSet string) (uint, error) {
@@ -457,9 +585,15 @@ func readAndHardenDSN(path string, target migrationTarget, requireTLS bool) (*my
 	if cfg.DBName != target.Database {
 		return nil, fmt.Errorf("DSN database=%q 与清单 database=%q 不一致", cfg.DBName, target.Database)
 	}
-	if requireTLS {
+	_, workspaceTarget := workspacedb.ParsePhysicalDatabaseName(target.MigrationSet, target.Database)
+	if requireTLS || workspaceTarget {
 		if cfg.TLSConfig != "true" || cfg.TLS == nil || cfg.TLS.InsecureSkipVerify || cfg.AllowFallbackToPlaintext {
 			return nil, errors.New("production DSN 必须显式 tls=true，拒绝明文、preferred、skip-verify 与 plaintext fallback")
+		}
+	}
+	if workspaceTarget {
+		if err := registerWorkspaceTLSConfig(cfg, target); err != nil {
+			return nil, err
 		}
 	}
 	cfg.MultiStatements = true
@@ -475,6 +609,191 @@ func readAndHardenDSN(path string, target migrationTarget, requireTLS bool) (*my
 	cfg.Params["lock_wait_timeout"] = strconv.Itoa(target.LockWaitTimeoutSeconds)
 	cfg.Params["innodb_lock_wait_timeout"] = strconv.Itoa(target.LockWaitTimeoutSeconds)
 	return cfg, nil
+}
+
+func registerWorkspaceTLSConfig(cfg *mysql.Config, target migrationTarget) error {
+	if target.TLSCAFile == "" {
+		return errors.New("workspace 目标缺少 tls_ca_file")
+	}
+	if !filepath.IsAbs(target.TLSCAFile) {
+		return errors.New("workspace tls_ca_file 必须是绝对路径")
+	}
+	caPath := filepath.Clean(target.TLSCAFile)
+	info, err := os.Stat(caPath)
+	if err != nil {
+		return fmt.Errorf("读取 workspace tls_ca_file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("workspace tls_ca_file 必须是普通文件")
+	}
+	if cfg.Net != "tcp" {
+		return fmt.Errorf("workspace MySQL 只允许 tcp，当前 network=%q", cfg.Net)
+	}
+	host, _, err := net.SplitHostPort(cfg.Addr)
+	if err != nil || strings.TrimSpace(host) == "" {
+		return fmt.Errorf("workspace MySQL DSN 地址 %q 无法提取 TLS 主机名", cfg.Addr)
+	}
+	caPEM, err := readBoundedFile(caPath)
+	if err != nil {
+		return fmt.Errorf("读取 workspace CA PEM: %w", err)
+	}
+	// workspace bundle CA 是唯一信任锚；不能混入系统根，否则同名但非 bundle
+	// 签发的证书也可能通过，破坏策划中心 MySQL 的私有 PKI 边界。
+	roots := x509.NewCertPool()
+	if err := appendStrictCACertificates(roots, caPEM); err != nil {
+		return err
+	}
+
+	keyMaterial := append(append([]byte(host), 0), caPEM...)
+	keyHash := sha256.Sum256(keyMaterial)
+	tlsConfigName := fmt.Sprintf("pandora-workspace-%x", keyHash)
+	if err := mysql.RegisterTLSConfig(tlsConfigName, &tls.Config{
+		RootCAs:    roots,
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
+	}); err != nil {
+		return fmt.Errorf("注册 workspace MySQL TLS 配置: %w", err)
+	}
+	// FormatDSN 只能序列化注册名，不能携带 *tls.Config。清掉 ParseDSN 为 tls=true
+	// 临时生成的 config，后续 sql.Open 重新解析 DSN 时会按唯一注册名取严格配置。
+	cfg.TLS = nil
+	cfg.TLSConfig = tlsConfigName
+	cfg.AllowFallbackToPlaintext = false
+	return nil
+}
+
+func appendStrictCACertificates(roots *x509.CertPool, raw []byte) error {
+	remaining := bytes.TrimSpace(raw)
+	if len(remaining) == 0 {
+		return errors.New("workspace CA PEM 为空")
+	}
+	certificates := 0
+	for len(remaining) > 0 {
+		if !bytes.HasPrefix(remaining, []byte("-----BEGIN CERTIFICATE-----")) {
+			return errors.New("workspace CA PEM 含非证书内容")
+		}
+		block, rest := pem.Decode(remaining)
+		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			return errors.New("workspace CA PEM 格式非法")
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return fmt.Errorf("解析 workspace CA PEM: %w", err)
+		}
+		if !certificate.IsCA || !certificate.BasicConstraintsValid {
+			return errors.New("workspace CA PEM 必须只包含有效 CA 证书")
+		}
+		certificates++
+		remaining = bytes.TrimSpace(rest)
+	}
+	if certificates == 0 || !roots.AppendCertsFromPEM(raw) {
+		return errors.New("workspace CA PEM 未包含可用 CA 证书")
+	}
+	return nil
+}
+
+func verifyTarget(target migrationTarget, requireTLS bool) (err error) {
+	log.Printf("[migrate] 目标=%s database=%s verify-only 开始", target.Name, target.Database)
+	cfg, err := readVerifyOnlyDSN(target.DSNFile, target, requireTLS)
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		return fmt.Errorf("打开 verify-only 数据库连接: %w", err)
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	ctx, cancel := context.WithTimeout(context.Background(), statementTimeout(target))
+	defer cancel()
+	if err := verifyTargetConnection(ctx, db, target, cfg.User); err != nil {
+		return err
+	}
+	log.Printf("[migrate] 目标=%s verify-only 通过 version=%d dirty=false TLS=verified",
+		target.Name, target.expectedMigrationVersion)
+	return nil
+}
+
+func readVerifyOnlyDSN(path string, target migrationTarget, requireTLS bool) (*mysql.Config, error) {
+	cfg, err := readAndHardenDSN(path, target, requireTLS)
+	if err != nil {
+		return nil, err
+	}
+	// go-sql-driver/mysql 会把 Params 编成连接初始化 SET。迁移模式需要有限锁等待参数，
+	// verify-only 则必须只握手、Ping 和执行固定读查询，因此清掉全部 session variables。
+	cfg.Params = nil
+	cfg.MultiStatements = false
+	return cfg, nil
+}
+
+func verifyTargetConnection(ctx context.Context, db *sql.DB, target migrationTarget, expectedUser string) error {
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("verify-only Ping 失败: %w", err)
+	}
+
+	var currentDatabase string
+	if err := db.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&currentDatabase); err != nil {
+		return fmt.Errorf("verify-only SELECT DATABASE(): %w", err)
+	}
+	if currentDatabase != target.Database {
+		return fmt.Errorf("verify-only DATABASE()=%q，与目标 database=%q 不一致", currentDatabase, target.Database)
+	}
+
+	var currentUser string
+	if err := db.QueryRowContext(ctx, "SELECT CURRENT_USER()").Scan(&currentUser); err != nil {
+		return fmt.Errorf("verify-only SELECT CURRENT_USER(): %w", err)
+	}
+	separator := strings.LastIndex(currentUser, "@")
+	if separator <= 0 {
+		return fmt.Errorf("verify-only CURRENT_USER()=%q 格式非法", currentUser)
+	}
+	authenticatedUser := currentUser[:separator]
+	if authenticatedUser != expectedUser {
+		return fmt.Errorf("verify-only CURRENT_USER() 认证账号=%q，与 DSN user=%q 不一致", authenticatedUser, expectedUser)
+	}
+
+	var tlsVariable, tlsCipher string
+	if err := db.QueryRowContext(ctx, "SHOW SESSION STATUS LIKE 'Ssl_cipher'").Scan(&tlsVariable, &tlsCipher); err != nil {
+		return fmt.Errorf("verify-only 读取 TLS cipher: %w", err)
+	}
+	if !strings.EqualFold(tlsVariable, "Ssl_cipher") || strings.TrimSpace(tlsCipher) == "" {
+		return fmt.Errorf("verify-only TLS cipher 为空或状态项异常: name=%q value=%q", tlsVariable, tlsCipher)
+	}
+
+	rows, err := db.QueryContext(ctx, "SELECT `version`, `dirty` FROM `schema_migrations`")
+	if err != nil {
+		return fmt.Errorf("verify-only 读取 schema_migrations: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("verify-only 读取 schema_migrations: %w", err)
+		}
+		return errors.New("verify-only schema_migrations 缺少版本行")
+	}
+	var version uint64
+	var dirty bool
+	if err := rows.Scan(&version, &dirty); err != nil {
+		return fmt.Errorf("verify-only 解析 schema_migrations: %w", err)
+	}
+	if rows.Next() {
+		return errors.New("verify-only schema_migrations 出现多行，拒绝猜测当前版本")
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("verify-only 读取 schema_migrations: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("verify-only 关闭 schema_migrations 结果集: %w", err)
+	}
+	if dirty {
+		return fmt.Errorf("verify-only schema_migrations version=%d dirty=true", version)
+	}
+	if version != uint64(target.expectedMigrationVersion) {
+		return fmt.Errorf("verify-only schema_migrations version=%d，内嵌 latest=%d",
+			version, target.expectedMigrationVersion)
+	}
+	return nil
 }
 
 func migrateTarget(target migrationTarget, requireTLS bool) error {
@@ -591,8 +910,7 @@ func repairPandoraPlayerV7Dirty(target migrationTarget, driver migrationRepairDr
 	if !dirty || version != 7 {
 		return false, nil
 	}
-	if target.MigrationSet != "pandora_player" ||
-		(target.Database != "pandora_player" && !strings.HasPrefix(target.Database, "pandora_player_mig_it_")) {
+	if !validPandoraPlayerV7QuarantineTarget(target) {
 		return false, fmt.Errorf("迁移前验收失败: version=7 dirty=true，quarantine 仅允许 pandora_player 精确目标，禁止自动 force")
 	}
 	if target.expectedMigrationVersion < 8 {
@@ -633,6 +951,19 @@ func repairPandoraPlayerV7Dirty(target migrationTarget, driver migrationRepairDr
 	}
 	log.Printf("[migrate] 目标=%s 命中 pandora_player 000007/MySQL-1845 精确 quarantine，已验证中间 schema 并标记 version=7 dirty=false；继续 000008 expand", target.Name)
 	return true, nil
+}
+
+func validPandoraPlayerV7QuarantineTarget(target migrationTarget) bool {
+	if target.MigrationSet != "pandora_player" {
+		return false
+	}
+	if target.Database == "pandora_player" {
+		return true
+	}
+	if _, ok := workspacedb.ParsePhysicalDatabaseName("pandora_player", target.Database); ok {
+		return true
+	}
+	return pandoraPlayerMigrationIntegrationDatabasePattern.MatchString(target.Database)
 }
 
 func verifyEmbeddedPandoraPlayerV7() error {
@@ -765,7 +1096,12 @@ func closeMigration(m *migrate.Migrate) error {
 	return errors.Join(sourceErr, databaseErr)
 }
 
-func runTargetWithDeadline(targetsFile, environment string, expectedTargets []targetDescriptor, target migrationTarget) error {
+func runTargetWithDeadline(
+	targetsFile, environment, workspaceID string,
+	verifyOnly bool,
+	expectedTargets []targetDescriptor,
+	target migrationTarget,
+) error {
 	executable, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("定位迁移器可执行文件: %w", err)
@@ -773,13 +1109,9 @@ func runTargetWithDeadline(targetsFile, environment string, expectedTargets []ta
 	timeout := time.Duration(target.TimeoutSeconds) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, executable,
-		"-targets-file", targetsFile,
-		"-expected-targets", formatExpectedTargetInventory(expectedTargets),
-		"-environment", environment,
-		"-bootstrap=false",
-		"-worker-target", target.Name,
-	)
+	cmd := exec.CommandContext(ctx, executable, workerCommandArgs(
+		targetsFile, environment, workspaceID, verifyOnly, expectedTargets, target,
+	)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -789,6 +1121,26 @@ func runTargetWithDeadline(targetsFile, environment string, expectedTargets []ta
 		return fmt.Errorf("目标 %s worker 失败: %w", target.Name, err)
 	}
 	return nil
+}
+
+func workerCommandArgs(
+	targetsFile, environment, workspaceID string,
+	verifyOnly bool,
+	expectedTargets []targetDescriptor,
+	target migrationTarget,
+) []string {
+	workerArgs := []string{
+		"-targets-file", targetsFile,
+		"-expected-targets", formatExpectedTargetInventory(expectedTargets),
+		"-environment", environment,
+		"-bootstrap=false",
+		"-verify-only=" + strconv.FormatBool(verifyOnly),
+		"-worker-target", target.Name,
+	}
+	if workspaceID != "" {
+		workerArgs = append(workerArgs, "-workspace-id", workspaceID)
+	}
+	return workerArgs
 }
 
 func statementTimeout(target migrationTarget) time.Duration {
@@ -936,6 +1288,10 @@ func isDevelopmentEnvironment(environment string) bool {
 	default:
 		return false
 	}
+}
+
+func requiresVerifiedTLS(environment, workspaceID string) bool {
+	return workspaceID != "" || !isDevelopmentEnvironment(environment)
 }
 
 func strictEnvBool(key string, fallback bool) (bool, error) {

@@ -29,20 +29,36 @@
 
 from __future__ import annotations
 
-import datetime as _dt
+import asyncio
+
 from typing import Protocol
 
 from pandora.trade.v1 import trade_pb2
 
 from pandorapy import errcode
 from pandorapy import log as plog
-from pandorapy.services.trade import data as tdata
+from pandorapy.protoenum import enum_name
 
 # 分页上限(decision-revisit-list-pagination.md)。
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 100
 
 _S = trade_pb2.OrderState
+
+
+def _with_state(exc: errcode.PandoraError, state: int) -> errcode.PandoraError:
+    """给异常挂上"订单现在停在哪",返回同一个异常对象供 `raise` 用。
+
+    Go 的 `ConfirmOrder` 是 `(state, err)` 双返回,**失败路径上 state 仍然有效**;
+    Python 用异常传播,不显式带上就静默丢成 0。0 在 proto 里是
+    ORDER_STATE_UNSPECIFIED,与"服务端不知道"无法区分 —— 而这两件事对客户端
+    是相反的指令(重试 vs 放弃)。四处对应关系见 errcode.PandoraError.order_state 的注释。
+
+    走 slots 而不是 setattr:拼错字段名时 setattr 照样成功,读的那侧永远拿默认值。
+    """
+    exc.order_state = state
+    return exc
+
 
 # 终态集合:不可再流转。
 _TERMINAL = frozenset(
@@ -75,8 +91,9 @@ class ResourceLedger(Protocol):
 class NoopResourceLedger:
     """占位实现:总是结算成功(**不真实扣转**背包 / 货币)。
 
-    仅供联调 / 单测。生产由 main 强制 fail-fast(除非显式 allow_noop_ledger=true),
-    防止漏接真实账本后仍以「成交不扣减」静默上线 —— 这是审计点名过的降级风险。
+    仅供联调 / 单测。★ 闸在 `TradeUsecase.__init__`:不显式设 `allow_noop_ledger=true`
+    就根本构造不出来(而不是"生产由 main 强制" —— Python 侧 trade 没有 main,
+    那句话曾是一句不成立的承诺,见构造函数注释)。
     """
 
     async def settle(self, order, idempotency_key: int) -> None:  # noqa: D102
@@ -95,9 +112,14 @@ class ActionRateQuota(Protocol):
     总量闸(max_orders_per_player)只限「同时挂多少」,挡不住「下单-撤单-再下单」
     的循环(每轮产生托管写 + 流水行),频率配额补这一维。
     背压非权威门:判定 error 时调用方 fail-open 放行。
+
+    ★ 返回 `(是否放行, 故障)`,与 Go 的 `Allow(...) (bool, error)` 同形 ——
+    **不是**裸 bool。Protocol 运行期不做检查,照着 `-> bool` 写实现的话测试照样绿,
+    而 `_allow_action` 的 `allowed, quota_exc = await ...` 会在每次下单/撤单上抛
+    `TypeError: cannot unpack non-iterable bool object`。
     """
 
-    async def allow(self, action: str, subject: int) -> bool: ...
+    async def allow(self, action: str, subject: int) -> tuple[bool, Exception | None]: ...
 
 
 class TradeUsecase:
@@ -107,6 +129,30 @@ class TradeUsecase:
 
     def __init__(self, repo, ledger, audit, snowflake, cfg) -> None:
         self._repo = repo
+        # ★ 没有真实账本时**必须显式授权**才允许退回 Noop,否则当场拒绝构造。
+        #
+        # 这道闸原先只存在于 Go 的 main.go,而 Python 侧 trade **没有 main** ——
+        # docstring 却写着"生产由 main 强制 fail-fast",于是它是一句不成立的承诺:
+        # 哪天有人写 trade/main.py 忘了接账本,交易会**成交但不扣转**,
+        # 而订单状态、审计流水、客户端提示全都显示成功。
+        #
+        # 所以闸下沉到构造函数:忘记接账本在结构上不可能通过,不依赖任何人记得。
+        if ledger is None and not getattr(cfg, "allow_noop_ledger", False):
+            raise errcode.PandoraError(
+                errcode.ErrInvalidState,
+                "trade: 未注入 ResourceLedger 且 allow_noop_ledger 未开启。"
+                "Noop 账本会让成交**不真实扣转**背包 / 货币而一切显示成功 —— "
+                "接真实 inventory,或在联调 / 单测里显式设 allow_noop_ledger=true",
+            )
+        if ledger is None:
+            # 已经过了上面的闸(= 显式授权了),但**必须留痕**:对应 Go main.go 的
+            # resource_ledger_noop WARN。没有这条日志的话,一个误开了
+            # allow_noop_ledger 的环境从启动到出事之间零信号 ——
+            # 而"成交不扣转"这种错,发现时通常已经产生了一批脏数据。
+            plog.get().warning(
+                "resource_ledger_noop",
+                hint="allow_noop_ledger=true:成交**不会**真实扣转背包 / 货币,仅限联调与单测",
+            )
         self._ledger = ledger if ledger is not None else NoopResourceLedger()
         self._audit = audit  # 允许 None(弱依赖)
         self._sf = snowflake
@@ -132,14 +178,18 @@ class TradeUsecase:
         """
         if self._rate_quota is None:
             return
-        try:
-            allowed = await self._rate_quota.allow(action, player_id)
-        except Exception as exc:  # noqa: BLE001
+        # ★ 读 `(ok, exc)` 而不是等异常:`allow()` 从不抛,原先那段
+        #   `except ...: log("trade_rate_quota_check_failed")` 是**不可达死代码**,
+        #   于是这个 Loki 键在代码里存在、永远不会触发。
+        allowed, quota_exc = await self._rate_quota.allow(action, player_id)
+        if quota_exc is not None:
+            # 背压门判定失败一律放行(§9.20:限流不得卡玩家)。
             plog.get().warning(
                 "trade_rate_quota_check_failed",
                 action=action,
                 player_id=player_id,
-                err=str(exc),
+                err=str(quota_exc),
+                fail_open=True,
             )
             return
         if not allowed:
@@ -355,7 +405,10 @@ class TradeUsecase:
                 "player %d cannot confirm order %d in state %s",
                 player_id,
                 order_id,
-                _S.Name(order.state),
+                # ★ order.state 读自 Redis pb 快照。滚动升级时新副本可能已经写入一个
+                # 旧副本不认识的 ORDER_STATE——而那正是会走到本分支的情况。
+                # 裸 `.Name()` 会把一个干净的 ErrTradeWrongState 变成 ValueError。
+                enum_name(_S, order.state),
             )
 
         await self._repo.update_with_lock(
@@ -367,8 +420,13 @@ class TradeUsecase:
             order = await self._safe_get(order_id)
             if order is not None:
                 await self._push_audit(order)
-            raise errcode.PandoraError(
-                errcode.ErrTradeOrderExpired, "order %d expired", order_id
+            # Go trade.go:351 在这条失败路径上仍回 EXPIRED —— 客户端据此知道
+            # "不是网络问题,是订单已经过期了",不该再重试 Confirm。
+            raise _with_state(
+                errcode.PandoraError(
+                    errcode.ErrTradeOrderExpired, "order %d expired", order_id
+                ),
+                _S.ORDER_STATE_EXPIRED,
             )
 
         if state["drive_settle"] is not None:
@@ -394,6 +452,13 @@ class TradeUsecase:
         order_id = order.order_id
         try:
             await self._ledger.settle(order, order_id)
+        except asyncio.CancelledError:
+            # ★ 取消必须穿透:CancelledError 是 BaseException,会被下面那条宽 except 吞掉。
+            # 吞掉之后取消就**不再传播** —— 该停的停不下来:
+            #   业务路径上 grpc.aio 用取消终止在途 handler,吞了会把取消变成一个正常应答;
+            #   启动路径上则是 Ctrl-C / 上层取消被翻译成某道闸的失败,报出假的失败原因。
+            # 两种都让 §9.16 的「先摘流量 → 再排空在途」失效。
+            raise
         except BaseException as exc:
             if errcode.as_code(exc) == errcode.ErrTradeInsufficient:
                 # 结算原子失败(资产未动):SELLER_CONFIRMED → FAILED 终态并 audit。
@@ -415,17 +480,23 @@ class TradeUsecase:
                 latest = await self._safe_get(order_id)
                 if latest is not None:
                     await self._push_audit(latest)
-                raise
+                # Go trade.go:398 回 FAILED —— 资产未动的终态,客户端不该重试。
+                raise _with_state(exc, _S.ORDER_STATE_FAILED)
             # 瞬时 / UNKNOWN(超时 / inventory 不可达 / 回包丢失):结算**可能已生效**,
             # 绝不回滚订单;意图态留在库里,由重试幂等收敛(Settle 幂等键命中即成功)。
             plog.get().warning(
                 "trade_settlement_inflight_retryable", order_id=order_id, err=str(exc)
             )
-            raise errcode.PandoraError(
-                errcode.ErrUnavailable,
-                "order %d settlement in flight, retry confirm: %s",
-                order_id,
-                exc,
+            # Go trade.go:403 回 SELLER_CONFIRMED —— 意图态还在库里、结算可能已生效,
+            # 客户端**必须**重试 Confirm(幂等键命中即成功)。回 0 的话它判不出这一点。
+            raise _with_state(
+                errcode.PandoraError(
+                    errcode.ErrUnavailable,
+                    "order %d settlement in flight, retry confirm: %s",
+                    order_id,
+                    exc,
+                ),
+                _S.ORDER_STATE_SELLER_CONFIRMED,
             ) from exc
 
         # 结算已成功:资产账本为权威,状态收敛到 COMPLETED。
@@ -439,7 +510,7 @@ class TradeUsecase:
                     plog.get().error(
                         "trade_settled_state_diverged_converging",
                         order_id=order_id,
-                        state=_S.Name(o.state),
+                        state=enum_name(_S, o.state),
                     )
                 o.state = _S.ORDER_STATE_COMPLETED
             completed["order"] = _clone(o)
@@ -451,10 +522,15 @@ class TradeUsecase:
         except Exception as cerr:  # noqa: BLE001
             # 资产已结算而终态未落库:停留 SELLER_CONFIRMED,重试 Confirm 收敛。
             plog.get().error("trade_mark_completed_failed", order_id=order_id, err=str(cerr))
-            raise errcode.PandoraError(
-                errcode.ErrUnavailable,
-                "order %d settled, state convergence pending, retry confirm",
-                order_id,
+            # Go trade.go:424 回 SELLER_CONFIRMED —— 资产**已经结算**、只是终态没落库。
+            # 这条最不能丢:客户端拿到 0 会当"订单没动"而放弃,实际钱货已经过户了。
+            raise _with_state(
+                errcode.PandoraError(
+                    errcode.ErrUnavailable,
+                    "order %d settled, state convergence pending, retry confirm",
+                    order_id,
+                ),
+                _S.ORDER_STATE_SELLER_CONFIRMED,
             ) from cerr
 
         if completed["order"] is not None:
@@ -496,7 +572,7 @@ class TradeUsecase:
                     errcode.ErrTradeWrongState,
                     "order %d already terminal: %s",
                     order_id,
-                    _S.Name(order.state),
+                    enum_name(_S, order.state),
                 )
             order.state = _S.ORDER_STATE_CANCELED
 
@@ -572,7 +648,7 @@ class TradeUsecase:
             plog.get().warning(
                 "trade_audit_push_failed",
                 order_id=order.order_id,
-                state=_S.Name(order.state),
+                state=enum_name(_S, order.state),
                 err=str(exc),
             )
 

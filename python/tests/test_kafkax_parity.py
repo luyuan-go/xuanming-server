@@ -15,9 +15,11 @@ Python 侧算同一批 key,逐条对比。Go 不可用时 skip 并说明,不假�
 
 from __future__ import annotations
 
+import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -87,10 +89,16 @@ def _go_routing_table(repo_root: pathlib.Path) -> dict[str, tuple[int, bool]]:
                 timeout=180,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            return {}
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            pytest.fail(f"go 在 PATH 上却跑不起来:{exc}")
     if proc.returncode != 0:
-        return {}
+        # ★ 与 tests/test_source_revision.py 同一条纪律:「go 不在」才 skip,
+        # 「go 在但编译失败」必须 fail 并带出 stderr —— 后者说明**对拍对象变了**,
+        # 那正是这道门存在的唯一理由,不能让它退化成 skip。
+        pytest.fail(
+            "跨语言对拍程序编译/运行失败 —— 多半是 pkg/kafkax 的 API 变了,"
+            "**不是**环境问题。stderr:\n" + (proc.stderr or "(空)")[:2000]
+        )
     table: dict[str, tuple[int, bool]] = {}
     for line in proc.stdout.splitlines():
         if not line:
@@ -165,12 +173,8 @@ def test_add_partition_is_idempotent() -> None:
     assert [consistent.get_partition(f"k{i}") for i in range(50)] == first
 
 
-def test_key_routing_is_stable_across_instances() -> None:
-    """同样的 partition 集合必须产出同样的路由 —— 不能受插入顺序或进程随机化影响。
-
-    Python 内置 hash() 带随机种子,若误用它,同一 key 在不同进程会路由到不同 partition。
-    这条测试是那个错误的哨兵。
-    """
+def test_key_routing_is_insertion_order_independent() -> None:
+    """同样的 partition 集合必须产出同样的路由,与插入顺序无关。"""
     a = kafkax.Consistent()
     for p in (0, 1, 2, 3):
         a.add_partition(p)
@@ -180,3 +184,41 @@ def test_key_routing_is_stable_across_instances() -> None:
     for i in range(200):
         key = f"player:{i}"
         assert a.get_partition(key) == b.get_partition(key), f"{key} 路由不稳定"
+
+
+_HASHSEED_PROBE = """
+import sys
+sys.path.insert(0, %r)
+from pandorapy import kafkax
+c = kafkax.Consistent()
+for p in (0, 1, 2, 3):
+    c.add_partition(p)
+print(",".join(str(c.get_partition("player:%%d" %% i)) for i in range(64)))
+"""
+
+
+def test_key_routing_survives_a_different_hash_seed() -> None:
+    """★ 换一个 PYTHONHASHSEED 起新进程,路由必须**逐位相同**。
+
+    这条才是"误用 Python 内置 hash()"的真哨兵。原来的版本在**同一个进程里**比两个
+    实例 —— 而同进程内 `hash()` 本来就一致(种子是进程启动时定的),
+    所以哪怕真的误用了 hash(),它也全绿。
+
+    误用的后果是分区路由随进程随机:同一个玩家的事件在不同副本上落到不同 partition,
+    §9.9「同一实体事件有序」当场失效,而且**重启才会变**,极难复现。
+    """
+    py_root = str(pathlib.Path(__file__).resolve().parents[1])
+    outs = []
+    for seed in ("0", "1", "12345"):
+        env = dict(os.environ, PYTHONHASHSEED=seed, PYTHONUTF8="1")
+        proc = subprocess.run(
+            [sys.executable, "-c", _HASHSEED_PROBE % py_root],
+            capture_output=True, text=True, encoding="utf-8", timeout=120,
+            env=env, check=False,
+        )
+        assert proc.returncode == 0, f"探针进程失败(seed={seed}):{proc.stderr[:400]}"
+        outs.append(proc.stdout.strip())
+    assert outs[0] and len(set(outs)) == 1, (
+        "不同 PYTHONHASHSEED 下路由不一致 —— 分区哈希用到了 Python 内置 hash()。 "
+        + " | ".join(outs)
+    )

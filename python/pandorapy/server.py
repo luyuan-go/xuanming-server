@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import signal
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
@@ -37,12 +38,50 @@ from typing import Any
 import grpc
 import uvicorn
 from fastapi import FastAPI
+# ★ 必须是 _async 版:grpc_health.v1.health.HealthServicer 是**同步**实现,
+# 挂到 grpc.aio server 上时 Check 返回的是普通对象而不是 awaitable,
+# 请求会以 UNKNOWN 失败(2026-08-18 实测),而 k8s 探针只看见"探测失败"。
+from grpc_health.v1 import _async as grpc_health_aio
+from grpc_health.v1 import health_pb2, health_pb2_grpc
 from grpc_reflection.v1alpha import reflection
 
 from pandorapy import config as pconfig
 from pandorapy import interceptors as pintercept
 from pandorapy import log as plog
 from pandorapy import metrics
+from pandorapy import safego as psafego
+
+
+def conn_age_options(grpc_conf: pconfig.GrpcConf) -> list[tuple[str, Any]]:
+    """连接老化相关的 grpc option。提成**纯函数**是为了能被断言。
+
+    ★ 原先这段内联在 build_grpc_server 里,用例只能断言"server 构造成功",
+    而那句话什么都证明不了 —— grpcio 对**拼错的 option 名静默接受**
+    (实测 `("grpc.totally_bogus_option_name", 1)` 照样构造成功)。
+    于是把 option 名写错一个字母、或整段删掉,用例都不会红。
+
+    作用与 Go 侧 pkg/grpcserver 的 keepalive.ServerParameters 一致:
+      max_conn_age       达龄 GOAWAY 让客户端重拨,滚动更新时流量才能滚到新副本
+      max_conn_age_grace 达龄后给在途请求的收尾宽限
+    """
+    options: list[tuple[str, Any]] = []
+    max_age_sec = grpc_conf.max_conn_age_td().total_seconds()
+    if max_age_sec <= 0:
+        return options  # 不配 = 关,行为与未接此功能前一致
+    options.append(("grpc.max_connection_age_ms", int(max_age_sec * 1000)))
+
+    # ★ 配了 max_conn_age 却没配 grace 时,Go 强制兜底 30s
+    # (pkg/grpcserver/grpcserver.go:81)。必须照做:grpc core 的默认是
+    # **无限宽限**,不兜底的话"达龄"永远不会真正断开老连接,滚动更新时
+    # 流量滚不到新副本 —— 而这与"根本没开这个功能"表现一模一样。
+    #
+    # ds_allocator 实配 grace=360s,盖过 330s 的 AllocateBattle 在途调用;
+    # 没有它,GOAWAY 会**砍断正在等 DS ready 的分配**。
+    grace_sec = grpc_conf.max_conn_age_grace_td().total_seconds()
+    if grace_sec <= 0:
+        grace_sec = 30.0
+    options.append(("grpc.max_connection_age_grace_ms", int(grace_sec * 1000)))
+    return options
 
 
 def build_grpc_server(
@@ -55,23 +94,100 @@ def build_grpc_server(
 
     对应 Go 侧 pkg/grpcserver.MustNewServer(cfg.Server, pmw.AuthOptional())。
     """
-    options: list[tuple[str, Any]] = []
+    options: list[tuple[str, Any]] = conn_age_options(grpc_conf)
 
-    # max_conn_age → grpc.max_connection_age_ms。
-    # 作用与 Go 侧一致:达龄发 GOAWAY 让客户端重拨,滚动更新时流量才能滚到新副本
-    # (zero-downtime §6.2)。不设这个,老连接会一直粘在旧 Pod 上。
-    max_age = grpc_conf.max_conn_age_td()
-    if max_age.total_seconds() > 0:
-        options.append(("grpc.max_connection_age_ms", int(max_age.total_seconds() * 1000)))
+    # ★ enable_rate_limit 在 Python 侧**没有实现**(Go 用 Kratos 的 BBR 自适应限流)。
+    # 配了就必须 fail-fast,不能静默忽略:yaml 写着 true、运维以为有过载保护、
+    # 实际一点都没有 —— 那比"没这功能"糟糕得多(§14)。
+    if grpc_conf.enable_rate_limit:
+        raise NotImplementedError(
+            "server.grpc.enable_rate_limit=true,但 Python 侧尚未实现自适应限流(BBR)。"
+            "要么把它关掉(与当前实际行为一致),要么先把限流实现出来 —— "
+            "不能让配置声称有一道并不存在的过载保护。"
+        )
 
-    # 拦截器顺序:先可观测(要能记录到 auth 的拒绝),再鉴权。
-    # 与 Kratos 的 middleware 链同序 —— recovery/metrics 在最外层。
+    # 拦截器顺序(与 Kratos 默认 middleware 链 Trace → Logging → Metrics 同序)。
+    # 实测语义:列表里**第一个是最外层**,它拿到的 continuation 会跑后面的。
+    #
+    #   ① trace/身份  最外层 —— 后面每一条日志(含 access log)都要落在它的
+    #                 contextvars 作用域内。放在里层的话,它的 finally 一 reset,
+    #                 外层 access log 才开始打 → 四个事件全都没有 trace_id
+    #   ② 可观测      记录后面每一道拒绝(含 auth 401、关停、超时)
+    #   ③ 关停        在鉴权之前 —— 服务已关停时不该再做鉴权工作,而且必须
+    #                 **在业务 handler 之前**返回,否则副作用照样发生
+    #   ④ 超时        给业务 handler 套 deadline
+    #   ⑤ 鉴权
     chain: list[grpc.aio.ServerInterceptor] = [
+        pintercept.TraceInterceptor(),
         pintercept.ObservabilityInterceptor(),
-        pintercept.AuthInterceptor(required=auth_required),
-        *extra_interceptors,
+        pintercept.KillSwitchInterceptor(),
     ]
-    return grpc.aio.server(interceptors=chain, options=options)
+    timeout = grpc_conf.timeout_td().total_seconds()
+    if timeout > 0:
+        chain.append(pintercept.TimeoutInterceptor(timeout))
+    chain.append(pintercept.AuthInterceptor(required=auth_required))
+    chain.extend(extra_interceptors)
+    server = grpc.aio.server(interceptors=chain, options=options)
+    # 健康服务随 server 构造一起注册 —— 见 _register_health 的说明。
+    _register_health(server)
+    return server
+
+
+# grpc.aio.Server 上挂健康服务的属性名。做成"构造 server 时自动注册"而不是
+# "各服务 main.py 自己记得调" —— 忘了调的后果是 Pod 永远 NotReady 且服务本身
+# 日志全绿(见 _register_health 的说明),这种失败模式必须靠机制排除,不能靠纪律。
+_HEALTH_ATTR = "_pandora_health"
+
+
+def _register_health(server: grpc.aio.Server) -> grpc_health_aio.HealthServicer:
+    """注册 grpc.health.v1.Health,对应 Kratos 内置的 `health.NewServer()`。
+
+    ★ 这不是可选的可观测装饰,是 **k8s 能否把流量给这个 Pod 的开关**。
+
+    `deploy/k8s/services/services.yaml` 里 22 个服务的 readinessProbe 全是
+    `grpc: { port: 2000x }` —— k8s 原生 gRPC 探针调的就是本服务的
+    `Check(service="")`。不注册它的后果(2026-08-18 实测):
+
+        Go 版      Check("")  → SERVING
+        Python 版  Check("")  → UNIMPLEMENTED  → 探针判失败 → Pod 永远 NotReady
+
+    而进程本身完全健康、业务 RPC 全部可用、日志一行 ERROR 都没有 ——
+    与「uvicorn 绑成 IPv6-only 导致 /metrics 抓不到」同一类静默故障。
+    """
+    servicer = grpc_health_aio.HealthServicer()
+    health_pb2_grpc.add_HealthServicer_to_server(servicer, server)
+    setattr(server, _HEALTH_ATTR, servicer)
+    return servicer
+
+
+async def _health_set_serving(server: grpc.aio.Server) -> None:
+    """把整进程健康状态置 SERVING —— 对应 Kratos `Start()` 里的 `s.health.Resume()`。
+
+    空 service 名 = 整个进程,k8s 原生 gRPC 探针查的就是它;
+    HealthServicer 对未登记的名字返回 NOT_FOUND,所以必须显式 set。
+    """
+    servicer = getattr(server, _HEALTH_ATTR, None)
+    if servicer is not None:
+        await servicer.set("", health_pb2.HealthCheckResponse.SERVING)
+
+
+async def _health_enter_shutdown(server: grpc.aio.Server) -> None:
+    """把健康状态翻成 NOT_SERVING —— 对应 Kratos `Stop()` 里的 `s.health.Shutdown()`。
+
+    ★ 时序:必须**先于** `grpc_server.stop(grace=...)`。
+
+    Kratos 的 `Server.Stop` 就是这个顺序(transport/grpc/server.go:241 先 Shutdown、
+    再 GracefulStop)。这半拍是 §9.16「先摘流量→再排空在途」的机制本体:
+    先答 NOT_SERVING 让 k8s 把本 Pod 摘出 Endpoints,已经在途的请求再用 grace 期做完。
+    顺序反过来 = 排空期间 k8s 仍在往这台送新请求,滚动更新必然掉请求。
+    """
+    servicer: grpc_health_aio.HealthServicer | None = getattr(server, _HEALTH_ATTR, None)
+    if servicer is None:
+        return
+    # enter_graceful_shutdown 把**所有**已登记 service 置为 NOT_SERVING 并锁定后续 set,
+    # 语义与 grpc-go 的 health.Server.Shutdown() 一致。
+    with contextlib.suppress(Exception):
+        await servicer.enter_graceful_shutdown()
 
 
 def enable_reflection(server: grpc.aio.Server, service_full_names: Sequence[str]) -> None:
@@ -92,13 +208,17 @@ def build_http_app(service_name: str) -> FastAPI:
     `internal/server/http.go`(注释都写着「仅 /metrics」)。
     只有 login 一个服务需要在这上面加 10 个 REST 路由(login.proto 的 http 注解)。
     """
+    # docs 默认关:这是运维面而不是公开 API,openapi 会把内部路由结构暴露出去。
+    # PANDORA_HTTP_DOCS=1 单独打开(dev 联调)。
+    #
+    # ★ 这个开关原先只写在注释里、**从没实现** —— 注释承诺一个不存在的能力,
+    # 比不写更糟:照着做的人会以为是自己环境的问题,去查 uvicorn / Envoy。
+    docs_on = os.getenv("PANDORA_HTTP_DOCS", "").strip() in ("1", "true", "True", "yes")
     app = FastAPI(
         title=f"pandora-{service_name}",
-        # docs 默认关:这是运维面而不是公开 API,而且 openapi 会把内部路由结构暴露出去。
-        # 需要时用 PANDORA_HTTP_DOCS=1 单独打开(dev 联调)。
-        docs_url=None,
-        redoc_url=None,
-        openapi_url=None,
+        docs_url="/docs" if docs_on else None,
+        redoc_url="/redoc" if docs_on else None,
+        openapi_url="/openapi.json" if docs_on else None,
     )
     # /metrics 不套业务中间件 —— 与 Go 侧注释一致:「纯 Prometheus,不经过 Pandora
     # middleware,避免 trace/log 污染监控」。
@@ -175,9 +295,20 @@ async def run(
     """
     logger = plog.get()
 
+    # ★ 运行时标识在这里打,而不是让每个 main 各自记得调。
+    #
+    # 灰度期同一个服务会有 Go 副本和 Python 副本同时在线,而 pandora_rpc_* 上没有
+    # 任何维度能区分两者 —— 面板只有一条混合曲线,"Python 版慢不慢"这个灰度期
+    # 唯一要回答的问题无法回答。放进 run() 是因为**每个服务都必须经过它**:
+    # 漏打在结构上不可能发生(对照:owner/main.py 就没有调过 dialogue 那份)。
+    metrics.set_runtime_info(service_name)
+
     # 归一化:yaml 里是 Go 风格裸端口 ":20013",grpcio 不接受,见 normalize_grpc_addr。
     grpc_server.add_insecure_port(normalize_grpc_addr(grpc_addr))
     await grpc_server.start()
+    # 对应 Kratos Start() 里的 health.Resume() —— 必须在 start 之后,
+    # 否则探针可能在端口还没监听时就被答 SERVING。
+    await _health_set_serving(grpc_server)
 
     tasks: list[asyncio.Task] = []
     http_server: uvicorn.Server | None = None
@@ -195,10 +326,36 @@ async def run(
                 lifespan="on",
             )
         )
-        tasks.append(asyncio.create_task(http_server.serve(), name="http"))
+        # 同样过 safego：不变量是"`tasks` 里每一个都被兜底",靠结构而不是靠记性。
+        # （bind 失败这一条 uvicorn 自己会 sys.exit，是响亮的；兜底管的是它中途死掉。）
+        tasks.append(psafego.supervise("http", asyncio.create_task(http_server.serve(), name="http")))
 
-    for factory in background:
-        tasks.append(asyncio.create_task(factory(), name=getattr(factory, "__name__", "bg")))
+    for entry in background:
+        # 必须过 safego：裸 create_task 的协程抛异常后异常只躺在 Task 里,
+        # 进程照跑、health 照答 SERVING、日志零行 —— 那条循环已经死了却没人知道。
+        # Go 侧这些 `go runXxx(ctx)` 全部包在 safego.Go/Loop 里,口径见 pkg/safego。
+        #
+        # ★ 点位名:接受 `(name, factory)` 二元组,或裸 callable。
+        # 原先一律取 `factory.__name__` —— 而各服务传的十有八九是 **lambda**,
+        # 于是 `pandora_safego_panic_recovered_total{name}` 这个 label 全服都是
+        # `<lambda>`,等于没有点位名:告警只能告诉你"有个后台协程死了",
+        # 不能告诉你**是哪一条**。Go 侧每个 safego.Go/Loop 都显式传名字。
+        name, factory = entry if isinstance(entry, tuple) else (None, entry)
+        if not name:
+            name = getattr(factory, "__name__", "") or "bg"
+            if name == "<lambda>":
+                # 这里刻意**不** raise:点位名是可观测性问题,不该把它升级成启动失败
+                # (那等于用一次可用性事故去换一个 label)。改成启动期 WARN + 一条
+                # 机械检查(tests/test_service_layer_contract.py)在 CI 上拦住。
+                name = "bg_anonymous"
+                plog.get().warning(
+                    "background_task_anonymous",
+                    service=service_name,
+                    hint="server.run(background=[...]) 收到匿名 lambda;"
+                    "请改写成 (name, factory) 二元组,否则 panic 计数与日志里"
+                    "只有 bg_anonymous,出事时看不出死的是哪条后台循环",
+                )
+        tasks.append(psafego.spawn(name, factory))
 
     if on_ready is not None:
         on_ready()
@@ -210,20 +367,30 @@ async def run(
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError, ValueError):
-            # Windows 的 ProactorEventLoop 不支持 add_signal_handler;
-            # 退化到 signal.signal,行为一致(dev 在 Windows 跑,prod 在 Linux)。
+        try:
+            # Linux(prod)走这条:回调由事件循环调度,可以安全碰 asyncio 对象。
             loop.add_signal_handler(sig, _request_stop)
-    else:
-        with contextlib.suppress(ValueError, OSError):
-            signal.signal(signal.SIGINT, _request_stop)
-            signal.signal(signal.SIGTERM, _request_stop)
+        except (NotImplementedError, ValueError, OSError, RuntimeError):
+            # Windows 的 ProactorEventLoop 不支持 add_signal_handler,退化到 signal.signal。
+            #
+            # ⚠️ 这里原本写成 `for ... else:` —— for 没有 break,所以 else **恒执行**,
+            # 等于在每个平台上都用 signal.signal 覆盖掉刚装好的 asyncio 处理器,
+            # 注释说的"Windows 退化"实际是"无条件覆盖"。后果是 SIGTERM 回调在
+            # 信号上下文里直接动 asyncio.Event,而不是由事件循环调度 —— 而 SIGTERM
+            # 正是滚动更新的优雅停机入口(§9.16 先摘流量再排空),这条路径出问题
+            # 表现为"发布期间偶发客户端错误",不会指向 server.py。
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(sig, _request_stop)
 
     await stop.wait()
     logger.info("service_stopping", service=service_name)
 
-    # 优雅停机:先停收新请求(grace 期内让在途请求做完),再停 HTTP,最后取消后台任务。
-    # 顺序与 Kratos 的 app.Stop 一致 —— 反过来会让在途请求访问到已关闭的资源。
+    # 优雅停机顺序,与 Kratos 的 app.Stop 一致 —— 每一步的先后都有后果:
+    #   ① 健康状态翻 NOT_SERVING → k8s 把本 Pod 摘出 Endpoints(停止送**新**请求)
+    #   ② grpc stop(grace) → 已在途的请求做完
+    #   ③ 停 HTTP,④ 取消后台任务
+    # ①②不能对调:先 stop 再翻状态 = 排空期间 k8s 还在往这台送流量(§9.16)。
+    await _health_enter_shutdown(grpc_server)
     await grpc_server.stop(grace=5.0)
     if http_server is not None:
         http_server.should_exit = True

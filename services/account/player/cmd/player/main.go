@@ -33,10 +33,13 @@ import (
 	"github.com/luyuancpp/pandora/pkg/configtable"
 	"github.com/luyuancpp/pandora/pkg/dbguard"
 	"github.com/luyuancpp/pandora/pkg/dsauthfence/writerlease"
+	"github.com/luyuancpp/pandora/pkg/internalrpcauth"
 	"github.com/luyuancpp/pandora/pkg/kafkax"
 	plog "github.com/luyuancpp/pandora/pkg/log"
 	"github.com/luyuancpp/pandora/pkg/middleware"
 	"github.com/luyuancpp/pandora/pkg/mysqlx"
+	"github.com/luyuancpp/pandora/pkg/playername"
+	"github.com/luyuancpp/pandora/pkg/redisx"
 	"github.com/luyuancpp/pandora/pkg/safego"
 	"github.com/luyuancpp/pandora/pkg/sessiongate"
 
@@ -96,6 +99,10 @@ func main() {
 	// 且启动期毫无痕迹。这里在触碰 MySQL 之前拒启,把配置错误暴露在发布阶段。
 	if err := cfg.Player.ValidateRetentionMode(); err != nil {
 		helper.Errorw("msg", "player_retention_mode_invalid", "err", err)
+		os.Exit(1)
+	}
+	if err := cfg.ValidatePlayerNameResolver(); err != nil {
+		helper.Errorw("msg", "player_name_resolve_config_invalid", "err", err)
 		os.Exit(1)
 	}
 
@@ -237,6 +244,35 @@ func main() {
 		defer func() { _ = closeCell() }()
 	}
 	svc := service.NewPlayerService(uc)
+	var playerNameVerifier *internalrpcauth.Verifier
+	if cfg.Player.PlayerNameResolveAuthSecret != "" {
+		authRDB := redisx.NewUniversalClient(cfg.Node.RedisClient)
+		defer func() { _ = authRDB.Close() }()
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		pingErr := authRDB.Ping(pingCtx).Err()
+		pingCancel()
+		if pingErr != nil {
+			helper.Errorw("msg", "player_name_resolve_verifier_init_failed", "err", pingErr,
+				"hint", "shared Redis nonce authority is required for PlayerInternalService.ResolvePlayerNames")
+			os.Exit(1)
+		}
+		replay, replayErr := internalrpcauth.NewRedisReplayStore(authRDB,
+			"pandora:player:name-resolve:nonce:")
+		if replayErr != nil {
+			helper.Errorw("msg", "player_name_resolve_verifier_init_failed", "err", replayErr)
+			os.Exit(1)
+		}
+		verifier, verifyErr := internalrpcauth.NewVerifier(cfg.Player.PlayerNameResolveAuthSecret, "team",
+			cfg.Player.PlayerNameResolveAuthAudience, 30*time.Second, replay)
+		if verifyErr != nil {
+			helper.Errorw("msg", "player_name_resolve_verifier_init_failed", "err", verifyErr)
+			os.Exit(1)
+		}
+		playerNameVerifier = verifier
+		helper.Infow("msg", "player_name_resolve_verifier_ready", "caller", "team",
+			"audience", cfg.Player.PlayerNameResolveAuthAudience, "max_batch", playername.ResolveBatchLimit)
+	}
+	internalSvc := service.NewPlayerInternalService(uc, playerNameVerifier)
 
 	// DS 回调令牌守卫:GetLoadout 挂在 Envoy DS 面(:8444),经它进来的调用须带 DS 服务令牌。
 	// 开发环境先用 permissive 观察,生产配置使用 enforce;仅显式 off / 未配置时 dsGuard 为 nil。
@@ -259,7 +295,7 @@ func main() {
 	sessGate, sgClose := sessiongate.MustBuild(cfg.Node.RedisClient, cfg.SessionGate.Require)
 	defer sgClose()
 
-	grpcSrv := server.NewGRPCServer(&cfg, svc, ctAdmin, sessGate)
+	grpcSrv := server.NewGRPCServer(&cfg, svc, internalSvc, ctAdmin, sessGate)
 	httpSrv := server.NewHTTPServer(&cfg)
 
 	// 6. 经验推送出箱发布器(实时成长):producer 可用才注入,失败只警告(出箱积压不丢,

@@ -23,9 +23,15 @@ Redis key 模板(与 Go 侧**逐字一致** —— 迁移期两个实现读写�
 
 from __future__ import annotations
 
+import asyncio
+
+import contextlib
 import datetime as _dt
 from typing import Awaitable, Callable, Protocol
 
+import grpc
+from pandora.common.v1 import errcode_pb2
+from pandora.inventory.v1 import inventory_pb2, inventory_pb2_grpc
 from pandora.trade.v1 import trade_pb2
 from redis.asyncio.client import Redis
 from redis.exceptions import WatchError
@@ -206,6 +212,13 @@ class RedisTradeRepo:
                 return
             except WatchError:
                 continue  # 并发改动,重试
+            except asyncio.CancelledError:
+                # ★ 取消必须穿透:CancelledError 是 BaseException,会被下面那条宽 except 吞掉。
+                # 吞掉之后取消就**不再传播** —— 该停的停不下来:
+                #   业务路径上 grpc.aio 用取消终止在途 handler,吞了会把取消变成一个正常应答;
+                #   启动路径上则是 Ctrl-C / 上层取消被翻译成某道闸的失败,报出假的失败原因。
+                # 两种都让 §9.16 的「先摘流量 → 再排空在途」失效。
+                raise
             except BaseException as exc:
                 if business_error is not None and exc is business_error:
                     raise  # fn 的业务错误:透传不重试
@@ -243,3 +256,106 @@ class RedisTradeRepo:
 def _ms(td: _dt.timedelta) -> int:
     """timedelta → 毫秒整数(Redis PX / PEXPIRE 参数)。"""
     return int(td.total_seconds() * 1000)
+
+
+# ── 结算账本:直连 inventory 的 P2P 原子对转 ────────────────────────────────
+#
+# 对应 Go 侧 internal/data/settlement_client.go。迁移期 inventory **仍是 Go 服务**,
+# Python trade 直接拨它 —— strangler 迁移的正常形态:被迁的服务换实现,它的下游不动。
+#
+# 与 Go 逐条对齐的地方(每条改了都不报错):
+#   - insecure 明文:内网直连,没有 JWT ⇒ inventory 侧 callerID==0,
+#     SettlePlayerTrade 是系统接口只认内网直连。加了 TLS 反而连不上。
+#   - 单次 RPC 15s deadline:Go 由 grpcclient.DefaultTimeout 经 Kratos middleware 施加。
+#     不设 deadline 的话 inventory 卡住会把 ConfirmOrder 挂到客户端超时,而订单
+#     停在 SELLER_CONFIRMED —— 玩家看到的是"确认没反应",查不到这里。
+#   - 道具一律用 item_config_id 对齐 inventory 的可堆叠模型。
+
+# 与 Go 侧 grpcclient.DefaultTimeout 同值(pkg/grpcclient/client.go)。
+INVENTORY_RPC_TIMEOUT_SEC = 15.0
+
+
+class GrpcResourceLedger:
+    """用 inventory 服务 gRPC client 实现 biz.ResourceLedger。
+
+    ★ 刻意**不**在构造时阻塞等连接就绪(不调 channel_ready())。Go 侧
+    `grpcclient.MustDialInsecure` 走的是非阻塞 DialContext,只有 target 本身
+    非法才失败;若 Python 这边改成"连不上就拒启",就凭空造出一条 Go 没有的
+    启动顺序依赖 —— inventory 比 trade 晚起几秒(k8s 滚动更新里是常态)就会让
+    trade CrashLoop,而 Go 版同样的部署顺序完全正常。方向必须与 Go 相同。
+    结算路径本身的不可达由 biz._drive_settlement 按"瞬时失败可重试"处置。
+    """
+
+    __slots__ = ("_channel", "_stub", "_addr")
+
+    def __init__(self, inventory_addr: str, *, channel=None) -> None:  # noqa: ANN001
+        self._addr = inventory_addr
+        # channel 参数供测试注入(与 kafkax 的 producer_factory 同一意图)。
+        self._channel = channel if channel is not None else grpc.aio.insecure_channel(
+            inventory_addr
+        )
+        self._stub = inventory_pb2_grpc.InventoryServiceStub(self._channel)
+
+    async def close(self) -> None:
+        """关闭底层连接。对应 Go 的 Close。"""
+        with contextlib.suppress(Exception):
+            await self._channel.close()
+
+    async def settle(self, order, idempotency_key: int) -> None:
+        """调 inventory.SettlePlayerTrade 完成本笔交易的资产对转(幂等键 = order_id)。
+
+        三条返回路径与 Go 逐条一致,**分流错了后果不对称**:
+          - OK                          → 成功(含幂等回放)
+          - ERR_INVENTORY_INSUFFICIENT  → ErrTradeInsufficient:资产**未动**,
+                                          biz 据此把订单置 FAILED 终态
+          - 其它非 OK code               → 原样透传该码(便于上游定位)
+          - 传输错误(AioRpcError)        → 原样抛:结算**可能已生效**,biz 据此
+                                          把订单留在 SELLER_CONFIRMED 等重试收敛
+
+        若把最后一类误当成 INSUFFICIENT,订单会被置 FAILED 而资产可能已经过户
+        (钱货两清却显示交易失败);反过来把 INSUFFICIENT 当成瞬时错误,则是让
+        一笔注定失败的订单永远卡在"请重试"。
+        """
+        req = inventory_pb2.SettlePlayerTradeRequest(
+            order_id=idempotency_key,
+            seller_id=order.seller_id,
+            buyer_id=order.buyer_id,
+            seller_items=_to_item_grants(order.items),
+            buyer_items=_to_item_grants(order.buyer_items),
+            price=order.price,
+        )
+        # 传输层异常(AioRpcError / 超时)在这里**不捕获**,原样上抛 —— 见 docstring。
+        resp = await self._stub.SettlePlayerTrade(req, timeout=INVENTORY_RPC_TIMEOUT_SEC)
+
+        code = int(resp.code)
+        if code == errcode_pb2.OK:
+            return
+        if code == errcode_pb2.ERR_INVENTORY_INSUFFICIENT:
+            raise errcode.PandoraError(
+                errcode.ErrTradeInsufficient,
+                "trade settle insufficient order=%d seller=%d buyer=%d",
+                idempotency_key,
+                order.seller_id,
+                order.buyer_id,
+            )
+        # inventory 返回未预期结算码(非 OK / 非 INSUFFICIENT):可能是**永久**错误
+        # (如 INVALID_ARG),但上游 _drive_settlement 会把它当"瞬时可重试" →
+        # 客户端无限重试 Confirm。独立 WARN 以便把这类死循环从正常重试里区分出来。
+        plog.get().warning(
+            "trade_settle_unexpected_code",
+            order_id=idempotency_key,
+            code=code,
+            seller_id=order.seller_id,
+            buyer_id=order.buyer_id,
+        )
+        raise errcode.PandoraError(
+            code, "trade settle failed order=%d code=%d", idempotency_key, code
+        )
+
+
+def _to_item_grants(items) -> list:  # noqa: ANN001
+    """trade 道具(item_config_id + count)→ inventory.ItemGrant。对应 Go 的 toItemGrants。"""
+    return [
+        inventory_pb2.ItemGrant(item_config_id=it.item_config_id, count=it.count)
+        for it in items
+    ]

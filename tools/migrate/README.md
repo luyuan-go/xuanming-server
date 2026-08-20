@@ -1,7 +1,7 @@
 # Pandora MySQL 版本化迁移器
 
 该工具把 `migrations/<migration_set>` 烘焙进二进制，以 MySQL 中的
-`schema_migrations` 作为执行记录。它只执行 `up`，并在每个物理目标完成后强制验收：
+`schema_migrations` 作为执行记录。默认迁移模式只执行 `up`，并在每个物理目标完成后强制验收：
 
 - `dirty` 必须为 `false`；
 - 数据库版本必须等于当前迁移镜像内该 migration set 的最高版本；
@@ -60,8 +60,9 @@ pandora_migrator:<由密钥管理系统注入>@tcp(mysql.example.internal:3306)/
 
 `production`、`prod`、`staging` 等非开发环境还会 fail-closed 强制 `tls=true`，拒绝未配置
 TLS、`tls=false`、`tls=preferred`、`tls=skip-verify` 和
-`allowFallbackToPlaintext=true`。当前 runner 不注册自定义自签 CA 配置；生产证书若不能由
-系统 CA 验证会明确失败，绝不悄悄回退明文。`local/dev/development` 才允许为本机测试使用明文。
+`allowFallbackToPlaintext=true`。普通生产目标只使用系统信任根；workspace 目标的独立 CA
+规则见下方专节。两条路径都不允许 `skip-verify` 或明文 fallback。只有非 workspace 的
+`local/dev/development` 本机测试目标才允许明文。
 
 生产迁移账号按物理库授权，不使用 root，也不复用业务账号。当前 `up` 所需权限为：
 
@@ -109,6 +110,93 @@ Dockerfile 的精确 `COPY` 共同防止这些文件进入 git、BuildKit contex
 多库之间不存在分布式事务：若前两个目标成功、第三个失败，前两个会保留已完成的 expand
 迁移。修复阻断后用同一或更高版本镜像重跑，已完成目标会验版本后跳过；不要自动 down/force，
 也不要在清单未全绿前滚动业务版本。
+
+## 中心开发 MySQL 的 workspace 库
+
+策划机使用中心开发 MySQL 时，每个 canonical migration set 映射到该 workspace 的独立
+物理库：
+
+```text
+<migration_set>_w_<workspace_id>
+```
+
+`workspace_id` 只能由中心 provisioner 分配，是 canonical 128-bit 的 26 位小写 Crockford
+Base32（`^[0-7][0-9a-hjkmnp-tv-z]{25}$`）。用户名、电脑名、IP、MachineGuid 和 SID 都不能充当
+数据库身份；它们最多是 enrollment / UI 的显示提示。唯一生成与解析实现位于
+`workspacedb` 包，物理库名还会强制满足 MySQL 64 字符标识符上限。
+
+workspace 清单必须额外传 `-workspace-id`（或 `MIGRATE_WORKSPACE_ID`）。迁移器会在读取
+DSN、连接数据库前逐 target 断言：
+
+- `database` 精确等于该 target 的 `<migration_set>_w_<workspace_id>`；
+- 同一批次不能混入 canonical 库、历史分片或另一个 workspace；
+- `_w_` 是保留命名空间，短 ID、大写、歧义字符 `i/l/o/u`、额外后缀都拒绝；
+- 每个 workspace target 必须提供绝对路径 `tls_ca_file`，且路径必须存在并指向普通文件；
+- 输入 DSN 仍只能写 `tls=true`，不能把 CA 路径、`skip-verify` 或自定义 TLS 注册名塞进 query；
+- 迁移器从空的 `x509.NewCertPool` 起步，只装载严格解析的 workspace bundle CA PEM，
+  不继承系统根；再以 DSN 的 TCP host 作为 `ServerName`，因此系统信任但非 bundle CA
+  签发的同名证书也必须拒绝，endpoint host 必须与证书 SAN / runtime profile 的
+  `tls_server_name` 完全一致；TLS 最低版本固定为 1.2；
+- workspace 目标即使误传 `-environment=dev` 也始终执行上述 TLS 校验；
+- 父进程启动的逐库 worker 必须继续携带同一个 workspace guard。
+
+单个 target 示例（其余 canonical migration set 同样映射）：
+
+```json
+{
+  "name": "account-workspace",
+  "migration_set": "pandora_account",
+  "database": "pandora_account_w_01arz3ndektsv4rrffq69g5fav",
+  "dsn_file": "account.dsn",
+  "tls_ca_file": "C:\\ProgramData\\Pandora\\certs\\planner-mysql-ca.pem"
+}
+```
+
+调用时还须传同一个 `-workspace-id=01arz3ndektsv4rrffq69g5fav`；`account.dsn` 只写
+`...?tls=true`，不携带 CA 路径。
+
+`-workspace-id` 与 `-bootstrap` 明确互斥。策划机不得持有 root/admin DSN，也不得获得
+`CREATE DATABASE`、`CREATE USER` 或 `GRANT OPTION`。自动建库、创建/轮换每 workspace
+账号和最小授权必须由中心机上的独立 provisioner 在鉴权后幂等完成；本迁移器只用已分配的
+非管理员迁移凭据执行 schema migration。当前仓库只提供上述命名/校验 seam，不伪装成已完成
+的 enrollment、认证或 Secret 下发服务。
+
+### 客户端只读预检（verify-only）
+
+中心 provisioner 已完成建库、授权和迁移后，策划机首次启动使用 `-verify-only=true` 做
+只读验收。也可用 `MIGRATE_VERIFY_ONLY=true` 提供默认值，但命令行
+`-verify-only=true|false` 始终覆盖环境变量；父进程会把明确的布尔值继续传给每个 worker，
+不会因子进程继承了另一份环境变量而换模式。
+
+verify-only 仍完整执行 targets JSON、独立 `-expected-targets` inventory、workspace guard、
+DSN、绝对 CA 文件和 TLS 配置预检，然后让每个 target 进入原有独立 worker/硬超时。连接并
+`Ping` 后只执行四条只读查询：
+
+```powershell
+pandora-migrate.exe -targets-file=<bundle>/targets.json `
+  -expected-targets=<独立审核 inventory> `
+  -workspace-id=<中心分配 ID> -verify-only=true
+```
+
+```sql
+SELECT DATABASE();
+SELECT CURRENT_USER();
+SHOW SESSION STATUS LIKE 'Ssl_cipher';
+SELECT `version`, `dirty` FROM `schema_migrations`;
+```
+
+只有当前 database 精确匹配、`CURRENT_USER()` 中 `@host` 之前的认证用户名与 DSN user
+精确一致、TLS cipher 非空、`schema_migrations` 恰好一行且 `version ==` 二进制内嵌
+latest、`dirty=false` 才通过。客户端不限定授权 host 必须为 `%`，其作用域由中心
+provisioner 验收。错库、错账号、明文/TLS 握手失败、表不存在、空表、多行、旧/新 version
+或 dirty 都非零退出。
+
+该路径与 `-bootstrap` 互斥，也不会构造 `golang-migrate` MySQL driver（该 driver 可能
+ensure version table），不会拿 `GET_LOCK`，不会执行 DDL/DML、quarantine 或 `SetVersion`。
+verify 专用 DSN 还会清空会触发连接初始化 `SET` 的 session Params，并关闭
+`multiStatements`；迁移模式原有的有限锁等待参数不受影响。
+因此 verify-only **不能**替代中心 provisioner 或正常迁移；它只证明策划机拿到的现有
+workspace 可以安全使用。
 
 ## bootstrap 安全边界
 

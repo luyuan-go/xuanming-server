@@ -42,6 +42,14 @@ team:
   optimistic_retry: 3
   # 离队/踢人联动撤销匹配票据(弱依赖,留空则不联动)
   matchmaker_addr: "matchmaker.pandora.svc.cluster.local:20011"
+  # team→login 内部批量解析角色展示编号；密钥须与 login 入站配置一致且独立随机。
+  player_no_resolver_addr: "login.pandora.svc.cluster.local:20001"
+  player_no_resolver_auth_secret: "__PLAYER_NO_RESOLVE_AUTH_SECRET_32B_CHANGE_ME__"
+  player_no_resolver_auth_audience: "login:player-no"
+  # team→player 内部批量解析角色名；不得复用 DS callback 或玩家 JWT 密钥。
+  player_name_resolver_addr: "player.pandora.svc.cluster.local:20002"
+  player_name_resolver_auth_secret: "__PLAYER_NAME_RESOLVE_AUTH_SECRET_32B_CHANGE_ME__"
+  player_name_resolver_auth_audience: "player:name"
   # team→matchmaker 调 ResolvePlayerMatchContext 的服务鉴权(caller 固定签 "team")。
   # 入队闸门是 fail-closed 的:这把密钥漏配 → 招募列表恒空 + 申请入队恒失败。
   # 必须等于 matchmaker 的 match.team_resume_auth_secret,且与 login 那把不同。

@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/luyuancpp/pandora/pkg/config"
+	"github.com/luyuancpp/pandora/pkg/internalrpcauth"
+	"github.com/luyuancpp/pandora/pkg/playername"
+	"github.com/luyuancpp/pandora/pkg/playerno"
 )
 
 // Config 是 team 服务的完整配置。
@@ -49,6 +52,20 @@ type TeamConf struct {
 	// 成员离队/被踢时联动撤销其所在的匹配票据(弱依赖):留空 → 不联动,
 	// 行为与历史一致(本机不起 matchmaker 的骨架联调路径)。
 	MatchmakerAddr string `yaml:"matchmaker_addr,omitempty" json:"matchmaker_addr,omitempty"`
+
+	// PlayerNoResolverAddr 是 login 账号权威的内部 gRPC 地址。team 每次组装客户端 Team
+	// 快照时对整支队伍做一次批量读取；留空时 player_no 全部降级为 0。
+	PlayerNoResolverAddr string `yaml:"player_no_resolver_addr,omitempty" json:"player_no_resolver_addr,omitempty"`
+	// PlayerNoResolverAuthSecret/Audience 是 team→login ResolvePlayerNos 的独立
+	// request-bound internalrpcauth 凭据，不得复用玩家 JWT 或其它服务间密钥。
+	PlayerNoResolverAuthSecret   string `yaml:"player_no_resolver_auth_secret,omitempty" json:"player_no_resolver_auth_secret,omitempty"`
+	PlayerNoResolverAuthAudience string `yaml:"player_no_resolver_auth_audience,omitempty" json:"player_no_resolver_auth_audience,omitempty"`
+
+	// PlayerNameResolver* 是 team→player ResolvePlayerNames 的独立内部批量读取配置。
+	// 留空时 nickname 全部降级为空；不得回退 Redis 中的历史 nickname 影子。
+	PlayerNameResolverAddr         string `yaml:"player_name_resolver_addr,omitempty" json:"player_name_resolver_addr,omitempty"`
+	PlayerNameResolverAuthSecret   string `yaml:"player_name_resolver_auth_secret,omitempty" json:"player_name_resolver_auth_secret,omitempty"`
+	PlayerNameResolverAuthAudience string `yaml:"player_name_resolver_auth_audience,omitempty" json:"player_name_resolver_auth_audience,omitempty"`
 
 	// MatchResumeAuthSecret / MatchResumeAuthAudience 是 team→matchmaker 调
 	// ResolvePlayerMatchContext 的东西向服务鉴权凭据(pkg/internalrpcauth),caller 固定
@@ -209,6 +226,70 @@ func (c *Config) ValidateOfflineLeave() error {
 	return nil
 }
 
+// ValidatePlayerNoResolver 防止“地址已配但签名缺失”静默把所有展示编号降级为 0。
+func (c *Config) ValidatePlayerNoResolver() error {
+	if c.Team.PlayerNoResolverAddr == "" {
+		if c.Team.PlayerNoResolverAuthSecret != "" {
+			return fmt.Errorf("team.player_no_resolver_auth_secret requires team.player_no_resolver_addr")
+		}
+		if c.Team.PlayerNoResolverAuthAudience != "" {
+			return fmt.Errorf("team.player_no_resolver_auth_audience requires team.player_no_resolver_addr")
+		}
+		return nil
+	}
+	if err := internalrpcauth.ValidateSecret(c.Team.PlayerNoResolverAuthSecret); err != nil {
+		return fmt.Errorf("team.player_no_resolver_auth_secret: %w", err)
+	}
+	if err := internalrpcauth.ValidateIdentity(c.Team.PlayerNoResolverAuthAudience); err != nil {
+		return fmt.Errorf("team.player_no_resolver_auth_audience: %w", err)
+	}
+	if c.Team.MaxMembers < 1 || c.Team.MaxMembers > playerno.ResolveBatchLimit {
+		return fmt.Errorf("team.max_members must be within [1,%d] when player_no resolver is enabled",
+			playerno.ResolveBatchLimit)
+	}
+	if c.Team.MaxApplicationsPerTeam < 1 || c.Team.MaxApplicationsPerTeam > playerno.ResolveBatchLimit {
+		return fmt.Errorf("team.max_applications_per_team must be within [1,%d] when player_no resolver is enabled",
+			playerno.ResolveBatchLimit)
+	}
+	if c.Team.MaxOpenTeamsPerQuery < 1 || c.Team.MaxOpenTeamsPerQuery > playerno.ResolveBatchLimit {
+		return fmt.Errorf("team.max_open_teams_per_query must be within [1,%d] when player_no resolver is enabled",
+			playerno.ResolveBatchLimit)
+	}
+	return nil
+}
+
+// ValidatePlayerNameResolver 防止“地址已配但签名缺失”静默让所有成员名字降级为空。
+func (c *Config) ValidatePlayerNameResolver() error {
+	if c.Team.PlayerNameResolverAddr == "" {
+		if c.Team.PlayerNameResolverAuthSecret != "" {
+			return fmt.Errorf("team.player_name_resolver_auth_secret requires team.player_name_resolver_addr")
+		}
+		if c.Team.PlayerNameResolverAuthAudience != "" {
+			return fmt.Errorf("team.player_name_resolver_auth_audience requires team.player_name_resolver_addr")
+		}
+		return nil
+	}
+	if err := internalrpcauth.ValidateSecret(c.Team.PlayerNameResolverAuthSecret); err != nil {
+		return fmt.Errorf("team.player_name_resolver_auth_secret: %w", err)
+	}
+	if err := internalrpcauth.ValidateIdentity(c.Team.PlayerNameResolverAuthAudience); err != nil {
+		return fmt.Errorf("team.player_name_resolver_auth_audience: %w", err)
+	}
+	if c.Team.MaxMembers < 1 || c.Team.MaxMembers > playername.ResolveBatchLimit {
+		return fmt.Errorf("team.max_members must be within [1,%d] when player_name resolver is enabled",
+			playername.ResolveBatchLimit)
+	}
+	if c.Team.MaxApplicationsPerTeam < 1 || c.Team.MaxApplicationsPerTeam > playername.ResolveBatchLimit {
+		return fmt.Errorf("team.max_applications_per_team must be within [1,%d] when player_name resolver is enabled",
+			playername.ResolveBatchLimit)
+	}
+	if c.Team.MaxOpenTeamsPerQuery < 1 || c.Team.MaxOpenTeamsPerQuery > playername.ResolveBatchLimit {
+		return fmt.Errorf("team.max_open_teams_per_query must be within [1,%d] when player_name resolver is enabled",
+			playername.ResolveBatchLimit)
+	}
+	return nil
+}
+
 // 入队策略取值(JoinPolicy)。
 const (
 	// JoinPolicyApproval 申请 → 队长审批 → 入队。
@@ -256,6 +337,12 @@ func (c *Config) Defaults() {
 	}
 	if c.Team.OptimisticRetry == 0 {
 		c.Team.OptimisticRetry = 3
+	}
+	if c.Team.PlayerNoResolverAddr != "" && c.Team.PlayerNoResolverAuthAudience == "" {
+		c.Team.PlayerNoResolverAuthAudience = "login:player-no"
+	}
+	if c.Team.PlayerNameResolverAddr != "" && c.Team.PlayerNameResolverAuthAudience == "" {
+		c.Team.PlayerNameResolverAuthAudience = "player:name"
 	}
 	if c.Team.InvitePushMode == "" {
 		// 金丝雀期默认双发:老/新客户端各认各的 payload,互不干扰,各弹一次。

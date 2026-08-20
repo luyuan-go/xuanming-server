@@ -8,6 +8,7 @@ import (
 
 	"github.com/luyuancpp/pandora/pkg/config"
 	"github.com/luyuancpp/pandora/pkg/dbguard"
+	"github.com/luyuancpp/pandora/pkg/internalrpcauth"
 	"github.com/luyuancpp/pandora/pkg/kafkax"
 )
 
@@ -45,6 +46,11 @@ type PlayerConf struct {
 
 	// MaxNicknameLen 昵称最大长度(UpdateNickname 校验,默认 32)。
 	MaxNicknameLen int `yaml:"max_nickname_len,omitempty" json:"max_nickname_len,omitempty"`
+
+	// PlayerNameResolveAuthSecret/Audience 校验 team→player ResolvePlayerNames 的独立
+	// request-bound internalrpcauth 身份，不得复用 DS callback secret 或玩家 JWT。
+	PlayerNameResolveAuthSecret   string `yaml:"player_name_resolve_auth_secret,omitempty" json:"player_name_resolve_auth_secret,omitempty"`
+	PlayerNameResolveAuthAudience string `yaml:"player_name_resolve_auth_audience,omitempty" json:"player_name_resolve_auth_audience,omitempty"`
 
 	// HeroSelectionEnabled 出战英雄选择功能开关(默认 false,demo 阶段跳过选英雄,
 	// 与 login demo-skip 风格一致;关闭时 SelectHero 返回 ERR_PLAYER_FEATURE_DISABLED)。
@@ -143,6 +149,9 @@ func (c *Config) Defaults() {
 	if c.Player.MaxNicknameLen <= 0 {
 		c.Player.MaxNicknameLen = 32
 	}
+	if c.Player.PlayerNameResolveAuthSecret != "" && c.Player.PlayerNameResolveAuthAudience == "" {
+		c.Player.PlayerNameResolveAuthAudience = "player:name"
+	}
 	if len(c.Player.ConsumeTopics) == 0 {
 		c.Player.ConsumeTopics = []string{kafkax.TopicPlayerUpdate}
 	}
@@ -152,6 +161,26 @@ func (c *Config) Defaults() {
 	if c.Server.Http.Addr == "" {
 		c.Server.Http.Addr = ":21002"
 	}
+}
+
+// ValidatePlayerNameResolver 防止内部名称解析只配半套凭据后静默拒绝全部 Team 请求。
+func (c *Config) ValidatePlayerNameResolver() error {
+	if c.Player.PlayerNameResolveAuthSecret == "" {
+		if c.Player.PlayerNameResolveAuthAudience != "" {
+			return fmt.Errorf("player.player_name_resolve_auth_audience requires player_name_resolve_auth_secret")
+		}
+		return nil
+	}
+	if err := internalrpcauth.ValidateSecret(c.Player.PlayerNameResolveAuthSecret); err != nil {
+		return fmt.Errorf("player.player_name_resolve_auth_secret: %w", err)
+	}
+	if err := internalrpcauth.ValidateIdentity(c.Player.PlayerNameResolveAuthAudience); err != nil {
+		return fmt.Errorf("player.player_name_resolve_auth_audience: %w", err)
+	}
+	if c.Node.RedisClient.Host == "" && len(c.Node.RedisClient.Addrs) == 0 {
+		return fmt.Errorf("player.player_name_resolve_auth_secret requires node.redis_client replay authority")
+	}
+	return nil
 }
 
 // MaxExpPerGrantOrDefault 返回生效的单次入账上限(未配置 → 1000000)。

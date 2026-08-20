@@ -196,7 +196,7 @@
       "game_mode_class": "/Script/Pandora.PandoraPveGameMode",
       "category": 4,
       "show_in_match_list": true,
-      "team_size": 1,
+      "team_size": 3,
       "allow_exit": true,
       "game_mode": "pve_coop",
       "entry_mode": 2,

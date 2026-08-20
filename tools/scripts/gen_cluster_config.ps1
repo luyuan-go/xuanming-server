@@ -17,7 +17,7 @@
 #                                                                              # 本地 minikube(docker driver)+ udp-relay 回程
 #   pwsh tools/scripts/gen_cluster_config.ps1 -HostAllocators                  # 混合模式:容器服务回连宿主 allocator
 #   pwsh tools/scripts/gen_cluster_config.ps1 -AllocatorMode agones -Prod -Secret <玩家面密钥> -DsSecret <DS回调面密钥>
-#                                                                              # 生产还必须注入五把 placement key + 独立 Match resume / allocation abort service key
+#                                                                              # 生产还必须注入五把 placement key + 独立内部 RPC service keys
 #
 # ⚠️ 安全(§5 审核):生产判定**只看 -Prod**(不再从 -AllocatorAdvertiseHost 推断,避免线上配了
 #    advertise host 就被误判为 dev 而放行公开 dev 密钥)。-Prod 时必须提供**两把**真密钥:
@@ -29,6 +29,8 @@
 #    battle-departure 五把独立 ≥32B key，
 #    对应 PANDORA_PLACEMENT_*_SECRET；Login→Matchmaker 另用 PANDORA_MATCH_RESUME_AUTH_SECRET；
 #    Team→Matchmaker 读同一个方法、但必须是另一把 PANDORA_TEAM_RESUME_AUTH_SECRET；
+#    Team→Login 批量解析 player_no 另用 PANDORA_PLAYER_NO_RESOLVE_AUTH_SECRET；
+#    Team→Player 批量解析 nickname 另用 PANDORA_PLAYER_NAME_RESOLVE_AUTH_SECRET；
 #    Matchmaker→DS allocator 销毁未入场分配另用 PANDORA_ALLOCATION_ABORT_AUTH_SECRET；
 #    生成器拒绝全部权限域之间的密钥复用。
 #    owner 权威库另需 -OwnerStoreDsn / PANDORA_OWNER_TIDB_DSN(真 TiDB DSN,pandora_owner 库,
@@ -73,6 +75,12 @@ param(
     # 合并(任一方可冒充另一方)、且轮换变成全有全无。漏配 → team 入队闸门 fail-closed 拒绝入队、
     # 招募列表恒空，因此 -Prod 必填。
     [string]$TeamResumeAuthSecret = $env:PANDORA_TEAM_RESUME_AUTH_SECRET,
+    # Team→Login ResolvePlayerNos 的独立服务身份 key。签名端 team 与验签端 login 必须同值，
+    # 且不得复用 JWT、DS callback、placement、resume 或 allocation-abort 权限域。
+    [string]$PlayerNoResolveAuthSecret = $env:PANDORA_PLAYER_NO_RESOLVE_AUTH_SECRET,
+    # Team→Player ResolvePlayerNames 的独立服务身份 key。签名端 team 与验签端 player 必须同值，
+    # 且不得复用 player-no、JWT、DS callback、placement、resume 或 allocation-abort 权限域。
+    [string]$PlayerNameResolveAuthSecret = $env:PANDORA_PLAYER_NAME_RESOLVE_AUTH_SECRET,
     # Matchmaker(PVP/PVE)→DS allocator AbortPreactiveBattle 的独立 payload-bound HMAC。
     # 该权限可物理删除精确 GameServer，绝不能与 JWT、DS callback、placement 或 resume 复用。
     [string]$AllocationAbortAuthSecret = $env:PANDORA_ALLOCATION_ABORT_AUTH_SECRET,
@@ -146,6 +154,8 @@ $DevPlacementSecrets = [ordered]@{
 }
 $DevMatchResumeAuthSecret = 'pandora-dev-match-resume-auth-key-v1!'
 $DevTeamResumeAuthSecret = 'pandora-dev-team-resume-auth-key-v1!'
+$DevPlayerNoResolveAuthSecret = 'pandora-dev-team-player-no-auth-key-v1!'
+$DevPlayerNameResolveAuthSecret = 'pandora-dev-team-player-name-auth-key-v1!'
 $DevAllocationAbortAuthSecret = 'pandora-dev-allocation-abort-auth-key-v1!'
 
 
@@ -332,6 +342,40 @@ $EffectiveTeamResumeAuthSecret = if ([string]::IsNullOrWhiteSpace($TeamResumeAut
     }
     $TeamResumeAuthSecret
 }
+$EffectivePlayerNoResolveAuthSecret = if ([string]::IsNullOrWhiteSpace($PlayerNoResolveAuthSecret)) {
+    if ($Prod) {
+        throw '[FATAL] -Prod 必须提供 -PlayerNoResolveAuthSecret 或 PANDORA_PLAYER_NO_RESOLVE_AUTH_SECRET；Team→Login 玩家编号解析不得携带公开 dev key。'
+    }
+    $DevPlayerNoResolveAuthSecret
+} else {
+    if ([System.Text.Encoding]::UTF8.GetByteCount($PlayerNoResolveAuthSecret) -lt 32) {
+        throw '[FATAL] -PlayerNoResolveAuthSecret 至少需要 32 字节。'
+    }
+    if ($PlayerNoResolveAuthSecret -match '[\x00-\x1F\x7F-\x9F]') {
+        throw '[FATAL] -PlayerNoResolveAuthSecret 含控制字符，拒绝写入 YAML。'
+    }
+    if ($Prod -and $PlayerNoResolveAuthSecret -ceq $DevPlayerNoResolveAuthSecret) {
+        throw '[FATAL] -Prod 的 player-no resolve service key 不能使用仓库公开 dev key。'
+    }
+    $PlayerNoResolveAuthSecret
+}
+$EffectivePlayerNameResolveAuthSecret = if ([string]::IsNullOrWhiteSpace($PlayerNameResolveAuthSecret)) {
+    if ($Prod) {
+        throw '[FATAL] -Prod 必须提供 -PlayerNameResolveAuthSecret 或 PANDORA_PLAYER_NAME_RESOLVE_AUTH_SECRET；Team→Player 玩家名字解析不得携带公开 dev key。'
+    }
+    $DevPlayerNameResolveAuthSecret
+} else {
+    if ([System.Text.Encoding]::UTF8.GetByteCount($PlayerNameResolveAuthSecret) -lt 32) {
+        throw '[FATAL] -PlayerNameResolveAuthSecret 至少需要 32 字节。'
+    }
+    if ($PlayerNameResolveAuthSecret -match '[\x00-\x1F\x7F-\x9F]') {
+        throw '[FATAL] -PlayerNameResolveAuthSecret 含控制字符，拒绝写入 YAML。'
+    }
+    if ($Prod -and $PlayerNameResolveAuthSecret -ceq $DevPlayerNameResolveAuthSecret) {
+        throw '[FATAL] -Prod 的 player-name resolve service key 不能使用仓库公开 dev key。'
+    }
+    $PlayerNameResolveAuthSecret
+}
 $EffectiveAllocationAbortAuthSecret = if ([string]::IsNullOrWhiteSpace($AllocationAbortAuthSecret)) {
     if ($Prod) {
         throw '[FATAL] -Prod 必须提供 -AllocationAbortAuthSecret 或 PANDORA_ALLOCATION_ABORT_AUTH_SECRET；未入场 GameServer 销毁 RPC 不得使用公开 dev key。'
@@ -361,6 +405,8 @@ $allAuthoritySecrets = @(
     @{ n = 'placement battle departure'; v = $EffectivePlacementSecrets.BattleDeparture },
     @{ n = 'Match resume service identity'; v = $EffectiveMatchResumeAuthSecret },
     @{ n = 'Team resume service identity'; v = $EffectiveTeamResumeAuthSecret },
+    @{ n = 'Team to Login player-no resolve service identity'; v = $EffectivePlayerNoResolveAuthSecret },
+    @{ n = 'Team to Player player-name resolve service identity'; v = $EffectivePlayerNameResolveAuthSecret },
     @{ n = 'allocation abort service identity'; v = $EffectiveAllocationAbortAuthSecret }
 ) | Where-Object { $null -ne $_.v }
 for ($i = 0; $i -lt $allAuthoritySecrets.Count; $i++) {
@@ -615,6 +661,30 @@ $MatchResumeAuthSecretBindings = @(
 $TeamResumeAuthSecretBindings = @(
     @{ Service = 'matchmaker'; Section = 'match'; Child = 'team_resume_auth_secret' },
     @{ Service = 'team'; Section = 'team'; Child = 'match_resume_auth_secret' }
+)
+$PlayerNoResolveAuthSecretBindings = @(
+    @{ Service = 'login'; Section = 'login'; Child = 'player_no_resolve_auth_secret' },
+    @{ Service = 'team'; Section = 'team'; Child = 'player_no_resolver_auth_secret' }
+)
+$PlayerNoResolveAuthAudienceBindings = @(
+    @{ Service = 'login'; Section = 'login'; Child = 'player_no_resolve_auth_audience' },
+    @{ Service = 'team'; Section = 'team'; Child = 'player_no_resolver_auth_audience' }
+)
+$PlayerNoResolveAuthAudience = 'login:player-no'
+$PlayerNoResolveAddressBindings = @(
+    @{ Service = 'team'; Section = 'team'; Child = 'player_no_resolver_addr'; Value = 'login:20001' }
+)
+$PlayerNameResolveAuthSecretBindings = @(
+    @{ Service = 'player'; Section = 'player'; Child = 'player_name_resolve_auth_secret' },
+    @{ Service = 'team'; Section = 'team'; Child = 'player_name_resolver_auth_secret' }
+)
+$PlayerNameResolveAuthAudienceBindings = @(
+    @{ Service = 'player'; Section = 'player'; Child = 'player_name_resolve_auth_audience' },
+    @{ Service = 'team'; Section = 'team'; Child = 'player_name_resolver_auth_audience' }
+)
+$PlayerNameResolveAuthAudience = 'player:name'
+$PlayerNameResolveAddressBindings = @(
+    @{ Service = 'team'; Section = 'team'; Child = 'player_name_resolver_addr'; Value = 'player:20002' }
 )
 $AllocationAbortAuthSecretBindings = @(
     @{ Service = 'matchmaker'; Section = 'match'; Child = 'allocation_abort_auth_secret' },
@@ -1207,6 +1277,34 @@ function Convert-Secret([string]$ServiceName, [string]$Text) {
             $Text = Set-YamlDirectString $ServiceName $Text $binding.Section $binding.Child `
                 $DevTeamResumeAuthSecret $EffectiveTeamResumeAuthSecret
         }
+    }
+    foreach ($binding in @($PlayerNoResolveAuthSecretBindings | Where-Object Service -CEQ $ServiceName)) {
+        if ($EffectivePlayerNoResolveAuthSecret -ceq $DevPlayerNoResolveAuthSecret) {
+            Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $DevPlayerNoResolveAuthSecret
+        } else {
+            $Text = Set-YamlDirectString $ServiceName $Text $binding.Section $binding.Child `
+                $DevPlayerNoResolveAuthSecret $EffectivePlayerNoResolveAuthSecret
+        }
+    }
+    foreach ($binding in @($PlayerNoResolveAuthAudienceBindings | Where-Object Service -CEQ $ServiceName)) {
+        Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $PlayerNoResolveAuthAudience
+    }
+    foreach ($binding in @($PlayerNoResolveAddressBindings | Where-Object Service -CEQ $ServiceName)) {
+        Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $binding.Value
+    }
+    foreach ($binding in @($PlayerNameResolveAuthSecretBindings | Where-Object Service -CEQ $ServiceName)) {
+        if ($EffectivePlayerNameResolveAuthSecret -ceq $DevPlayerNameResolveAuthSecret) {
+            Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $DevPlayerNameResolveAuthSecret
+        } else {
+            $Text = Set-YamlDirectString $ServiceName $Text $binding.Section $binding.Child `
+                $DevPlayerNameResolveAuthSecret $EffectivePlayerNameResolveAuthSecret
+        }
+    }
+    foreach ($binding in @($PlayerNameResolveAuthAudienceBindings | Where-Object Service -CEQ $ServiceName)) {
+        Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $PlayerNameResolveAuthAudience
+    }
+    foreach ($binding in @($PlayerNameResolveAddressBindings | Where-Object Service -CEQ $ServiceName)) {
+        Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $binding.Value
     }
     foreach ($binding in @($AllocationAbortAuthSecretBindings | Where-Object Service -CEQ $ServiceName)) {
         if ($EffectiveAllocationAbortAuthSecret -ceq $DevAllocationAbortAuthSecret) {
@@ -1849,6 +1947,26 @@ function Assert-GeneratedSet {
             Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child `
                 $EffectiveTeamResumeAuthSecret
         }
+        foreach ($binding in @($PlayerNoResolveAuthSecretBindings | Where-Object Service -CEQ $svc.Name)) {
+            Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child `
+                $EffectivePlayerNoResolveAuthSecret
+        }
+        foreach ($binding in @($PlayerNoResolveAuthAudienceBindings | Where-Object Service -CEQ $svc.Name)) {
+            Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child $PlayerNoResolveAuthAudience
+        }
+        foreach ($binding in @($PlayerNoResolveAddressBindings | Where-Object Service -CEQ $svc.Name)) {
+            Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child $binding.Value
+        }
+        foreach ($binding in @($PlayerNameResolveAuthSecretBindings | Where-Object Service -CEQ $svc.Name)) {
+            Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child `
+                $EffectivePlayerNameResolveAuthSecret
+        }
+        foreach ($binding in @($PlayerNameResolveAuthAudienceBindings | Where-Object Service -CEQ $svc.Name)) {
+            Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child $PlayerNameResolveAuthAudience
+        }
+        foreach ($binding in @($PlayerNameResolveAddressBindings | Where-Object Service -CEQ $svc.Name)) {
+            Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child $binding.Value
+        }
         foreach ($binding in @($AllocationAbortAuthSecretBindings | Where-Object Service -CEQ $svc.Name)) {
             Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child `
                 $EffectiveAllocationAbortAuthSecret
@@ -2179,4 +2297,4 @@ finally {
     }
 }
 
-Write-Host "[ OK ] 生成并事务发布 $($yamlNames.Count) 个集群版配置(allocator=$AllocatorMode, host_allocators=$HostAllocators, player_secret=$(if ($null -ne $PlayerSecretToInject) { '真密钥' } else { 'dev' }), ds_secret=$(if ($null -ne $DsSecretToInject) { '真密钥' } else { 'dev' }), match_resume_auth=$(if ($EffectiveMatchResumeAuthSecret -ceq $DevMatchResumeAuthSecret) { 'dev' } else { '真密钥' }), team_resume_auth=$(if ($EffectiveTeamResumeAuthSecret -ceq $DevTeamResumeAuthSecret) { 'dev' } else { '真密钥' }), allocation_abort_auth=$(if ($EffectiveAllocationAbortAuthSecret -ceq $DevAllocationAbortAuthSecret) { 'dev' } else { '真密钥' }), owner_store=$(if (-not [string]::IsNullOrWhiteSpace($OwnerStoreDsn)) { '注入DSN' } else { 'dev-mysql' })) -> $OutDir" -ForegroundColor Green
+Write-Host "[ OK ] 生成并事务发布 $($yamlNames.Count) 个集群版配置(allocator=$AllocatorMode, host_allocators=$HostAllocators, player_secret=$(if ($null -ne $PlayerSecretToInject) { '真密钥' } else { 'dev' }), ds_secret=$(if ($null -ne $DsSecretToInject) { '真密钥' } else { 'dev' }), match_resume_auth=$(if ($EffectiveMatchResumeAuthSecret -ceq $DevMatchResumeAuthSecret) { 'dev' } else { '真密钥' }), team_resume_auth=$(if ($EffectiveTeamResumeAuthSecret -ceq $DevTeamResumeAuthSecret) { 'dev' } else { '真密钥' }), player_no_resolve_auth=$(if ($EffectivePlayerNoResolveAuthSecret -ceq $DevPlayerNoResolveAuthSecret) { 'dev' } else { '真密钥' }), player_name_resolve_auth=$(if ($EffectivePlayerNameResolveAuthSecret -ceq $DevPlayerNameResolveAuthSecret) { 'dev' } else { '真密钥' }), allocation_abort_auth=$(if ($EffectiveAllocationAbortAuthSecret -ceq $DevAllocationAbortAuthSecret) { 'dev' } else { '真密钥' }), owner_store=$(if (-not [string]::IsNullOrWhiteSpace($OwnerStoreDsn)) { '注入DSN' } else { 'dev-mysql' })) -> $OutDir" -ForegroundColor Green

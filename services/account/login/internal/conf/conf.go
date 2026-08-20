@@ -17,6 +17,7 @@ import (
 
 	"github.com/luyuancpp/pandora/pkg/config"
 	"github.com/luyuancpp/pandora/pkg/dbguard"
+	"github.com/luyuancpp/pandora/pkg/internalrpcauth"
 )
 
 // Config 是 login 服务的完整配置。
@@ -77,6 +78,11 @@ type LoginConf struct {
 	// data 层常量(PlayerNoBatchSize / PlayerNoWatermarkLag),迁移未跑时启动探针
 	// fail-soft 停用补号(ERROR 日志),不影响登录主链。
 	PlayerNoStart uint64 `yaml:"player_no_start,omitempty" json:"player_no_start,omitempty"`
+
+	// PlayerNoResolveAuthSecret/Audience 校验 team→login 内部 ResolvePlayerNos 的
+	// request-bound HMAC。该接口只接受 player_id 批量查询，且不经客户端 Envoy 暴露。
+	PlayerNoResolveAuthSecret   string `yaml:"player_no_resolve_auth_secret,omitempty" json:"player_no_resolve_auth_secret,omitempty"`
+	PlayerNoResolveAuthAudience string `yaml:"player_no_resolve_auth_audience,omitempty" json:"player_no_resolve_auth_audience,omitempty"`
 
 	// SessionGenerationEnforce 是 SetRole 会话代际强制门(R7 收口,滚动发布分阶段激活)。
 	// false(默认):Login 照常把单调代际写进 MySQL(emit/双写),SetRole 只做 Redis
@@ -302,11 +308,24 @@ func (c *Config) Defaults() {
 	if c.Server.Http.Addr == "" {
 		c.Server.Http.Addr = ":21001"
 	}
+	if c.Login.PlayerNoResolveAuthSecret != "" && c.Login.PlayerNoResolveAuthAudience == "" {
+		c.Login.PlayerNoResolveAuthAudience = "login:player-no"
+	}
 	c.DSAuth.Defaults()
 }
 
 // Validate 校验不能靠运行期降级修复的配置冲突。
 func (c *Config) Validate() error {
+	if c.Login.PlayerNoResolveAuthSecret != "" {
+		if err := internalrpcauth.ValidateSecret(c.Login.PlayerNoResolveAuthSecret); err != nil {
+			return fmt.Errorf("login.player_no_resolve_auth_secret: %w", err)
+		}
+		if err := internalrpcauth.ValidateIdentity(c.Login.PlayerNoResolveAuthAudience); err != nil {
+			return fmt.Errorf("login.player_no_resolve_auth_audience: %w", err)
+		}
+	} else if c.Login.PlayerNoResolveAuthAudience != "" {
+		return fmt.Errorf("login.player_no_resolve_auth_audience requires player_no_resolve_auth_secret")
+	}
 	if c.Login.DSTicket.SignerEnabled() && c.Login.DSTicket.ActiveKid == "" {
 		return fmt.Errorf("login.ds_ticket signer requires explicit active_kid")
 	}

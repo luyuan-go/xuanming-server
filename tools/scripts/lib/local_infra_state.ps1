@@ -55,6 +55,21 @@ function Exit-PandoraOrchestrationLock {
     try { $held.Stream.Dispose() } finally { Remove-Variable -Name $stateVariable -Scope Global -Force -ErrorAction SilentlyContinue }
 }
 
+function Assert-PandoraOrchestrationLockHeld {
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+    $stateVariable = '__PandoraLocalDevOrchestrationLockV1'
+    $expectedPath = Get-PandoraFullPath (Get-PandoraOrchestrationLockPath $ProjectRoot)
+    $held = Get-Variable -Name $stateVariable -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+    if (-not $held -or [int]$held.Depth -le 0 -or -not $held.Stream -or
+        $held.Stream -isnot [IO.FileStream] -or -not $held.Stream.CanRead -or -not $held.Stream.CanWrite -or
+        $held.Stream.SafeFileHandle.IsClosed -or
+        -not (Test-PandoraPathEqual "$($held.Path)" $expectedPath) -or
+        -not (Test-PandoraPathEqual "$($held.Stream.Name)" $expectedPath)) {
+        throw "当前操作必须持有本项目真实编排锁:$expectedPath"
+    }
+    return $true
+}
+
 function Get-PandoraFullPath([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path)) { throw '路径为空' }
     return [IO.Path]::GetFullPath($Path)
@@ -180,6 +195,100 @@ function Get-PandoraDefaultsFileArgument([string]$CommandLine) {
     return $null
 }
 
+function ConvertFrom-PandoraNetstatTcpListenerRecords {
+    <#
+      解析 Windows `netstat -ano` 的 TCP / TCPv6 监听行，返回本地地址、端口和正 PID。
+      对未知格式直接抛错：调用方必须把它当“状态未知”，不能把解析失败冒充端口空闲。
+    #>
+    param([AllowEmptyCollection()][string[]]$Lines)
+    $records = @()
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $tcpRows = 0
+    $listeningRows = 0
+    foreach ($line in @($Lines)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $columns = @($line.Trim() -split '\s+')
+        if ($columns.Count -eq 0 -or $columns[0] -ine 'TCP') { continue }
+        $tcpRows++
+        if ($columns.Count -ne 5) { throw "netstat TCP 行格式无法识别:$line" }
+
+        $local = $columns[1]
+        $colon = $local.LastIndexOf(':')
+        $parsedPort = 0
+        $ownerPid = 0
+        if ($colon -lt 0 -or $colon -eq $local.Length - 1 -or
+            -not [int]::TryParse($local.Substring($colon + 1), [ref]$parsedPort) -or
+            $parsedPort -lt 0 -or $parsedPort -gt 65535 -or
+            -not [int]::TryParse($columns[-1], [ref]$ownerPid) -or $ownerPid -lt 0) {
+            throw "netstat TCP 行格式无法识别:$line"
+        }
+        if ($columns[3] -ine 'LISTENING') { continue }
+        $listeningRows++
+        if ($ownerPid -le 0) { continue }
+
+        $localAddress = $local.Substring(0, $colon).Trim('[', ']')
+        if ([string]::IsNullOrWhiteSpace($localAddress)) {
+            throw "netstat TCP 本地地址无法识别:$line"
+        }
+        $key = "$localAddress`:$parsedPort`:$ownerPid"
+        if ($seen.Add($key)) {
+            $records += [pscustomobject]@{
+                LocalAddress = $localAddress
+                LocalPort = $parsedPort
+                OwningProcess = $ownerPid
+            }
+        }
+    }
+    if ($tcpRows -eq 0 -or $listeningRows -eq 0) {
+        throw 'netstat 输出格式无法识别（没有可验证的 TCP / LISTENING 行）'
+    }
+    return @($records | Sort-Object LocalPort, OwningProcess, LocalAddress)
+}
+
+function ConvertFrom-PandoraNetstatTcpListeners {
+    <# 兼容单端口调用：在同一严格 parser 结果上只投影 PID。 #>
+    param(
+        [AllowEmptyCollection()][string[]]$Lines,
+        [Parameter(Mandatory)][ValidateRange(1, 65535)][int]$Port
+    )
+    return @(ConvertFrom-PandoraNetstatTcpListenerRecords -Lines $Lines |
+        Where-Object { [int]$_.LocalPort -eq $Port } |
+        Select-Object -ExpandProperty OwningProcess -Unique |
+        Sort-Object)
+}
+
+function Invoke-PandoraNetstatTcpSnapshot {
+    <# Windows 自带工具；显式走 System32，既不要求安装模块，也不接受 PATH 中的同名程序。 #>
+    $systemDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+    $netstatExe = Join-Path $systemDirectory 'netstat.exe'
+    if (-not (Test-Path -LiteralPath $netstatExe -PathType Leaf)) {
+        throw "找不到 Windows netstat.exe:$netstatExe"
+    }
+    # 不能加 `-p tcp`：Windows 会只给 TCPv4，漏掉仅绑定 ::1 的 TCPv6 listener。
+    # `-ano` 会同时带 UDP，但 parser 明确只收 TCP 行，且仍只启动一次 netstat。
+    $lines = @(& $netstatExe -ano 2>$null)
+    $exitCode = [int]$LASTEXITCODE
+    return [pscustomobject]@{ ExitCode = $exitCode; Lines = $lines }
+}
+
+function Get-PandoraTcpListenerProcessIds {
+    param([Parameter(Mandatory)][ValidateRange(1, 65535)][int]$Port)
+    return @(Get-PandoraTcpListenerRecords |
+        Where-Object { [int]$_.LocalPort -eq $Port } |
+        Select-Object -ExpandProperty OwningProcess -Unique |
+        Sort-Object)
+}
+
+function Get-PandoraTcpListenerRecords {
+    <# 一次系统调用取得全部 listener；多端口调用方必须复用这份结果，不能按端口重复执行 netstat。 #>
+    $snapshot = Invoke-PandoraNetstatTcpSnapshot
+    if (-not $snapshot -or [int]$snapshot.ExitCode -ne 0) {
+        $exitCode = if ($snapshot) { [int]$snapshot.ExitCode } else { -1 }
+        throw "netstat 查询 TCP listener 失败(exit=$exitCode)"
+    }
+    return @(ConvertFrom-PandoraNetstatTcpListenerRecords -Lines @($snapshot.Lines))
+}
+
 function Get-PandoraLocalMysqlOwnedProcess([string]$ProjectRoot, $State = $null) {
     if (-not $State) { $State = Get-PandoraLocalInfraPortState $ProjectRoot }
     if (-not $State -or [int]$State.MysqlProcessId -le 0) { return $null }
@@ -195,8 +304,7 @@ function Get-PandoraLocalMysqlOwnedProcess([string]$ProjectRoot, $State = $null)
     if (-not (Test-PandoraPathEqual $actualIni $State.MysqlDefaultsFile)) { return $null }
 
     try {
-        $listenerPids = @(Get-NetTCPConnection -State Listen -LocalPort ([int]$State.MysqlPort) -ErrorAction Stop |
-            Select-Object -ExpandProperty OwningProcess -Unique)
+        $listenerPids = @(Get-PandoraTcpListenerProcessIds -Port ([int]$State.MysqlPort))
         if ($listenerPids -notcontains [int]$proc.Id) { return $null }
     } catch { return $null }
     return $proc
@@ -221,13 +329,24 @@ function Get-PandoraServiceAppliedMysqlState([string]$ProjectRoot) {
             return $null
         }
         $socialOnMysql = $state.social_on_mysql
+        if ($schemaVersion -eq 3) {
+            $fingerprint = "$($state.profile_fingerprint)"
+            if (-not [int]::TryParse("$($state.mysql_port)", [ref]$port) -or
+                $port -lt 1 -or $port -gt 65535 -or $mode -cne 'central' -or
+                $socialOnMysql -isnot [bool] -or -not [bool]$socialOnMysql -or
+                $fingerprint -cnotmatch '^sha256:[0-9a-f]{64}$') { throw 'central v3 字段不合法' }
+            return [pscustomobject]@{
+                SchemaVersion = $schemaVersion; Mode = $mode; MysqlPort = $port
+                SocialOnMysql = [bool]$socialOnMysql; ProfileFingerprint = $fingerprint; Path = $path
+            }
+        }
         if ($schemaVersion -ne 2 -or
             -not [int]::TryParse("$($state.mysql_port)", [ref]$port) -or
             $port -lt 1024 -or $port -gt 49151 -or
             $mode -notin @('docker', 'nodocker') -or $socialOnMysql -isnot [bool]) { throw '字段不合法' }
         return [pscustomobject]@{
             SchemaVersion = $schemaVersion; Mode = $mode; MysqlPort = $port
-            SocialOnMysql = [bool]$socialOnMysql; Path = $path
+            SocialOnMysql = [bool]$socialOnMysql; ProfileFingerprint = ''; Path = $path
         }
     } catch {
         throw "业务服务已应用运行模式状态损坏:$path。拒绝跳过服务重启。详情:$($_.Exception.Message)"
@@ -266,6 +385,34 @@ function Set-PandoraServiceAppliedMysqlPort {
             schema_version = 2; mode = $Mode; mysql_port = $MysqlPort; social_on_mysql = $SocialOnMysql
         } | ConvertTo-Json |
             Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
+        [IO.File]::Move($tmp, $path, $true)
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+    return $path
+}
+
+function Set-PandoraServiceAppliedMysqlProfile {
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][ValidateSet('central')][string]$Mode,
+        [Parameter(Mandatory)][ValidateRange(1, 65535)][int]$MysqlPort,
+        [Parameter(Mandatory)][bool]$SocialOnMysql,
+        [Parameter(Mandatory)][ValidatePattern('^sha256:[0-9a-f]{64}$')][string]$ProfileFingerprint
+    )
+    if (-not $SocialOnMysql) { throw 'central applied profile 必须使用 MySQL social 配置' }
+    $path = Get-PandoraServiceAppliedMysqlStatePath $ProjectRoot
+    $dir = Split-Path -Parent $path
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $tmp = Join-Path $dir ("mysql-port-applied.json.{0}.{1}.tmp" -f $PID, [guid]::NewGuid().ToString('N'))
+    try {
+        [ordered]@{
+            schema_version = 3
+            mode = $Mode
+            mysql_port = $MysqlPort
+            social_on_mysql = $true
+            profile_fingerprint = $ProfileFingerprint
+        } | ConvertTo-Json | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
         [IO.File]::Move($tmp, $path, $true)
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue

@@ -143,6 +143,14 @@ service LoginService {
     };
   }
 
+  // ResolvePlayerNosForDS 供 UE DS 按 player_id 单批读取账号域权威展示编号。
+  // 不加 HTTP annotation；客户端 listener 必须 exact 403，DS listener 才 exact allow。
+  // redis admission 模式下实现层还会强制 Bearer DS credential + active 权威。
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE DS 与 Team 入口共用同一 canonical batch messages。
+  // buf:lint:ignore RPC_REQUEST_STANDARD_NAME 避免复制同形 request 造成协议漂移。
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME 避免复制同形 response 造成协议漂移。
+  rpc ResolvePlayerNosForDS(ResolvePlayerNosRequest) returns (ResolvePlayerNosResponse);
+
   // GetResumeContext 让冷启动/前台恢复重新读取服务端权威路由；客户端不得继续相信
   // 旧地址、旧票据或本地超时推导。match_stage 可由 matchmaker durable saga 后续补齐。
   rpc GetResumeContext(GetResumeContextRequest) returns (GetResumeContextResponse) {
@@ -151,6 +159,18 @@ service LoginService {
       body: "*"
     };
   }
+}
+
+// LoginInternalService 只供集群内服务读取账号域权威数据。
+//
+// 它刻意与客户端可见 LoginService 分开，且所有 RPC 均不加 google.api.http 注解：
+// 客户端 Envoy 只转发 /pandora.login.v1.LoginService/，不会暴露本服务。实现层还必须
+// 校验 request-bound internalrpcauth，不能把“没走 Envoy”误当成调用方身份。
+service LoginInternalService {
+  // ResolvePlayerNos 按 player_id 有界批量解析角色展示编号。
+  // 输入只接受身份键 player_id；player_no 仅出现在结果中，绝不反向作为业务查询键。
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE Team 与 DS 入口共用同一 canonical batch messages。
+  rpc ResolvePlayerNos(ResolvePlayerNosRequest) returns (ResolvePlayerNosResponse);
 }
 
 // ===== 登录 =====
@@ -531,6 +551,23 @@ message GetPlayerNoResponse {
   // 一账号建 N 个角色就有 N 个编号;角色过户(卖角色)时编号随角色走、值不变,
   // 它是角色的资历凭证(编号小=老角色)。故 UI 上应呈现为「该角色的编号」,不是「你的账号编号」。
   uint64 player_no = 2;
+}
+
+// ResolvePlayerNosRequest 是 team 等内部服务组装客户端展示投影时的批量读取。
+// 实现必须拒绝空 ID、去重并限制数量；调用方应在单次请求里携带整支队伍，禁止 N+1。
+message ResolvePlayerNosRequest {
+  repeated uint64 player_ids = 1;
+}
+
+message ResolvedPlayerNo {
+  uint64 player_id = 1;
+  // 0 = 账号域确认仍在异步补号窗口；非 0 后编号终身稳定。
+  uint64 player_no = 2;
+}
+
+message ResolvePlayerNosResponse {
+  pandora.common.v1.ErrCode code = 1;
+  repeated ResolvedPlayerNo entries = 2;
 }
 
 // GetRegisterNoRequest / Response 只用于已发布调用方的滚动升级兼容。

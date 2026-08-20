@@ -177,8 +177,13 @@ def _order_fields(_logger: Any, _name: str, event_dict: dict) -> dict:
 def setup(service_name: str, level: str | None = None) -> structlog.BoundLogger:
     """初始化全局 logger 并返回。对应 Go 的 plog.Setup(serviceName)。
 
-    level 缺省读环境变量 PANDORA_LOG_LEVEL(与 Go 侧 levelFromEnv 同名同语义),
-    再缺省 info。
+    level 缺省读环境变量 **LOG_LEVEL** —— 与 Go 侧 pkg/log 的 levelFromEnv 同名同语义。
+
+    ★ 这个名字是运维契约,不是内部实现细节:全仓有 7 处业务注释把「对单个 pod 临时
+    设 LOG_LEVEL=debug」写成标准排障手法。此前 Python 侧读的是 PANDORA_LOG_LEVEL,
+    同一条手法对 Python 副本**纹丝不动**,而按 debug 过滤时只看到一半流量 ——
+    灰度期两栈并存,这会直接把人引向错误结论。
+    PANDORA_LOG_LEVEL 保留为兼容别名;两者都设时以 LOG_LEVEL 为准。
     """
     global _service_name
     _service_name = service_name
@@ -189,7 +194,9 @@ def setup(service_name: str, level: str | None = None) -> structlog.BoundLogger:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
-    lvl = (level or os.getenv("PANDORA_LOG_LEVEL") or "info").lower()
+    lvl = (
+        level or os.getenv("LOG_LEVEL") or os.getenv("PANDORA_LOG_LEVEL") or "info"
+    ).lower()
     numeric_level = getattr(logging, lvl.upper(), logging.INFO)
 
     # ── 把 stdlib logging 也接进同一条渲染链 ─────────────────────────────────

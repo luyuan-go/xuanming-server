@@ -220,6 +220,54 @@ func (r *MySQLAccountRepo) GetPlayerNo(ctx context.Context, playerID uint64) (ui
 	return uint64(playerNo.Int64), nil
 }
 
+// ResolvePlayerNos 用一次 IN 查询批量读取角色展示编号，供内部 team 快照投影使用。
+// 调用方已经排序、去重并限制批量大小；本层仍拒绝空输入，避免生成无效 SQL。
+// 返回 map 的 key 只使用 player_id；player_no 永远只是展示值。
+func (r *MySQLAccountRepo) ResolvePlayerNos(ctx context.Context, playerIDs []uint64) (map[uint64]uint64, error) {
+	if len(playerIDs) == 0 {
+		return nil, errcode.New(errcode.ErrInvalidArg, "player_ids required")
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(playerIDs)), ",")
+	args := make([]any, len(playerIDs))
+	for i, playerID := range playerIDs {
+		if playerID == 0 {
+			return nil, errcode.New(errcode.ErrInvalidArg, "player_id required")
+		}
+		args[i] = playerID
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT player_id, player_no, register_no FROM accounts WHERE player_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, errcode.New(errcode.ErrInternal, "mysql resolve player_nos: %v", err)
+	}
+	defer rows.Close()
+
+	result := make(map[uint64]uint64, len(playerIDs))
+	for rows.Next() {
+		var playerID uint64
+		var playerNo, legacyNo sql.NullInt64
+		if err := rows.Scan(&playerID, &playerNo, &legacyNo); err != nil {
+			return nil, errcode.New(errcode.ErrInternal, "mysql resolve player_nos scan: %v", err)
+		}
+		if playerNo.Valid && legacyNo.Valid && playerNo.Int64 != legacyNo.Int64 {
+			return nil, errcode.New(errcode.ErrInternal,
+				"mysql resolve player_nos: player/register 双列冲突 player_id=%d", playerID)
+		}
+		switch {
+		case playerNo.Valid:
+			result[playerID] = uint64(playerNo.Int64)
+		case legacyNo.Valid:
+			result[playerID] = uint64(legacyNo.Int64)
+		default:
+			result[playerID] = 0
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errcode.New(errcode.ErrInternal, "mysql resolve player_nos rows: %v", err)
+	}
+	return result, nil
+}
+
 func (r *MySQLAccountRepo) TouchDevice(ctx context.Context, playerID uint64, deviceID string) error {
 	if deviceID == "" {
 		return nil

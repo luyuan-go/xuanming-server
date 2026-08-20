@@ -376,6 +376,8 @@
       "id": 1012,
       "name": "魔兽猎人",
       "resource_path": "/Game/Test/Role/Hero/ParagonDekker/CBP_Hero_ParagonDekker.CBP_Hero_ParagonDekker_C",
+      "behavior_tree_path": "/Game/Pkg/AI/BT/Player/BT_Player.BT_Player",
+      "icon_path": "/Game/Test/UI/Skill/Dekker_attack.Dekker_attack",
       "entity_type": 1,
       "skill_ids": "101201,101211,101221,101231",
       "guard_distance": 1000,
@@ -383,7 +385,7 @@
       "fight_exit_distance": 3000,
       "patrol_distance": 1000,
       "search_distance": 1000,
-      "nameplate_offset_z": 20
+      "nameplate_offset_z": 50
     }
   ]
 }

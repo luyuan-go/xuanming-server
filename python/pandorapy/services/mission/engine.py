@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import dataclasses
 
+from pandora.mission.v1 import mission_pb2
+
 # 扇出轮数上限。链式任务 A→B→C 每层消耗一轮;超过即截断并置标记。
 # 防的是配置写出环(A 的 next 指回 A)导致无限循环 —— 那时截断比挂死好。
 MAX_FANOUT_ROUNDS = 16
@@ -44,6 +46,9 @@ class Fact:
 class ActiveMission:
     mission_config_id: int
     progress: list[int] = dataclasses.field(default_factory=list)
+    # 接取时刻(毫秒)。落 player_mission_active.accepted_at_ms,也随
+    # ActiveMission 下发给客户端做"接取多久了"的展示。
+    accepted_at_ms: int = 0
 
 
 @dataclasses.dataclass(slots=True)
@@ -67,21 +72,58 @@ class Mutation:
     upsert_active: list[ActiveMission] = dataclasses.field(default_factory=list)
     delete_active: list[int] = dataclasses.field(default_factory=list)
     insert_done: list[DoneMission] = dataclasses.field(default_factory=list)
+    # reward_state CLAIMABLE→CLAIMED 的条件更新(领奖路径专用;引擎不产出)。
+    claim_done: list[int] = dataclasses.field(default_factory=list)
     reward_logs: list[object] = dataclasses.field(default_factory=list)
+    # MissionUpdateEvent 分片,与状态写**同事务**入出箱。
+    # 同事务是不变量:分开写会出现"状态已改而推送永远没发"(或反之)的裂口,
+    # 而 progressed 是全量快照,客户端拿不到就一直显示旧进度直到下次 ListMissions。
+    push_payloads: list[bytes] = dataclasses.field(default_factory=list)
     progressed: list[int] = dataclasses.field(default_factory=list)
     completed: list[int] = dataclasses.field(default_factory=list)
     auto_accepted: list[int] = dataclasses.field(default_factory=list)
+    # ★ 自动接链任务在**接取那一刻**的进度快照。
+    #
+    # 不能等到最后再从 state 里读:链上新任务在后续轮次可能已被同批事实推进,
+    # 那时它同时出现在 progressed(推进后的值)与 auto_accepted 里 —— 若两处都读
+    # 最终值,推送事件里 auto_accepted 携带的就不是"刚接到手的样子"。Go 侧
+    # `evt.AutoAccepted = append(..., uc.toProtoActive(cat, next))` 在接取点就拷贝了
+    # 一份 Progress,这里等价复制。
+    auto_accepted_progress: dict[int, tuple[int, ...]] = dataclasses.field(
+        default_factory=dict
+    )
     fanout_truncated: bool = False
 
 
 # 条件类别:完成指定任务(链式任务的连接件)。
-CONDITION_CATEGORY_COMPLETE_MISSION = 1
+# 直接取 proto 生成物而不是手抄数字:这个值是**跨语言共享的线上契约**
+# ——DS/Go/配置表三方都按它匹配条件行,抄错了不会报错,只表现为链上
+# 后环任务永远收不到"前环已完成"事实(进度恒 0)。
+CONDITION_CATEGORY_COMPLETE_MISSION = mission_pb2.MISSION_CONDITION_CATEGORY_COMPLETE_MISSION
 
-REWARD_STATE_NONE = 0
-REWARD_STATE_CLAIMABLE = 1
+# 领奖状态。**从 proto 枚举取,不手抄数字** —— player_mission_done.reward_state 列
+# 与 missionv1.MissionRewardState 是同一个枚举(DDL 注释逐条对齐),手抄的常量在
+# proto 改动后不会报错,只会让"库里存的 1"和"客户端理解的 1"悄悄分家。
+REWARD_STATE_NONE = int(mission_pb2.MISSION_REWARD_STATE_NONE)
+REWARD_STATE_CLAIMABLE = int(mission_pb2.MISSION_REWARD_STATE_CLAIMABLE)
+REWARD_STATE_CLAIMED = int(mission_pb2.MISSION_REWARD_STATE_CLAIMED)
 
 
-def saturating_add(a: int, b: int, cap: int = 2**31 - 1) -> int:
+# 进度饱和上限。Go 侧 saturatingAdd 的入参是 uint32,钳的是 math.MaxUint32;
+# 真正的依据是 **proto 字段类型**——`repeated uint32 progress`
+# (proto/pandora/mission/v1/mission.proto:96/199),两端都按 uint32 算。
+#
+# ⚠️ 依据不是"落库列是 INT UNSIGNED"(2026-08-19 更正):进度实际存在
+# `player_mission_active.progress VARBINARY(256)` 里,是序列化后的
+# MissionProgressStorageRecord,与列类型无关。按错误依据反推的人会去查列类型,
+# 发现是 VARBINARY 之后可能得出"那随便钳"的结论。
+#
+# 这里必须取同一个上限:钳低了(比如按 int32 取 2**31-1)两端对同一批事实会算出
+# 不同进度,而且**不报错**——只在进度接近上限时静默劈叉,双跑比对时才看得出来。
+MAX_UINT32 = 2**32 - 1
+
+
+def saturating_add(a: int, b: int, cap: int = MAX_UINT32) -> int:
     """饱和加 —— 溢出钳到上限而不是回绕。
 
     Python 的 int 无限精度,不会像 Go 的 uint32 那样回绕;但如果不钳,
@@ -90,8 +132,21 @@ def saturating_add(a: int, b: int, cap: int = 2**31 - 1) -> int:
     return min(a + b, cap)
 
 
-def apply_facts(catalog, state: PlayerState, facts: list[Fact], now_ms: int) -> Mutation:
+def apply_facts(
+    catalog,
+    state: PlayerState,
+    facts: list[Fact],
+    now_ms: int,
+    accept_fn=None,
+) -> Mutation:
     """把一批事实应用到玩家任务状态。返回同一事务内要落库的全部变更。
+
+    accept_fn(state, mission_id) -> ActiveMission | None
+        自动接链时的**接取件**。留空退回本模块的最小实现(只查重不校验),
+        仅供单测;真实服务必须传 biz 的 accept_into —— 它还要校验活跃数上限
+        (§9.18)与 (type,sub_type) 类型互斥。不传的后果不是报错,是完成扇出这条
+        路径绕过全部接取校验:一条 next 链能把玩家的活跃任务顶到任意多条,
+        而玩家自己调 AcceptMission 时上限照常生效 —— 同一个不变量两条路径两套判据。
 
     catalog 需提供:
         mission_by_id(mid)      → row 或 None
@@ -167,11 +222,16 @@ def apply_facts(catalog, state: PlayerState, facts: list[Fact], now_ms: int) -> 
 
             # 自动接后续链(校验不过跳过该条,不阻断整批)。
             for nid in catalog.mission_next_ids(row):
-                nxt = _accept_into(catalog, state, nid)
+                if accept_fn is None:
+                    nxt = _accept_into(catalog, state, nid, now_ms)
+                else:
+                    nxt = accept_fn(state, nid)
                 if nxt is None:
                     continue
                 mut.upsert_active.append(nxt)
                 mut.auto_accepted.append(nid)
+                # 接取那一刻的进度快照,见 Mutation.auto_accepted_progress。
+                mut.auto_accepted_progress[nid] = tuple(nxt.progress)
 
             # ★ COMPLETE_MISSION 条件**再入下一轮**。
             # 这一步是整个引擎的关键:此时链上新任务已经激活,下一轮它才能
@@ -252,8 +312,13 @@ def _align_progress_slots(catalog, row, am: ActiveMission) -> None:
         am.progress.extend([0] * (need - len(am.progress)))
 
 
-def _accept_into(catalog, state: PlayerState, mission_id: int) -> ActiveMission | None:
-    """接一个任务进活跃集。已接 / 已完成 / 配置缺失 → 返回 None(跳过不报错)。"""
+def _accept_into(
+    catalog, state: PlayerState, mission_id: int, now_ms: int = 0
+) -> ActiveMission | None:
+    """最小接取件(**只查重,不校验上限/类型互斥**)。仅在 accept_fn 缺省时使用。
+
+    已接 / 已完成 / 配置缺失 → 返回 None(跳过不报错)。
+    """
     if mission_id in state.active or mission_id in state.done:
         return None
     row = catalog.mission_by_id(mission_id)
@@ -262,6 +327,7 @@ def _accept_into(catalog, state: PlayerState, mission_id: int) -> ActiveMission 
     am = ActiveMission(
         mission_config_id=mission_id,
         progress=[0] * len(catalog.mission_condition_ids(row)),
+        accepted_at_ms=now_ms,
     )
     state.active[mission_id] = am
     return am

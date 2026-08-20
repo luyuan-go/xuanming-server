@@ -29,16 +29,28 @@ import contextlib
 
 from pandorapy import errcode, mysqlx
 from pandorapy import log as plog
+from pandorapy import source_revision as source_revision_mod
 from pandorapy.services.owner import data as odata
 
 
 class MySQLOwnerRepo:
     """基于 asyncmy / aiomysql 的 OwnerRepo。"""
 
-    __slots__ = ("_pool",)
+    __slots__ = ("_pool", "_reject_legacy_source_revision")
 
     def __init__(self, pool) -> None:  # noqa: ANN001
         self._pool = pool
+        # 全局 legacy(source_revision=0)拒绝门。默认**关**= 兼容窗行为。
+        #
+        # 它是 INC-20260818-003 分阶段发布的最后一步,只有在**证明旧 hub_allocator
+        # 已排空**之后才允许打开;打开后任何不带来源版本的 Begin 一律被拒。
+        # 逐玩家那条规则(见过非零版本就永久拒 legacy)**不受本开关控制** ——
+        # 它从第一个新写者写下版本那一刻起就对该玩家自动生效。
+        self._reject_legacy_source_revision = False
+
+    def set_reject_legacy_source_revision(self, reject: bool) -> None:
+        """打开 / 关闭全局 legacy 拒绝门。对应 Go 的 SetRejectLegacySourceRevision。"""
+        self._reject_legacy_source_revision = bool(reject)
 
     # ── 读 ───────────────────────────────────────────────────────────────────
 
@@ -71,11 +83,24 @@ class MySQLOwnerRepo:
     ) -> odata.OwnerRecord:
         """CAS expect_epoch → epoch+1 / PENDING / newTarget。
 
-        判定顺序(与 Go 侧一致,顺序本身是契约):
-          1. 同 (player, exact target) 的重复投递 → **原样返回既有记录**(no-op 幂等)
-          2. expect_epoch 不符 → ErrOwnerEpochConflict(**附当前记录**,调用方重查再决策)
-          3. hub_source_revision 倒退 → ErrOwnerSourceRevisionStale
-          4. 真实迁移 → epoch+1、算屏障、写记录 + 审计
+        判定顺序(与 Go 侧逐条一致,**顺序本身是契约**):
+          1. hub_source_revision 闸门 → ErrOwnerSourceRevisionStale
+          2. 幂等重放(同 operation + epoch=expect+1 + 目标全等)→ 原样返回
+          3. 同 exact 身份的重复投递 → no-op,原样返回既有记录
+          4. expect_epoch 不符 → ErrOwnerEpochConflict(**附当前记录**)
+          5. 真实迁移 → epoch+1、算屏障、写记录 + 审计
+
+        ★ 第 1 步必须在**所有**后续分支之前(2026-08-19 修正:本文件此前把它排在
+          no-op 与 epoch CAS 之后,是错的)。理由就是 INC-20260818-003 的事故形状:
+          旧 binary 手上握着一个**合法**的 expect_epoch(它先 Begin 后 CAS),
+          所以 epoch 检查放不倒它 —— 能判定"谁的来源更新"的只有本闸。
+          闸排在 no-op 之后时,重复投递整条跳过校验,门等于没设。
+
+        ★ 高水位推进必须在 2、3 两条 no-op 早退分支里**也做**(同批修正)。
+          hub 侧把存量 legacy(0)补成 R 时 target 一个字节都不变,这次 Begin 必然
+          落到幂等重放 / same_target 的 return;推水位的代码若只在下游就永远走不到。
+          后果是 assignment 侧已经有号、owner 侧水位永久停在 0,
+          「某玩家见过非零版本就永久拒 legacy」这条逐玩家防线对这批玩家从不 arm。
         """
         now = odata.now_ms()
         async with self._pool.acquire() as conn:
@@ -87,48 +112,151 @@ class MySQLOwnerRepo:
                     row = await cur.fetchone()
                     current = _row_to_record(row) if row else odata.OwnerRecord(player_id=player_id)
 
-                    # ① 同 exact 实例的重复投递 → no-op,原样返回(含**原** operation_id)。
-                    #    这正是"权威铸造 operation"能成立的前提:重复投递不换 operation。
-                    if (
-                        current.owner_epoch > 0
-                        and current.owner_type == owner_type
-                        and current.target == target
-                    ):
-                        lease = await _read_lease(cur, target.instance_uid)
-                        await conn.commit()
-                        return _with_lease(current, lease)
+                    same_target = current.target == target
 
-                    # ② epoch CAS。附当前记录 —— 调用方要靠它决定是重试还是放弃。
+                    # ① 来源版本闸门(INC-20260818-003)。★ 必须在所有后续分支之前。
+                    #
+                    #    只对 HUB 生效:来源版本由 hub_allocator 领号,BATTLE 迁移不带号
+                    #    也不动水位。若这里对 BATTLE 也比较,battle 的 revision=0 会被
+                    #    「见过非零就拒 legacy」那条挡下,玩家将**永远进不了战斗** ——
+                    #    这是本条最容易踩的一脚。
+                    #
+                    #    ★ same_target 要传**真值**:同一版本号指向**不同** target
+                    #    = 铸号被复制(两个写者共用同一任期),必须拒;同 target 的重投
+                    #    则是正常重试。写死 False 会把后者也判成 reuse。
+                    if owner_type == odata.OWNER_TYPE_HUB:
+                        decision = source_revision_mod.classify(
+                            incoming=source_revision,
+                            high_water=current.hub_source_revision,
+                            same_target=same_target,
+                            reject_legacy_globally=self._reject_legacy_source_revision,
+                        )
+                        if not source_revision_mod.is_allowed(decision):
+                            await conn.rollback()
+                            plog.get().warning(
+                                "owner_source_revision_rejected",
+                                player_id=player_id,
+                                reason=decision,
+                                incoming_revision=source_revision,
+                                high_water=current.hub_source_revision,
+                                current_epoch=current.owner_epoch,
+                                expect_epoch=expect_epoch,
+                                operation_id=operation_id,
+                                same_target=same_target,
+                                hint=(
+                                    "来源更旧的 hub assignment 被拒;调用方应重查自身 "
+                                    "assignment,不要拿更大的 epoch 重试"
+                                ),
+                            )
+                            raise errcode.PandoraError(
+                                errcode.ErrOwnerSourceRevisionStale,
+                                "hub source revision %d rejected against high-water %d (%s)",
+                                source_revision,
+                                current.hub_source_revision,
+                                decision,
+                            )
+
+                    # 高水位推进值。★ 两条 no-op 早退分支里也要落库 —— 见 docstring。
+                    next_revision = current.hub_source_revision
+                    if (
+                        owner_type == odata.OWNER_TYPE_HUB
+                        and source_revision > current.hub_source_revision
+                    ):
+                        next_revision = source_revision
+
+                    async def _advance_high_water() -> None:
+                        """no-op 早退前把高水位落库(闸门上面已判 allow,这里只落库)。"""
+                        if next_revision == current.hub_source_revision:
+                            return
+                        await cur.execute(
+                            _SQL_ADVANCE_SOURCE_REVISION,
+                            (next_revision, odata.now_ms(), player_id),
+                        )
+
+                    # ② 幂等重放:同 operation 且记录就是本次 Begin 的结果
+                    #    (epoch=expect+1 / 类型与目标全等)。响应丢失后的原样重试拿回
+                    #    同一结果,不再推进 epoch(§9.23 端到端幂等)。
+                    #    operation_id 为空时本分支不适用(空 = 调用方未持显式幂等键,
+                    #    交由 ③ 的同实例收敛)。
+                    if (
+                        operation_id
+                        and current.operation_id == operation_id
+                        and current.owner_epoch == expect_epoch + 1
+                        and current.owner_type == owner_type
+                        and same_target
+                    ):
+                        lease = await _read_lease(cur, current.target.instance_uid)
+                        await _advance_high_water()
+                        await conn.commit()
+                        return _with_lease(
+                            dataclasses_replace(current, hub_source_revision=next_revision), lease
+                        )
+
+                    # ③ 同 exact owner 身份的重复投递 → no-op,原样返回既有记录
+                    #    (不推进 epoch、不改 phase、**不覆盖 operation_id**)。
+                    #    这正是"权威铸造 operation"能成立的前提:重复投递不换 operation。
+                    #
+                    #    必须要求**完整** Target 相等:assignment_or_allocation_id 是票据/
+                    #    准入所绑定的归属版本,release_track 也是 exact 身份的一部分。
+                    #    只按物理实例做 no-op 会让新 assignment 继承旧 epoch/ADMITTED phase,
+                    #    旧票与新归属共享 fencing 版本。
+                    if (
+                        current.owner_type == owner_type
+                        and same_target
+                        and current.phase
+                        in (odata.OWNER_PHASE_PENDING, odata.OWNER_PHASE_ADMITTED)
+                    ):
+                        lease = await _read_lease(cur, current.target.instance_uid)
+                        await _advance_high_water()
+                        await conn.commit()
+                        return _with_lease(
+                            dataclasses_replace(current, hub_source_revision=next_revision), lease
+                        )
+
+                    # ④ epoch CAS。附当前记录 —— 调用方要靠它决定是重试还是放弃。
                     if current.owner_epoch != expect_epoch:
                         lease = await _read_lease(cur, current.target.instance_uid)
                         await conn.rollback()
+                        # 单次冲突是 §9.23 query-first 的正常竞争(故 INFO);同一 player
+                        # 高频冲突 = 两个调用方在抢 owner 迁移,靠这条可观测频率与双方 epoch
+                        # (否则 in-band 业务码只被 access log 记 DEBUG,看不见)。
+                        plog.get().info(
+                            "owner_epoch_conflict",
+                            player_id=player_id,
+                            expect_epoch=expect_epoch,
+                            current_epoch=current.owner_epoch,
+                            operation_id=operation_id,
+                        )
                         raise _epoch_conflict(_with_lease(current, lease), expect_epoch)
-
-                    # ③ Hub 来源版本单调(INC-20260818-003)。
-                    #    只对 HUB 有意义;BATTLE 迁移忽略(注释见 data.OwnerRecord)。
-                    #    source_revision=0 = 调用方尚未滚上本协议(兼容窗),放行。
-                    next_revision = current.hub_source_revision
-                    if owner_type == odata.OWNER_TYPE_HUB and source_revision > 0:
-                        if source_revision < current.hub_source_revision:
-                            await conn.rollback()
-                            raise errcode.PandoraError(
-                                errcode.ErrOwnerSourceRevisionStale,
-                                "hub source revision %d < high-water %d (stale writer)",
-                                source_revision,
-                                current.hub_source_revision,
-                            )
-                        next_revision = source_revision
 
                     # ④ 屏障:同事务 FOR UPDATE 读**旧**实例租约,取 CAS 线性化点观察值。
                     #    读的是旧 target 的 uid —— 屏障问的是"旧 owner 什么时候一定停了"。
+                    #
+                    # ★ 只对**旧 owner 是 BATTLE** 时读(与 Go 的
+                    # `if rec.OwnerType == OwnerTypeBattle && rec.Target.InstanceUID != ""` 一致)。
+                    # HUB 分支刻意不读实例租约:hub 租约被 allocator 持续代续,等它是
+                    # 恒定 ~27s 的纯延迟、零安全收益(屏障值对非 BATTLE 本来就恒为 now)。
+                    # 放开条件的代价不是算错屏障,是**白拿一把行锁**:同一 hub 实例上并发的
+                    # HUB→BATTLE Begin 会在 ds_instance_lease 同一行上串行,还与 allocator
+                    # 的续租 UPDATE 互相排队 —— 而 Go 侧同负载下这把锁根本不存在。
+                    # ★ 读租约与算屏障必须在**同一个条件**里(与 Go 的单一 if 结构一致):
+                    # 分开写的话,「旧 owner 是 BATTLE 但 instance_uid 为空」会走进
+                    # compute_admit_not_before_ms 的 BATTLE 分支,拿到 now + 余量 ——
+                    # 而 Go 在这一格是 now(不加余量:本分支不依赖旧 DS 的本地自 fencing
+                    # 时钟,Admit 的判定与这里同库同钟,没有跨机偏移要补)。
+                    # 多出来的那个余量是纯延迟:每次这类迁移白等一个 skew。
                     old_lease = 0
-                    if current.target.instance_uid:
+                    barrier = now
+                    if (
+                        current.owner_type == odata.OWNER_TYPE_BATTLE
+                        and current.target.instance_uid
+                    ):
                         old_lease = await _read_lease_for_update(
                             cur, current.target.instance_uid
                         )
-                    barrier = odata.compute_admit_not_before_ms(
-                        current.owner_type, old_lease, now, skew_margin_seconds
-                    )
+                        barrier = odata.compute_admit_not_before_ms(
+                            current.owner_type, old_lease, now, skew_margin_seconds
+                        )
 
                     new_epoch = current.owner_epoch + 1
                     await cur.execute(
@@ -244,7 +372,7 @@ class MySQLOwnerRepo:
                     if wait_ms > 0:
                         await conn.rollback()
                         odata.log_barrier_not_open(player_id, current, wait_ms)
-                        raise odata.barrier_not_open_error(wait_ms)
+                        raise odata.barrier_not_open_error(wait_ms, current)
 
                     await cur.execute(
                         _SQL_ADMIT,
@@ -382,18 +510,42 @@ class MySQLOwnerRepo:
                         return odata.OwnerRecord(player_id=player_id)
                     current = _row_to_record(row)
 
-                    # 迟到 Release:epoch 或 operation 不符 → 幂等 no-op 返回当前。
+                    # 迟到 Release(旧 epoch / 旧 operation / **已释放**)→ 幂等 no-op,
+                    # 只能"compare-delete 自己"。
                     # **不能报错** —— 迟到登出是正常现象,报错会让调用方无谓重试。
+                    #
+                    # ★ owner_type == NONE 这一条不能少:保留 operation_id 之后,
+                    #   重放的 Release 会带着**匹配**的 epoch+operation 再进来一次,
+                    #   靠前两条拦不住,会重复写一条审计流水。
                     if (
                         current.owner_epoch != owner_epoch
                         or current.operation_id != operation_id
+                        or current.owner_type == odata.OWNER_TYPE_NONE
                     ):
                         await conn.commit()
-                        plog.get().debug(
-                            "owner_release_stale_noop",
+                        # ★ WARN 而不是 DEBUG。no-op 时 owner 记录仍指向那台已死的 DS,
+                        #   玩家「卡在旧 DS」直到下一次 BeginTransition —— 而 RPC 返回
+                        #   OK + 当前记录、access log 只记 rpc_ok(DEBUG),排查时完全看
+                        #   不出释放请求到过、又被以什么理由拒了(login 登出释放与
+                        #   allocator 回滚 / 终局释放都走这条)。
+                        plog.get().warning(
+                            "owner_release_noop",
                             player_id=player_id,
+                            reason=odata.release_noop_reason(
+                                True, current, owner_epoch, operation_id
+                            ),
+                            found=True,
                             req_epoch=owner_epoch,
-                            cur_epoch=current.owner_epoch,
+                            current_epoch=current.owner_epoch,
+                            req_operation_id=operation_id,
+                            current_operation_id=current.operation_id,
+                            current_owner_type=current.owner_type,
+                            current_phase=current.phase,
+                            current_pod=current.target.pod_name,
+                            current_instance_uid=current.target.instance_uid,
+                            current_instance_epoch=current.target.instance_epoch,
+                            current_assignment_id=current.target.assignment_or_allocation_id,
+                            current_updated_at_ms=current.updated_at_ms,
                         )
                         return current
 
@@ -413,12 +565,32 @@ class MySQLOwnerRepo:
                     await conn.rollback()
                 raise
 
+        # 释放是三个不可逆推进点的最后一个(§11.3 R1):没有它就无法证明玩家是
+        # 「被正常放开」还是「记录还挂在旧 DS 上」—— 两者在 owner_record 上都表现为
+        # owner_type=none / 仍有值,而时间线只在这条日志与审计流水里。
+        plog.get().info(
+            "owner_released",
+            player_id=player_id,
+            owner_epoch=owner_epoch,
+            operation_id=operation_id,
+            released_owner_type=current.owner_type,
+            pod=current.target.pod_name,
+            instance_uid=current.target.instance_uid,
+            instance_epoch=current.target.instance_epoch,
+            assignment_or_allocation_id=current.target.assignment_or_allocation_id,
+        )
         return odata.OwnerRecord(
             player_id=player_id,
-            owner_epoch=owner_epoch,  # ★ epoch 保留
+            owner_epoch=owner_epoch,  # ★ epoch 保留:清零等于让下一次 Begin 的
+            #                            expect_epoch=0 通过,旧写者随即可回滚归属
             owner_type=odata.OWNER_TYPE_NONE,
             phase=odata.OWNER_PHASE_NONE,
-            operation_id="",
+            # ★ operation_id / admit_not_before_ms 随库里一起保留(与 _SQL_RELEASE 的
+            #   列清单一致)。清空会让重放的 Release 无法与「另一条链拿过期 operation
+            #   来释放」区分开 —— 详见 _SQL_RELEASE 上方注释。
+            operation_id=current.operation_id,
+            admit_not_before_ms=current.admit_not_before_ms,
+            lease_deadline_ms=0,
             updated_at_ms=now,
             hub_source_revision=current.hub_source_revision,  # ★ 永不清零
         )
@@ -460,9 +632,25 @@ WHERE player_id = %s AND owner_epoch = %s"""
 _SQL_ADMIT = """UPDATE owner_record SET phase = %s, updated_at_ms = %s
 WHERE player_id = %s AND owner_epoch = %s AND operation_id = %s"""
 
+# 高水位单独推进(no-op 早退分支用)。只动 hub_source_revision + updated_at_ms,
+# 不碰 epoch / phase / target —— 那些正是 no-op 分支承诺不动的东西。
+_SQL_ADVANCE_SOURCE_REVISION = (
+    "UPDATE owner_record SET hub_source_revision = %s, updated_at_ms = %s WHERE player_id = %s"
+)
+
 # ★ Release 只置 type/phase/operation,**不动 owner_epoch 与 hub_source_revision**。
+# ⚠️ 列清单里**刻意没有** hub_source_revision(INC-20260818-003):释放归属不该把
+# 来源版本高水位一起抹掉。抹掉的后果是「打完一局 / 掉一次线」就把该玩家的门重新对
+# legacy(0)敞开,滚动窗口里的旧写者随即又能写进来。以后往这条 UPDATE 加列时,
+# 别顺手把它补上 —— 它不在这里是结论,不是遗漏。
+#
+# ⚠️ 同理**刻意没有** operation_id / admit_not_before_ms(2026-08-19 与 Go 对齐时修正:
+# 本文件此前清了这两列)。清掉它们会让「已释放」这个状态失去锚点:迟到 Release 的
+# 判定就只能靠 operation_id 对不上来兜,而那与「另一条链拿着过期 operation 来释放」
+# 完全无法区分 —— 两者在日志里都只剩 operation_mismatch。保留原值,再配合守卫里的
+# owner_type == NONE 一条,才能把 already_released 单独认出来。
 _SQL_RELEASE = """UPDATE owner_record SET
-    owner_type = 0, phase = 0, operation_id = '', admit_not_before_ms = 0,
+    owner_type = 0, phase = 0,
     pod_name = '', instance_uid = '', instance_epoch = 0,
     assignment_or_allocation_id = '', release_track = '', updated_at_ms = %s
 WHERE player_id = %s AND owner_epoch = %s"""
@@ -571,7 +759,7 @@ def _epoch_conflict(current: odata.OwnerRecord, expect: int) -> errcode.PandoraE
         expect,
         current.owner_epoch,
     )
-    err.current_record = current  # type: ignore[attr-defined]
+    err.current_record = current
     return err
 
 

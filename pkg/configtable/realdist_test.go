@@ -255,7 +255,9 @@ func TestRealDistBattleLaunchURLs(t *testing.T) {
 		11: "/Game/StylizedCyberpunk/Levels/StylizedCyberpunk?game=/Script/Pandora.PandoraPveGameMode",
 		12: "/Game/Test/Level/MainCity?game=/Script/Pandora.PandoraBattleGameMode",
 		// 13 在 svn r2103 由策划从 PVE 改成**防守玩法**(PandoraDefenseGameMode,同图新增
-		// 防守目标角色 3001「雅典娜」);14「PVE战斗」同批新增,与 8 同图但 team_size=3。
+		// 防守目标角色 3001「雅典娜」);14「PVE战斗」同批新增,与 8 同图但队伍人数不同
+		// (2026-08-19 用户拍板由 3 改成 1 = 单人可进;本用例断言的是启动 URL,不含人数,
+		// 所以那次改表不会碰红这里 —— 真要钉人数得另立断言,别把它写进注释当成有守)。
 		13: "/Game/StylizedCyberpunk/Levels/StylizedCyberpunk?game=/Script/Pandora.PandoraDefenseGameMode",
 		14: "/Game/ScifiArctic/Maps/ExampleLevel_Artic01?game=/Script/Pandora.PandoraPveGameMode",
 	}

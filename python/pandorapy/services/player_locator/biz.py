@@ -28,18 +28,30 @@ from __future__ import annotations
 
 import dataclasses
 
+from pandora.locator.v1 import locator_pb2
+
 from pandorapy import errcode, placement
 from pandorapy import log as plog
 
-# 位置状态(对齐 locator.proto LocationState)。
-LOCATION_STATE_UNSPECIFIED = 0
-LOCATION_STATE_HUB = 1
-LOCATION_STATE_BATTLE = 2
-LOCATION_STATE_MATCHING = 3
+# 位置状态**直接引用 proto 生成物**,不手抄数值。
+#
+# ★ 为什么不手抄:同一套编码在 Go 常量、Lua 脚本、UE 三处各存一份,手抄错位后
+#   "真 HUB 被当成另一种状态校验"不会抛错、只会静默走错分支;而单测若抄了同一个
+#   错值,这条永远不会红。引用生成物让 proto 是唯一事实源,改 proto 直接传导过来。
+_S = locator_pb2.LocationState
+LOCATION_STATE_UNSPECIFIED = _S.LOCATION_STATE_UNSPECIFIED
+LOCATION_STATE_OFFLINE = _S.LOCATION_STATE_OFFLINE
+LOCATION_STATE_LOGIN_PENDING = _S.LOCATION_STATE_LOGIN_PENDING
+LOCATION_STATE_HUB = _S.LOCATION_STATE_HUB
+LOCATION_STATE_MATCHING = _S.LOCATION_STATE_MATCHING
+LOCATION_STATE_BATTLE = _S.LOCATION_STATE_BATTLE
 
-_VALID_STATES = frozenset(
-    {LOCATION_STATE_HUB, LOCATION_STATE_BATTLE, LOCATION_STATE_MATCHING}
-)
+# 合法 state 是**闭区间**而非白名单(对齐 Go SetLocation 的 0..5 范围校验)。
+# ★ 白名单写法会把 OFFLINE / LOGIN_PENDING 这两个合法枚举判成越界 —— 它们没有
+#   附加必填项,所以 Go 只在 switch 里对 HUB/MATCHING/BATTLE 追加字段校验,
+#   范围本身不排除它们。
+MIN_LOCATION_STATE = LOCATION_STATE_UNSPECIFIED
+MAX_LOCATION_STATE = LOCATION_STATE_BATTLE
 
 # 默认 TTL。实际生效值会被 DS_FENCE_REENTRY_BARRIER 机械抬高。
 DEFAULT_TTL_SEC = 30
@@ -114,9 +126,20 @@ def validate_location_input(inp: LocationInput) -> None:
     if inp.player_id == 0:
         _reject(REASON_PLAYER_ID_ZERO, inp)
 
-    if inp.state not in _VALID_STATES:
-        _reject(REASON_STATE_OUT_OF_RANGE, inp, state=inp.state)
+    if inp.state < MIN_LOCATION_STATE or inp.state > MAX_LOCATION_STATE:
+        _reject(
+            REASON_STATE_OUT_OF_RANGE,
+            inp,
+            state=inp.state,
+            min_state=MIN_LOCATION_STATE,
+            max_state=MAX_LOCATION_STATE,
+        )
 
+    # ★ 分支顺序**必须与 Go 的 switch 一致**(先按 state 分支查各自必填项,
+    #   最后才统一查「非 HUB 不得带 fence」)。顺序换了不会报错,但同一个非法请求
+    #   会得到**不同的 reason**:例如 state=MATCHING、match_id=0 且误带了 fence 时,
+    #   Go 报 match_id_missing 而顺序颠倒的实现报 hub_fence_on_non_hub_state ——
+    #   线上按 reason 建的看板和排障手册当场对不上。
     if inp.state == LOCATION_STATE_HUB:
         if not inp.hub_pod:
             _reject(REASON_HUB_POD_MISSING, inp)
@@ -131,22 +154,23 @@ def validate_location_input(inp: LocationInput) -> None:
                 admission_id=fence.admission_id,
                 admission_seq=fence.admission_seq,
             )
-    else:
-        # ★ 非 HUB 状态**不允许**带 hub fence —— 带了说明调用方状态机错乱,
-        # 放行会让 BATTLE 写把 HUB 的代际信息一起刷进去。
-        if not inp.hub_presence_fence.is_zero():
-            _reject(REASON_HUB_FENCE_ON_NON_HUB, inp, state=inp.state)
+    elif inp.state == LOCATION_STATE_MATCHING:
+        if inp.match_id == 0:
+            _reject(REASON_MATCH_ID_MISSING, inp)
+    elif inp.state == LOCATION_STATE_BATTLE:
+        if inp.match_id == 0 or not inp.battle_pod:
+            _reject(
+                REASON_BATTLE_TARGET_MISSING,
+                inp,
+                match_id=inp.match_id,
+                battle_pod=inp.battle_pod,
+            )
 
-    if inp.state == LOCATION_STATE_MATCHING and inp.match_id == 0:
-        _reject(REASON_MATCH_ID_MISSING, inp)
-
-    if inp.state == LOCATION_STATE_BATTLE and (inp.match_id == 0 or not inp.battle_pod):
-        _reject(
-            REASON_BATTLE_TARGET_MISSING,
-            inp,
-            match_id=inp.match_id,
-            battle_pod=inp.battle_pod,
-        )
+    # ★ 非 HUB 状态**不允许**带 hub fence —— 带了说明调用方状态机错乱,
+    # 放行会让 BATTLE 写把 HUB 的代际信息一起刷进去,之后 HUB 的代际闸
+    # 拿到的是一个从没发生过的"当前代"。
+    if inp.state != LOCATION_STATE_HUB and not inp.hub_presence_fence.is_zero():
+        _reject(REASON_HUB_FENCE_ON_NON_HUB, inp, state=inp.state)
 
 
 def compare_uint_decimal(left: str, right: str) -> int:

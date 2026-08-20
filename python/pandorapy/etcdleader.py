@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable
 import aetcd
 
 from pandorapy import log as plog
+from pandorapy.etcdlease import LeaseGoneError, refresh_or_raise
 
 # 与 Go 侧 pkg/leader/etcdleader 的常量逐个对齐。
 DEFAULT_PREFIX = "/pandora/leader/"
@@ -238,7 +239,23 @@ class LeaderElection:
         while True:
             if lost.is_set():
                 return False
-            if await self._is_leader(client, my_key):
+            present, is_first = await self._candidate_status(client, my_key)
+            if not present:
+                # ★ 自己的候选者 key 已经不在前缀下 = 悄悄掉出了队列。
+                #
+                # 必须**结束本轮任期**让 run() 退避后重新 _enqueue,而不是继续等。
+                # 早先这里只判"是不是队首":key 没了永远不是队首,于是本协程每
+                # poll 秒查一次、**永不返回** —— _one_term 不返回、run() 的重试
+                # 循环走不到、_enqueue 再也不会被调用,而 leader_lost 日志只在
+                # finally 里 is_leader=True 时才打,全程**零日志**。
+                # 表现是:这个副本从此再不参与选举,而它自己以为还在排队。
+                plog.get().warning(
+                    "leader_requeue",
+                    election=self._election_name,
+                    hint="候选者 key 已不在前缀下(失租 / 被手工删),结束本轮重新入队",
+                )
+                return False
+            if is_first:
                 return True
             try:
                 await asyncio.wait_for(lost.wait(), timeout=poll)
@@ -260,32 +277,65 @@ class LeaderElection:
         及时停手,而不是抱着一个"自以为是 leader"的状态继续跑撮合循环。
         """
         poll = max(0.2, self._ttl / _KEEPALIVE_DIVISOR)
-        while True:
-            if task.done() or lost.is_set():
-                return
-            try:
-                await asyncio.wait_for(
-                    asyncio.wait({task, asyncio.create_task(lost.wait())},
-                                 return_when=asyncio.FIRST_COMPLETED),
+        # ★ lost 的等待 Task **建一次、复用**,并用 asyncio.wait 自带的 timeout。
+        #
+        # 原先写的是 `wait_for(wait({task, create_task(lost.wait())}), timeout=poll)`:
+        # 每轮新建一个 lost.wait() Task,而 wait_for 超时取消的是外层 asyncio.wait 协程 ——
+        # 被取消的 asyncio.wait **不会**取消它正在等的 awaitable。于是每轮泄漏一个
+        # 常驻 pending Task 挂在同一个 Event 的 _waiters 上:poll 默认 5s,
+        # 一个稳定当选 7 天的 leader 会攒下约 12 万个,内存持续增长,
+        # 且 lost.set() 时要一次性唤醒这十几万个 future。
+        lost_task = asyncio.create_task(lost.wait(), name=f"leader-lost:{self._election_name}")
+        try:
+            while True:
+                if task.done() or lost.is_set():
+                    return
+                await asyncio.wait(
+                    {task, lost_task},
                     timeout=poll,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-            except TimeoutError:
-                pass
-            if task.done() or lost.is_set():
-                return
-            if not await self._is_leader(client, my_key):
-                plog.get().warning(
-                    "leader_key_vanished",
-                    election=self._election_name,
-                    hint="自己的候选者 key 不再是队首(被手工删除?)—— 主动停手防双 leader",
-                )
-                return
+                if task.done() or lost.is_set():
+                    return
+                # ★ 这是**防御性**复查,不是权威判定 —— 权威是 lease(续约循环在管)。
+                #
+                # 所以一次读失败**不能**当成"我不是 leader 了":那会让一次 etcd 瞬时
+                # 抖动就终结任期、取消撮合循环、revoke 让位,而实际上租约好好的。
+                # 真正的失主由 _keepalive_loop 置 lost,那条路径才有安全窗与 TTL 判定。
+                try:
+                    still_leader = await self._is_leader(client, my_key)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    plog.get().warning(
+                        "leader_recheck_failed",
+                        election=self._election_name,
+                        err=str(exc),
+                        hint="防御性复查读失败,不据此让位(权威是 lease,由续约循环判定)",
+                    )
+                    continue
+                if not still_leader:
+                    plog.get().warning(
+                        "leader_key_vanished",
+                        election=self._election_name,
+                        hint="自己的候选者 key 不再是队首(被手工删除?)—— 主动停手防双 leader",
+                    )
+                    return
+        finally:
+            lost_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await lost_task
 
-    async def _is_leader(self, client: aetcd.Client, my_key: bytes) -> bool:
-        """判定自己是不是当前 leader:前缀下 CreateRevision 最小的那个。
+    async def _candidate_status(
+        self, client: aetcd.Client, my_key: bytes
+    ) -> tuple[bool, bool]:
+        """一次查询回答两个问题:`(自己的 key 还在吗, 自己是不是队首)`。
 
-        与 Go 侧同一条规则,所以跨语言互斥成立。
-        查不到自己的 key(已被 lease 过期回收)一律返回 False —— fail-closed。
+        ★ 这两件事必须分开。合成一个布尔的话,"排队中"和"我的 key 已经没了"
+        长得完全一样 —— 而处置**相反**:前者继续等,后者必须立刻重新入队。
+        混在一起的后果是排队副本永久挂死(见 _wait_for_turn)。
+
+        与 Go 侧同一条规则(CreateRevision 最小者为 leader),所以跨语言互斥成立。
         """
         entries = await client.get_prefix(self._key_prefix.encode())
         best_rev: int | None = None
@@ -298,8 +348,13 @@ class LeaderElection:
             if best_rev is None or rev < best_rev:
                 best_rev, best_key = rev, kv.key
         if mine_rev is None:
-            return False  # 自己的 key 不在了(lease 已过期)→ 不是 leader
-        return best_key == my_key
+            return False, False  # 自己的 key 不在了(lease 已过期 / 被手工删)
+        return True, best_key == my_key
+
+    async def _is_leader(self, client: aetcd.Client, my_key: bytes) -> bool:
+        """自己是不是当前 leader。查不到自己的 key 一律 False —— fail-closed。"""
+        present, is_first = await self._candidate_status(client, my_key)
+        return present and is_first
 
     async def _keepalive_loop(self, lease: aetcd.Lease, lost: asyncio.Event) -> None:
         """续约循环 —— **从入队就开始跑**,一直跑到失租或被取消。
@@ -324,9 +379,21 @@ class LeaderElection:
 
                 now = time.monotonic()
                 try:
-                    await asyncio.wait_for(lease.refresh(), timeout=interval)
+                    await refresh_or_raise(lease, timeout=interval)
                 except asyncio.CancelledError:
                     raise
+                except LeaseGoneError as exc:
+                    # ★ 服务端明确回复 lease 不存在 —— 自己的 key 已经消失,
+                    # 当选态是已失去领导权,排队态是已掉出队列。两种都必须**立即**
+                    # 置位 lost:再等安全窗只会让第二个 leader 多跑一会儿。
+                    plog.get().warning(
+                        "leader_lease_gone",
+                        election=self._election_name,
+                        err=str(exc),
+                        hint="etcd 回复 lease 不存在,立即放弃领导权/队列位置(防脑裂)",
+                    )
+                    lost.set()
+                    return
                 except Exception:  # noqa: BLE001
                     # 续约失败:**不立即放弃**,还有安全窗口就继续试(etcd 短抖动很常见)。
                     # 越过安全截止线就必须放弃 —— 此时无法证明 lease 仍有效。

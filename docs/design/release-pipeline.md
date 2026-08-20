@@ -4,6 +4,11 @@
 > 按业界标准四层分离改造:版本库只放源码,构建产物进制品目录,发布按 manifest 可追溯可回滚。
 > 决策登记:`pandora-arch.md` §11「镜像分发 2026-07-23」行;旧「离线镜像包随仓库同步」过渡方案同日退役。
 >
+> **受控例外(2026-08-20)**:免 Docker 策划机所需的固定第三方便携包可在策划 SVN 的
+> `installers/localinfra/` 白名单目录随工作副本分发，Git 同路径不含二进制。它们不是 Pandora
+> 构建产物，仍须固定运行时 SHA256，并由上游 checksum/签名/digest 独立核验；业务 exe、UE Packages、OCI/Docker 镜像
+> 继续禁止回流版本库。决策、成本和更新门禁见 `decision-revisit-localinfra-svn-bundle.md`。
+>
 > 本文档聚焦**四层架构本身**(§1-§6b:版本库钩子、制品目录脚本、CI 流水线定义、版本化发布)。
 > 业界标准工具(Jenkins/MinIO/Harbor/GoReleaser/ArgoCD)的**实际安装与操作**见 `tools/devops/README.md`
 > (一键 docker compose 栈,含 Jenkins+registry+MinIO,及 Harbor/GoReleaser/ArgoCD 现状);

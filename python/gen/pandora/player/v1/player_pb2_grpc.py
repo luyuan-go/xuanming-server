@@ -204,6 +204,7 @@ class PlayerServiceServicer(object):
 
         只读幂等。查不到的 player_id **不出现在响应里**(不返回空名字占位):
         「查不到」与「名字是空串」必须可区分,前者调用方应保留旧值 / 走兜底,后者是真数据。
+        buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE DS 与 Team internal 入口共用 canonical name messages。
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1272,6 +1273,88 @@ class PlayerService(object):
             '/pandora.player.v1.PlayerService/AddExperience',
             pandora_dot_player_dot_v1_dot_player__pb2.AddExperienceRequest.SerializeToString,
             pandora_dot_player_dot_v1_dot_player__pb2.AddExperienceResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class PlayerInternalServiceStub(object):
+    """PlayerInternalService 只供受信后端服务读取 player 域权威最小投影。
+    不经客户端/DS Envoy 暴露；实现层仍强制 request-bound internalrpcauth，网络位置不是身份。
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.ResolvePlayerNames = channel.unary_unary(
+                '/pandora.player.v1.PlayerInternalService/ResolvePlayerNames',
+                request_serializer=pandora_dot_player_dot_v1_dot_player__pb2.GetPlayerNamesRequest.SerializeToString,
+                response_deserializer=pandora_dot_player_dot_v1_dot_player__pb2.GetPlayerNamesResponse.FromString,
+                _registered_method=True)
+
+
+class PlayerInternalServiceServicer(object):
+    """PlayerInternalService 只供受信后端服务读取 player 域权威最小投影。
+    不经客户端/DS Envoy 暴露；实现层仍强制 request-bound internalrpcauth，网络位置不是身份。
+    """
+
+    def ResolvePlayerNames(self, request, context):
+        """ResolvePlayerNames 供 team 组装成员视图时按 player_id 有界批量读取角色显示名。
+        buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE Team 与 DS 入口共用 canonical name messages。
+        buf:lint:ignore RPC_REQUEST_STANDARD_NAME 避免复制同形 request 造成协议漂移。
+        buf:lint:ignore RPC_RESPONSE_STANDARD_NAME 避免复制同形 response 造成协议漂移。
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_PlayerInternalServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'ResolvePlayerNames': grpc.unary_unary_rpc_method_handler(
+                    servicer.ResolvePlayerNames,
+                    request_deserializer=pandora_dot_player_dot_v1_dot_player__pb2.GetPlayerNamesRequest.FromString,
+                    response_serializer=pandora_dot_player_dot_v1_dot_player__pb2.GetPlayerNamesResponse.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'pandora.player.v1.PlayerInternalService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('pandora.player.v1.PlayerInternalService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class PlayerInternalService(object):
+    """PlayerInternalService 只供受信后端服务读取 player 域权威最小投影。
+    不经客户端/DS Envoy 暴露；实现层仍强制 request-bound internalrpcauth，网络位置不是身份。
+    """
+
+    @staticmethod
+    def ResolvePlayerNames(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/pandora.player.v1.PlayerInternalService/ResolvePlayerNames',
+            pandora_dot_player_dot_v1_dot_player__pb2.GetPlayerNamesRequest.SerializeToString,
+            pandora_dot_player_dot_v1_dot_player__pb2.GetPlayerNamesResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -30,7 +30,7 @@ function Get-InfraFunctionText([string]$Name) {
     return $fn[0].Extent.Text
 }
 
-foreach ($name in @('Test-PortOpen', 'Start-LocalMysql', 'Stop-Component', 'Test-ComponentProcessOwned',
+foreach ($name in @('Test-TcpEndpoint', 'Test-PortOpen', 'Start-LocalMysql', 'Stop-Component', 'Test-ComponentProcessOwned',
         'Request-GracefulStop', 'Invoke-Down', 'Invoke-Reset', 'Test-MysqlDataDirUnlocked')) {
     Invoke-Expression (Get-InfraFunctionText $name)
 }
@@ -179,6 +179,11 @@ $requested = Request-GracefulStop 'mysql' $fakeProc
 Assert-True (-not $requested -and $script:BoundedCalls -eq 1) '端口 listener PID 不吻合时不发送 mysqladmin shutdown'
 
 Write-Host '[4] down 失败必须传播，reset 不得删 data'
+$LocalInfraLifecyclePlan = [pscustomobject]@{
+    StopComponents = @('mysql', 'redis')
+    ResetComponents = @('mysql', 'redis')
+}
+$CentralMysqlManaged = $false
 function Stop-Component([string]$Name) { return $Name -ne 'mysql' }
 Assert-True (-not (Invoke-Down)) '任一组件停机失败会让 Invoke-Down 失败'
 $DataDir = Join-Path ([IO.Path]::GetTempPath()) ("pandora-reset-guard-{0}" -f [guid]::NewGuid().ToString('N'))

@@ -333,9 +333,15 @@ static_resources:
                   max_age: "600"
 
               routes:
-              # ----- DS-only:客户端面明确拒绝 VerifyDSTicket（必须排在 login prefix 前）-----
+              # ----- DS-only:客户端面明确拒绝（必须排在 login prefix 前）-----
               - match:
                   path: "/pandora.login.v1.LoginService/VerifyDSTicket"
+                direct_response:
+                  status: 403
+                  body:
+                    inline_string: "DS-only method; use isolated :8444"
+              - match:
+                  path: "/pandora.login.v1.LoginService/ResolvePlayerNosForDS"
                 direct_response:
                   status: 403
                   body:
@@ -786,6 +792,13 @@ static_resources:
               # ----- Hub/Battle DS → login.VerifyDSTicket(玩家在线入场权威)-----
               - match:
                   path: "/pandora.login.v1.LoginService/VerifyDSTicket"
+                route:
+                  cluster: login_cluster
+                  timeout: 15s
+                  idle_timeout: 60s
+              # ----- Hub/Battle DS → login.ResolvePlayerNosForDS(头顶展示编号批量权威)-----
+              - match:
+                  path: "/pandora.login.v1.LoginService/ResolvePlayerNosForDS"
                 route:
                   cluster: login_cluster
                   timeout: 15s
