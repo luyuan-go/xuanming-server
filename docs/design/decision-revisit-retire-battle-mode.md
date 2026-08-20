@@ -32,9 +32,9 @@ exec Windows DS),入口为四个双击 .cmd(策划/内网 含战斗 启动+停�
    - 保留双击入口:`策划一键停止.cmd`、`内网服务器一键停止.cmd`(注释改为「清理遗留 battle 栈」;
      所有机器清理干净后可另行删除)。
      **2026-08-10 补充:`内网服务器一键停止.cmd` 已删除** —— 它与 `策划一键停止.cmd` 逐字节等价
-     (同样是 `play.ps1 -Battle -Stop`,并未传 `-Intranet`),留两个入口没有任何区别;清理遗留
-     battle 栈的双击入口现在只有 `策划一键停止.cmd`(命令行等价:`play.ps1 -Battle -Stop` /
-     `start.ps1 -Mode battle -Down`),待确认所有旧机器清理干净后再删。
+     (同样是 `play.ps1 -Battle -Stop`,并未传 `-Intranet`),留两个入口没有任何区别。
+     **2026-08-20 补充:`策划一键停止.cmd` 也已删除**；清理遗留 battle 栈仍可使用命令行
+     `play.ps1 -Battle -Stop` / `start.ps1 -Mode battle -Down`。
    - `start.ps1 -Mode battle`:**启动路径拒绝执行**(报废弃错误并指引 k8s);`-Down`/`-Status`
      保留,用于清理/查看旧机器上遗留的 battle 环境;`-Resume`/`-Reset` 同样拒绝。
    - `play.ps1 -Battle`:启动路径拒绝执行并指引;`-Battle -Stop` / `-Battle -Status` 保留。
