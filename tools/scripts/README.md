@@ -91,6 +91,7 @@ fail-closed、招募列表恒空）。生成器会拒绝公开 dev key、短 key
 | `tests/localinfra_mysql_port_flow_test.ps1` | 身份状态、候选选择、14 条 DSN 改写、mode+port+social、编排锁与启动链贯穿 | 手动/CI |
 | `tests/run_services_listener_query_contract_test.ps1` | Windows netstat 快速 listener/PID seam；IPv4/IPv6、异常 fail-closed、就绪归属与残留 exact-exe 停止契约 | 手动/CI |
 | `tests/run_services_planner_fast_start_contract_test.ps1` | 仅策划免 Docker 入口启用的 Go 输入强指纹/二进制收据、非 login→login 两波启动、共享 listener 轮询、exact PID 与 secret cleanup 契约 | 手动/CI |
+| `tests/planner_playable_exit_contract_test.ps1` | 策划一键启动只有在 login exact listener、Envoy Login 上游和 exact Hub DS 均可玩后才显示标准成功暂停；失败提示与非零退出码不可伪装成功 | 手动/CI |
 | `tests/dev_migrate_planner_fast_contract_test.ps1` | 策划本机 MySQL init 强收据（SQL SHA-256 + server UUID + datadir + 实际库/表）、miss 时单进程批量重放，且不跳过正式迁移器 | 手动/CI |
 | `tests/localinfra_planner_parallel_start_contract_test.ps1` | 策划已安装基础设施批量 launch/统一 wait；首次/Force/收据 miss 串行回退，direct PID 与 Kafka Java 子进程双端口 exact owner | 手动/CI |
 | `tests/localinfra_bundled_packages_contract_test.ps1` | Git 空包目录联网、SVN 7 包零公网、显式镜像优先、坏包 SHA256 硬失败、Envoy token 离线短路、旧 dist marker 刷新/失败保留/运行中保护 | 手动/CI |

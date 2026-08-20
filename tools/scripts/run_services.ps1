@@ -50,6 +50,10 @@ param(
     # 仅由策划免 Docker 双击入口开启：合并热启动的 listener 查询，不改变普通开发流程。
     [switch]$FastExistingProbe,
 
+    # 上游强哈希确认本轮配置表发生语义变化。仅策划 fast 路径消费，用于精确重启
+    # 真正加载配置表的运行实例；未变化时不制造额外 stop/start。
+    [switch]$ConfigTableChanged,
+
     # 配合 -Action build:把产物编到 run/artifacts/windows/bin(而不是 run/dev/bin),
     # 供打包分发给没装 Go 的机器。
     [switch]$PublishArtifacts,
@@ -175,6 +179,7 @@ New-Item -ItemType Directory -Force -Path $BinDir, $LogDir | Out-Null
 $ArtifactBinDir = Join-Path $ProjectRoot 'run/artifacts/windows/bin'
 $script:HasGo = [bool](Get-Command go -ErrorAction SilentlyContinue)
 $PlannerBuildReceiptDir = Join-Path $ProjectRoot 'run/localinfra/cfg/service-build-receipts'
+$PlannerAppliedReceiptDir = Join-Path $ProjectRoot 'run/localinfra/cfg/service-applied-receipts'
 $script:PlannerBuildFingerprint = ''
 $script:PlannerArtifactManifestByName = @{}
 $script:PlannerBuildPublished = $false
@@ -253,10 +258,10 @@ $Services = @(
     @{ Name = 'owner';          Dir = 'services/runtime/owner';             Cmd = 'owner';          Conf = 'etc/owner-dev.yaml';          Port = 20017 }
     @{ Name = 'auction';        Dir = 'services/economy/auction';           Cmd = 'auction';        Conf = 'etc/auction-dev.yaml';        Port = 20016 }
     @{ Name = 'battle_result';  Dir = 'services/battle/battle_result';      Cmd = 'battle_result';  Conf = 'etc/battle_result-dev.yaml';  Port = 20022 }
-    @{ Name = 'matchmaker';     Dir = 'services/matchmaking/matchmaker';    Cmd = 'matchmaker';     Conf = 'etc/matchmaker-dev.yaml';     Port = 20011 }
+    @{ Name = 'matchmaker';     Dir = 'services/matchmaking/matchmaker';    Cmd = 'matchmaker';     BuildTarget = 'matchmaker'; Conf = 'etc/matchmaker-dev.yaml'; Port = 20011 }
     # PVE 匹配实例:同一 matchmaker 二进制、不同配置(game_mode=pve_coop + walk_in=true,
     # 单人/整队直进副本,副本由 StartMatchRequest.map_id 选)。Envoy 按 header x-pandora-game-mode: pve 分流。
-    @{ Name = 'matchmaker_pve'; Dir = 'services/matchmaking/matchmaker';    Cmd = 'matchmaker';     Conf = 'etc/matchmaker-pve.yaml';     Port = 20018 }
+    @{ Name = 'matchmaker_pve'; Dir = 'services/matchmaking/matchmaker';    Cmd = 'matchmaker';     BuildTarget = 'matchmaker'; Conf = 'etc/matchmaker-pve.yaml'; Port = 20018 }
     @{ Name = 'login';          Dir = 'services/account/login';             Cmd = 'login';          Conf = 'etc/login-dev.yaml';          Port = 20001 }
 )
 

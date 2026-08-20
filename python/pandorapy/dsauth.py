@@ -6,8 +6,12 @@
 进程,都能按任意 player_id 拿出战快照 / 批量捞角色名。本守卫提供「调用方确实是 DS」
 的那半证明。
 
-★ 本模块**只验签不签发**。签发方是 ds_allocator / hub_allocator(Go),secret 三方同值。
-  因此这里不实现 DSCallbackSigner —— 少实现一半不是缺口,多实现一半才是(§14)。
+★ 本模块是校验侧(DSCallbackVerifier / DSCallbackGuard)。**签发侧在 pandorapy.auth**
+  (`Signer.sign_ds_callback` / `DSCallbackSigner`,对应 Go 的 pkg/auth);本模块只提供
+  `signer_from_conf` 这个装配便利函数,与 `guard_from_conf` 对称 —— 分层和 Go 一致:
+  令牌本体在 auth,按 ds_auth 配置装配在 middleware。签发方是 ds_allocator /
+  hub_allocator(Go 与 Python 两栓同在),secret 三方同值 —— 两栓必须能互相验过对方
+  签出的令牌,否则灰度期一台 DS 上所有玩家的回调会成批被拒。
 
 ★ 档位(config.DSAuthConf.mode),与 Go 逐字一致:
     off        → 直接放行(nil guard 等价)
@@ -33,6 +37,7 @@ import hashlib
 
 import jwt as pyjwt
 
+from pandorapy import auth as pauth
 from pandorapy import errcode
 from pandorapy import log as plog
 
@@ -400,3 +405,31 @@ def guard_from_conf(cfg) -> DSCallbackGuard | None:  # noqa: ANN001 —— confi
         additional_secrets=list(cfg.additional_secrets),
     )
     return DSCallbackGuard(verifier, mode)
+
+
+def signer_from_conf(cfg) -> pauth.DSCallbackSigner | None:  # noqa: ANN001 —— config 里的 DSAuthConf 模型
+    """按 ds_auth 配置构造 DS 回调令牌**签发器** —— 对应 Go 的 `NewDSCallbackSignerFromConf`。
+
+    secret 未配 → `None`,表示本服务不签发(调用方跳过注入)。与 `guard_from_conf`
+    的 `mode=off → None` 对称,但判据不同:
+
+      - 签发看的是 **secret**(签不签跟 mode 无关:mode 管的是本服务**验**不验;
+        ds_allocator / hub_allocator 即使 mode=off 也照样要给 DS 签令牌下发,
+        否则灰度期把 mode 切成 enforce 的那一刻,全部 DS 手上没有令牌 → 成批被拒);
+      - 校验看的是 **mode**。
+
+    ★ **不传 additional_secrets** —— 与 Go 一致。备用密钥只用于校验(轮换共存窗口),
+      签发始终用主密钥;签发侧接受旧密钥会让轮换的第二段永远走不完。
+    """
+    if not cfg.secret:
+        return None
+    return pauth.DSCallbackSigner(
+        pauth.SignerConfig(
+            secret=cfg.secret.encode("utf-8"),
+            issuer=cfg.issuer,
+            audience=cfg.audience,
+            # DS 回调面用不到账号态,但 SignerConfig.validate 要求它非空且与 audience 不同
+            # (Go 那边由 Config.Defaults() 自动填同一个值)。
+            account_audience=pauth.DEFAULT_ACCOUNT_AUDIENCE,
+        )
+    )

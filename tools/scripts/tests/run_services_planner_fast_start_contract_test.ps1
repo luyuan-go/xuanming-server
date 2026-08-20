@@ -100,6 +100,43 @@ Assert-True ($fastFunctionText -match 'AlwaysRollback\s*=\s*\$false' -and
     $fastFunctionText -match 'Remove-ServiceRuntimeConfigAfterLaunch[\s\S]*-AlwaysRollback:\$record\.AlwaysRollback') `
     'fast wave launch 异常标记并通过同一 rollback seam，禁止吞 Stop/Wait 错误'
 
+$desiredPlanFunction = $runAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-PlannerDesiredTargetPlan'
+    }, $true) | Select-Object -First 1
+$desiredPlanText = if ($desiredPlanFunction) { $desiredPlanFunction.Extent.Text } else { '' }
+[object[]]$goListCommands = if ($desiredPlanFunction) {
+    @($desiredPlanFunction.FindAll({
+                param($node)
+                $node -is [Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -ceq 'go' -and $node.Extent.Text -match '\blist\b'
+            }, $true))
+} else { @() }
+Assert-True (@($goListCommands).Count -eq 1 -and $desiredPlanText -match '-mod=readonly' -and
+    $desiredPlanText -match '-deps' -and $desiredPlanText -match '-f\s+\$packageTemplate') `
+    '全部 main 合并成一次 go list -mod=readonly -deps 紧凑输出，不逐服务重复查询'
+$stageFunction = $runAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'New-PlannerStagedTarget'
+    }, $true) | Select-Object -First 1
+$stageFunctionText = if ($stageFunction) { $stageFunction.Extent.Text } else { '' }
+Assert-True ($stageFunctionText -match '(?s)go build.*?-mod=readonly.*?-buildvcs=false.*?-o\s+\$primaryStage') `
+    '本机 Go staging 构建固定 -buildvcs=false/-mod=readonly，Python/文档 dirty 不会污染所有 target'
+$firstPlanIndex = $fastFunctionText.IndexOf('$firstDesiredPlan = @(Get-PlannerDesiredTargetPlan', [StringComparison]::Ordinal)
+$stageIndex = $fastFunctionText.IndexOf('New-PlannerStagedTarget', [StringComparison]::Ordinal)
+$secondPlanIndex = $fastFunctionText.IndexOf('$secondDesiredPlan = @(Get-PlannerDesiredTargetPlan', [StringComparison]::Ordinal)
+$stopReplacementIndex = $fastFunctionText.IndexOf('Stop-PlannerServiceForReplacement', [StringComparison]::Ordinal)
+$publishIndex = $fastFunctionText.IndexOf('Publish-PandoraPlannerStagedFiles', [StringComparison]::Ordinal)
+Assert-True ($firstPlanIndex -ge 0 -and $stageIndex -gt $firstPlanIndex -and
+    $secondPlanIndex -gt $stageIndex -and $stopReplacementIndex -gt $secondPlanIndex -and
+    $publishIndex -gt $stopReplacementIndex) `
+    '先全部 staging、二次输入一致，再精确停旧进程并事务发布；build 失败不会先停服务'
+Assert-True ($fastFunctionText -match '-ConfigTableChanged:\$ConfigTableChanged' -and
+    $fastFunctionText -match '(?s)\$finalListenerRecords.*?Write-PandoraPlannerAppliedReceipt') `
+    '表变化参与统一动作计划，applied receipt 只在最终 exact-ready 后写入'
+
 Write-Host '[2] 批量 readiness 的虚拟时间只随最慢服务增长' -ForegroundColor Cyan
 if (-not (Test-Path -LiteralPath $FastLib -PathType Leaf)) {
     throw "[RED] 缺少策划 fast helper:$FastLib"
@@ -112,7 +149,72 @@ Assert-True ($LASTEXITCODE -eq 0 -and $strictLeakOutput.Count -gt 0 -and $strict
     'dot-source fast helper 不得向普通 run_services 泄漏 StrictMode'
 . $FastLib
 
-Write-Host '[2a] exact Process 回收必须有界并由 Refresh/HasExited 证明' -ForegroundColor Cyan
+Write-Host '[2a] 表变化通过公开 switch 精确映射到真实消费者' -ForegroundColor Cyan
+$configTableParameter = @($runAst.ParamBlock.Parameters | Where-Object {
+        $_.Name.VariablePath.UserPath -ceq 'ConfigTableChanged'
+    }) | Select-Object -First 1
+Assert-True ($null -ne $configTableParameter -and
+    $configTableParameter.StaticType.FullName -ceq 'System.Management.Automation.SwitchParameter') `
+    'run_services 暴露 [switch]$ConfigTableChanged'
+$tableConsumerCommand = Get-Command Get-PandoraPlannerConfigTableConsumerNames -ErrorAction SilentlyContinue
+Assert-True ($null -ne $tableConsumerCommand) 'fast helper 暴露策划表真实消费者集合'
+if ($tableConsumerCommand) {
+    $actualTableConsumers = @(Get-PandoraPlannerConfigTableConsumerNames | Sort-Object)
+    $expectedTableConsumers = @(
+        'battle_result', 'dialogue', 'ds_allocator', 'inventory', 'matchmaker',
+        'matchmaker_pve', 'mission', 'player'
+    ) | Sort-Object
+    Assert-True (($actualTableConsumers -join ',') -ceq ($expectedTableConsumers -join ',')) `
+        '表变化只重启 player/battle_result/ds_allocator/inventory/dialogue/mission/两个 matchmaker 实例'
+}
+
+Write-Host '[2b] artifact 逐 build-target 指纹，matchmaker 两实例共享一个目标' -ForegroundColor Cyan
+$buildTargetsCommand = Get-Command Get-PandoraPlannerBuildTargets -ErrorAction SilentlyContinue
+$artifactPlanCommand = Get-Command Get-PandoraPlannerArtifactTargetPlan -ErrorAction SilentlyContinue
+Assert-True ($null -ne $buildTargetsCommand -and $null -ne $artifactPlanCommand) `
+    'fast helper 暴露 build-target 分组与 artifact 计划 seam'
+if ($buildTargetsCommand -and $artifactPlanCommand) {
+    $targetFixtureServices = @(
+        [pscustomobject]@{ Name = 'player'; Dir = 'services/account/player'; Cmd = 'player' },
+        [pscustomobject]@{ Name = 'matchmaker'; Dir = 'services/matchmaking/matchmaker'; Cmd = 'matchmaker'; BuildTarget = 'matchmaker' },
+        [pscustomobject]@{ Name = 'matchmaker_pve'; Dir = 'services/matchmaking/matchmaker'; Cmd = 'matchmaker'; BuildTarget = 'matchmaker' }
+    )
+    $targetFixtures = @(Get-PandoraPlannerBuildTargets -Services $targetFixtureServices)
+    $matchmakerTarget = @($targetFixtures | Where-Object Name -ceq 'matchmaker') | Select-Object -First 1
+    Assert-True ($targetFixtures.Count -eq 2 -and $matchmakerTarget -and
+        @($matchmakerTarget.Services).Count -eq 2) `
+        'matchmaker/matchmaker_pve 是一个 build target、两个 runtime 实例'
+
+    $manifestA = [pscustomobject]@{ binaries = @(
+            [pscustomobject]@{ name = 'player'; size = 11; sha256 = ('A' * 64) },
+            [pscustomobject]@{ name = 'matchmaker'; size = 22; sha256 = ('B' * 64) },
+            [pscustomobject]@{ name = 'matchmaker_pve'; size = 22; sha256 = ('B' * 64) }
+        ) }
+    $artifactPlanA = @(Get-PandoraPlannerArtifactTargetPlan -BuildTargets $targetFixtures -Manifest $manifestA)
+    $manifestB = [pscustomobject]@{ binaries = @(
+            [pscustomobject]@{ name = 'player'; size = 12; sha256 = ('C' * 64) },
+            [pscustomobject]@{ name = 'matchmaker'; size = 22; sha256 = ('B' * 64) },
+            [pscustomobject]@{ name = 'matchmaker_pve'; size = 22; sha256 = ('B' * 64) }
+        ) }
+    $artifactPlanB = @(Get-PandoraPlannerArtifactTargetPlan -BuildTargets $targetFixtures -Manifest $manifestB)
+    $artifactAByName = @{}; foreach ($item in $artifactPlanA) { $artifactAByName[$item.Name] = $item }
+    $artifactBByName = @{}; foreach ($item in $artifactPlanB) { $artifactBByName[$item.Name] = $item }
+    Assert-True ($artifactAByName.player.Fingerprint -cne $artifactBByName.player.Fingerprint -and
+        $artifactAByName.matchmaker.Fingerprint -ceq $artifactBByName.matchmaker.Fingerprint) `
+        'manifest 单 entry 变化只使对应 build target 过期，不绑定整份 manifest'
+
+    $splitManifest = [pscustomobject]@{ binaries = @(
+            [pscustomobject]@{ name = 'player'; size = 11; sha256 = ('A' * 64) },
+            [pscustomobject]@{ name = 'matchmaker'; size = 22; sha256 = ('B' * 64) },
+            [pscustomobject]@{ name = 'matchmaker_pve'; size = 23; sha256 = ('D' * 64) }
+        ) }
+    $splitBlocked = $false
+    try { $null = @(Get-PandoraPlannerArtifactTargetPlan -BuildTargets $targetFixtures -Manifest $splitManifest) }
+    catch { $splitBlocked = $_.Exception.Message -match '混版|不一致' }
+    Assert-True $splitBlocked '共享 build target 的两个 artifact entry 不一致时 fail-closed，禁止混版'
+}
+
+Write-Host '[2c] exact Process 回收必须有界并由 Refresh/HasExited 证明' -ForegroundColor Cyan
 $exactStopFunctionText = ${function:Stop-PandoraPlannerExactProcess}.ToString()
 Assert-True ($exactStopFunctionText -match '\$ExactProcess\.Kill\(' -and
     $exactStopFunctionText -notmatch '\bStop-Process\b') `
@@ -152,7 +254,7 @@ Assert-True (-not $notReclaimed.ExitConfirmed -and $rollbackState.Now -le 500 -a
     [object]::ReferenceEquals($rollbackState.StopObjects[0], $stuckProcess)) `
     '无法确认退出时在有界期限返回失败证据，不猜测已回收'
 
-Write-Host '[2b] PID 在 Refresh→Stop 间复用也只能杀原 Process handle' -ForegroundColor Cyan
+Write-Host '[2d] PID 在 Refresh→Stop 间复用也只能杀原 Process handle' -ForegroundColor Cyan
 $pidReuseState = @{
     Now = 0; Exited = $false; ReusedBeforeStop = $false
     OriginalKills = 0; ReplacementKills = 0
@@ -305,6 +407,135 @@ try {
     Assert-True (-not (Test-PandoraPlannerBuildReceipt -ReceiptPath $receipt -Fingerprint 'source-a' -BinaryPath $binary)) `
         '目标二进制身份变化不能命中旧收据'
 
+    Write-Host '[5a] build/applied 双收据驱动 0-build/0-stop/按需 start 计划' -ForegroundColor Cyan
+    $binaryPeer = Join-Path $tmp 'svc-peer.exe'
+    [IO.File]::WriteAllBytes($binary, [byte[]](9, 8, 7))
+    [IO.File]::WriteAllBytes($binaryPeer, [byte[]](9, 8, 7))
+    Write-PandoraPlannerBuildReceipt -ReceiptPath $receipt -Fingerprint 'target-shared' `
+        -BinaryPaths @($binary, $binaryPeer)
+    Assert-True (Test-PandoraPlannerBuildReceipt -ReceiptPath $receipt -Fingerprint 'target-shared' `
+            -BinaryPaths @($binary, $binaryPeer)) '逐 build-target 收据绑定共享目标的全部 runtime 二进制'
+    [IO.File]::WriteAllBytes($binaryPeer, [byte[]](9, 8, 7, 6))
+    Assert-True (-not (Test-PandoraPlannerBuildReceipt -ReceiptPath $receipt -Fingerprint 'target-shared' `
+                -BinaryPaths @($binary, $binaryPeer))) '共享目标任一 runtime 二进制漂移都会使 build 收据失效'
+
+    $appliedReceiptCommand = Get-Command Write-PandoraPlannerAppliedReceipt -ErrorAction SilentlyContinue
+    $testAppliedCommand = Get-Command Test-PandoraPlannerAppliedReceipt -ErrorAction SilentlyContinue
+    $actionPlanCommand = Get-Command Get-PandoraPlannerRuntimeActionPlan -ErrorAction SilentlyContinue
+    Assert-True ($appliedReceiptCommand -and $testAppliedCommand -and $actionPlanCommand) `
+        'fast helper 暴露 applied receipt 与纯动作计划 seam'
+    if ($appliedReceiptCommand -and $testAppliedCommand -and $actionPlanCommand) {
+        $appliedReceipt = Join-Path $tmp 'svc.applied.json'
+        $startedAt = [datetime]::new(2026, 8, 20, 1, 2, 3, [DateTimeKind]::Utc)
+        $fakeAppliedProcess = [pscustomobject]@{ Id = 71001; StartTime = $startedAt }
+        Write-PandoraPlannerAppliedReceipt -ReceiptPath $appliedReceipt -Fingerprint 'target-a' `
+            -BinaryPath $binary -Process $fakeAppliedProcess
+        Assert-True (Test-PandoraPlannerAppliedReceipt -ReceiptPath $appliedReceipt -Fingerprint 'target-a' `
+                -BinaryPath $binary -Process $fakeAppliedProcess) `
+            'applied 收据同时证明 desired 指纹、二进制身份与 exact 进程代次'
+        $replacementProcess = [pscustomobject]@{ Id = 71001; StartTime = $startedAt.AddSeconds(1) }
+        Assert-True (-not (Test-PandoraPlannerAppliedReceipt -ReceiptPath $appliedReceipt -Fingerprint 'target-a' `
+                    -BinaryPath $binary -Process $replacementProcess)) `
+            'PID 复用但 StartTime 不同不能冒充已应用目标版本'
+
+        $planTargets = @(Get-PandoraPlannerBuildTargets -Services @(
+                [pscustomobject]@{ Name = 'player'; Dir = 'services/account/player'; Cmd = 'player' },
+                [pscustomobject]@{ Name = 'matchmaker'; Dir = 'services/matchmaking/matchmaker'; Cmd = 'matchmaker'; BuildTarget = 'matchmaker' },
+                [pscustomobject]@{ Name = 'matchmaker_pve'; Dir = 'services/matchmaking/matchmaker'; Cmd = 'matchmaker'; BuildTarget = 'matchmaker' },
+                [pscustomobject]@{ Name = 'login'; Dir = 'services/account/login'; Cmd = 'login' }
+            ))
+        $currentTargetStates = @(
+            [pscustomobject]@{ Name = 'player'; BuildCurrent = $true },
+            [pscustomobject]@{ Name = 'matchmaker'; BuildCurrent = $true },
+            [pscustomobject]@{ Name = 'login'; BuildCurrent = $true }
+        )
+        $allRunningCurrent = @(
+            [pscustomobject]@{ Name = 'player'; TargetName = 'player'; IsRunning = $true; AppliedCurrent = $true },
+            [pscustomobject]@{ Name = 'matchmaker'; TargetName = 'matchmaker'; IsRunning = $true; AppliedCurrent = $true },
+            [pscustomobject]@{ Name = 'matchmaker_pve'; TargetName = 'matchmaker'; IsRunning = $true; AppliedCurrent = $true },
+            [pscustomobject]@{ Name = 'login'; TargetName = 'login'; IsRunning = $true; AppliedCurrent = $true }
+        )
+        $hotPlan = Get-PandoraPlannerRuntimeActionPlan -BuildTargets $planTargets `
+            -TargetStates $currentTargetStates -RuntimeStates $allRunningCurrent
+        Assert-True (@($hotPlan.BuildTargetNames).Count -eq 0 -and @($hotPlan.StopRuntimeNames).Count -eq 0 -and
+            @($hotPlan.StartRuntimeNames).Count -eq 0) `
+            '无变化且全运行时为 0 build / 0 stop / 0 start'
+
+        $afterRebootStates = @($allRunningCurrent | ForEach-Object {
+                [pscustomobject]@{ Name = $_.Name; TargetName = $_.TargetName; IsRunning = $false; AppliedCurrent = $false }
+            })
+        $rebootPlan = Get-PandoraPlannerRuntimeActionPlan -BuildTargets $planTargets `
+            -TargetStates $currentTargetStates -RuntimeStates $afterRebootStates
+        Assert-True (@($rebootPlan.BuildTargetNames).Count -eq 0 -and @($rebootPlan.StopRuntimeNames).Count -eq 0 -and
+            @($rebootPlan.StartRuntimeNames).Count -eq 4) `
+            '重启电脑后收据命中只启动全体，不重新 build'
+
+        $partialStates = @($allRunningCurrent | ForEach-Object {
+                [pscustomobject]@{
+                    Name = $_.Name; TargetName = $_.TargetName
+                    IsRunning = ($_.Name -cne 'login'); AppliedCurrent = ($_.Name -cne 'login')
+                }
+            })
+        $partialPlan = Get-PandoraPlannerRuntimeActionPlan -BuildTargets $planTargets `
+            -TargetStates $currentTargetStates -RuntimeStates $partialStates
+        Assert-True ((@($partialPlan.StartRuntimeNames) -join ',') -ceq 'login' -and
+            @($partialPlan.StopRuntimeNames).Count -eq 0) '部分进程缺失时只启动缺失 runtime'
+
+        $staleTargetStates = @($currentTargetStates | ForEach-Object {
+                [pscustomobject]@{ Name = $_.Name; BuildCurrent = ($_.Name -cne 'matchmaker') }
+            })
+        $sharedChangedPlan = Get-PandoraPlannerRuntimeActionPlan -BuildTargets $planTargets `
+            -TargetStates $staleTargetStates -RuntimeStates $allRunningCurrent
+        Assert-True ((@($sharedChangedPlan.BuildTargetNames) -join ',') -ceq 'matchmaker' -and
+            ((@($sharedChangedPlan.StopRuntimeNames | Sort-Object) -join ',') -ceq 'matchmaker,matchmaker_pve') -and
+            ((@($sharedChangedPlan.StartRuntimeNames | Sort-Object) -join ',') -ceq 'matchmaker,matchmaker_pve')) `
+            'matchmaker build target 变化只 build 一次，并重启两个 runtime 实例'
+
+        $tableChangedPlan = Get-PandoraPlannerRuntimeActionPlan -BuildTargets $planTargets `
+            -TargetStates $staleTargetStates -RuntimeStates $allRunningCurrent -ConfigTableChanged
+        Assert-True (@($tableChangedPlan.BuildTargetNames).Count -eq 1 -and
+            ((@($tableChangedPlan.StopRuntimeNames | Sort-Object) -join ',') -ceq 'matchmaker,matchmaker_pve,player') -and
+            ((@($tableChangedPlan.StartRuntimeNames | Sort-Object) -join ',') -ceq 'matchmaker,matchmaker_pve,player')) `
+            '表变化与 Go 变化按 runtime 去重，不扩大到 login'
+    }
+
+    Write-Host '[5b] 全部 staging 成功后才事务发布，发布失败恢复旧二进制' -ForegroundColor Cyan
+    $publishCommand = Get-Command Publish-PandoraPlannerStagedFiles -ErrorAction SilentlyContinue
+    Assert-True ($null -ne $publishCommand) 'fast helper 暴露同盘 staging 事务发布 seam'
+    if ($publishCommand) {
+        $publishDir = Join-Path $tmp 'publish'
+        New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+        $finalA = Join-Path $publishDir 'a.exe'; $finalB = Join-Path $publishDir 'b.exe'
+        $stageA = Join-Path $publishDir '.a.stage.exe'; $stageB = Join-Path $publishDir '.b.stage.exe'
+        [IO.File]::WriteAllText($finalA, 'old-a'); [IO.File]::WriteAllText($finalB, 'old-b')
+        [IO.File]::WriteAllText($stageA, 'new-a'); [IO.File]::WriteAllText($stageB, 'new-b')
+        $publishRecords = @(
+            [pscustomobject]@{ StagePath = $stageA; DestinationPath = $finalA },
+            [pscustomobject]@{ StagePath = $stageB; DestinationPath = $finalB }
+        )
+        Publish-PandoraPlannerStagedFiles -Records $publishRecords
+        Assert-True (([IO.File]::ReadAllText($finalA)) -ceq 'new-a' -and
+            ([IO.File]::ReadAllText($finalB)) -ceq 'new-b' -and
+            -not (Test-Path -LiteralPath $stageA) -and -not (Test-Path -LiteralPath $stageB)) `
+            '成功时两个目标均从 staging 原子切换且不残留 staging'
+
+        [IO.File]::WriteAllText($stageA, 'next-a'); [IO.File]::WriteAllText($stageB, 'next-b')
+        $moveCount = 0
+        $injectSecondPublishFailure = {
+            param([string]$Source, [string]$Destination, [bool]$Overwrite)
+            $moveCount++
+            if ([IO.Path]::GetFileName($Source) -ceq '.b.stage.exe') { throw 'fixture second publish failure' }
+            [IO.File]::Move($Source, $Destination, $Overwrite)
+        }
+        $publishFailed = $false
+        try {
+            Publish-PandoraPlannerStagedFiles -Records $publishRecords -MoveFile $injectSecondPublishFailure
+        } catch { $publishFailed = $_.Exception.Message -match 'fixture second publish failure' }
+        Assert-True ($publishFailed -and ([IO.File]::ReadAllText($finalA)) -ceq 'new-a' -and
+            ([IO.File]::ReadAllText($finalB)) -ceq 'new-b') `
+            '任一发布失败会恢复全部旧二进制，不留下混版'
+    }
+
     Write-Host '[6] workspace/toolchain 变化必须使构建收据失效，cleanup 必须尽力完成' -ForegroundColor Cyan
     $fingerprintRoot = Join-Path $tmp 'fingerprint-root'
     $serviceRoot = Join-Path $fingerprintRoot 'services/example'
@@ -333,6 +564,103 @@ try {
     Assert-True ($fingerprintA -eq $fingerprintWithRunLog) 'service-local run 日志/产物目录被剪枝，不随时间拖慢指纹'
     Assert-True ($fingerprintB -ne $fingerprintC) 'Go 工具链/环境指纹变化会强制重建'
     Assert-True ($workspaceFingerprintA -ne $workspaceFingerprintB) 'services/pkg/proto 之外的 go.work use 模块 go.mod 变化也会强制重建'
+
+    Write-Host '[6a] Go 强指纹按真实依赖闭包传播，并且每文件每轮最多 hash 一次' -ForegroundColor Cyan
+    $goTargetPlanCommand = Get-Command Get-PandoraPlannerGoTargetPlan -ErrorAction SilentlyContinue
+    Assert-True ($null -ne $goTargetPlanCommand) 'fast helper 暴露逐 build-target Go 依赖指纹 seam'
+    if ($goTargetPlanCommand) {
+        $graphRoot = Join-Path $tmp 'go-graph'
+        $aMainDir = Join-Path $graphRoot 'services/a/cmd/a'
+        $bMainDir = Join-Path $graphRoot 'services/b/cmd/b'
+        $sharedDir = Join-Path $graphRoot 'pkg/shared'
+        $onlyADir = Join-Path $graphRoot 'pkg/onlya'
+        $protoADir = Join-Path $graphRoot 'proto/gen/go/a'
+        $externalDir = Join-Path $graphRoot '../module-cache/example-external-v1'
+        New-Item -ItemType Directory -Force -Path $aMainDir, $bMainDir, $sharedDir, $onlyADir, $protoADir, $externalDir | Out-Null
+        $fileBodies = [ordered]@{
+            (Join-Path $aMainDir 'main.go') = 'a-main-v1'
+            (Join-Path $bMainDir 'main.go') = 'b-main-v1'
+            (Join-Path $sharedDir 'shared.go') = 'shared-v1'
+            (Join-Path $onlyADir 'onlya.go') = 'only-a-v1'
+            (Join-Path $protoADir 'a.pb.go') = 'proto-a-v1'
+            (Join-Path $externalDir 'external.go') = 'external-cache-copy-v1'
+            (Join-Path $graphRoot 'go.work') = 'go 1.26'
+            (Join-Path $graphRoot 'go.work.sum') = 'sum-v1'
+        }
+        foreach ($pair in $fileBodies.GetEnumerator()) {
+            [IO.File]::WriteAllText($pair.Key, $pair.Value, [Text.UTF8Encoding]::new($false))
+        }
+        $graphServices = @(
+            # Windows 路径大小写不是构建身份；刻意与磁盘 Dir 大小写不同。
+            [pscustomobject]@{ Name = 'a'; Dir = 'SERVICES/A'; Cmd = 'a' },
+            [pscustomobject]@{ Name = 'b'; Dir = 'services/b'; Cmd = 'b' }
+        )
+        $graphTargets = @(Get-PandoraPlannerBuildTargets -Services $graphServices)
+        $packages = @(
+            [pscustomobject]@{ ImportPath = 'example/a/cmd/a'; Dir = $aMainDir; GoFiles = @('main.go'); Deps = @('example/shared', 'example/onlya', 'example/proto/a', 'example/external') },
+            [pscustomobject]@{ ImportPath = 'example/b/cmd/b'; Dir = $bMainDir; GoFiles = @('main.go'); Deps = @('example/shared') },
+            [pscustomobject]@{ ImportPath = 'example/shared'; Dir = $sharedDir; GoFiles = @('shared.go'); Deps = @() },
+            [pscustomobject]@{ ImportPath = 'example/onlya'; Dir = $onlyADir; GoFiles = @('onlya.go'); Deps = @() },
+            [pscustomobject]@{ ImportPath = 'example/proto/a'; Dir = $protoADir; GoFiles = @('a.pb.go'); Deps = @() },
+            [pscustomobject]@{
+                ImportPath = 'example/external'; Dir = $externalDir; GoFiles = @('external.go'); Deps = @()
+                Module = [pscustomobject]@{ Path = 'example/external'; Version = 'v1.0.0'; Sum = 'h1:fixture-v1'; Main = $false }
+            }
+        )
+        $hashCounts = @{}
+        $countingHash = {
+            param([string]$Path)
+            $full = [IO.Path]::GetFullPath($Path)
+            $hashCounts[$full] = 1 + [int]$hashCounts[$full]
+            return (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
+        }
+        $globalInputs = @((Join-Path $graphRoot 'go.work'), (Join-Path $graphRoot 'go.work.sum'))
+        $goPlanA = @(Get-PandoraPlannerGoTargetPlan -ProjectRoot $graphRoot -BuildTargets $graphTargets `
+                -PackageRecords $packages -ToolchainSignature 'toolchain-v1' -GlobalInputPaths $globalInputs `
+                -GetContentHash $countingHash)
+        Assert-True (@($hashCounts.Values | Where-Object { [int]$_ -ne 1 }).Count -eq 0 -and $hashCounts.Count -eq 7) `
+            '一轮为两个 target 计算指纹时，共享文件只 hash 一次，第三方 module cache 源码不 hash'
+        $goPlanAByName = @{}; foreach ($item in $goPlanA) { $goPlanAByName[$item.Name] = $item }
+
+        [IO.File]::WriteAllText((Join-Path $externalDir 'external.go'), 'tampered-cache-copy', [Text.UTF8Encoding]::new($false))
+        $goPlanExternalCacheChanged = @(Get-PandoraPlannerGoTargetPlan -ProjectRoot $graphRoot -BuildTargets $graphTargets `
+                -PackageRecords $packages -ToolchainSignature 'toolchain-v1' -GlobalInputPaths $globalInputs)
+        $externalCacheByName = @{}; foreach ($item in $goPlanExternalCacheChanged) { $externalCacheByName[$item.Name] = $item }
+        Assert-True ($goPlanAByName.a.Fingerprint -ceq $externalCacheByName.a.Fingerprint -and
+            $goPlanAByName.b.Fingerprint -ceq $externalCacheByName.b.Fingerprint) `
+            '第三方模块只绑定 Path/Version/Sum 身份，不因模块缓存绝对路径或副本时间漂移'
+
+        [IO.File]::WriteAllText((Join-Path $onlyADir 'onlya.go'), 'only-a-v2', [Text.UTF8Encoding]::new($false))
+        $goPlanOnlyAChanged = @(Get-PandoraPlannerGoTargetPlan -ProjectRoot $graphRoot -BuildTargets $graphTargets `
+                -PackageRecords $packages -ToolchainSignature 'toolchain-v1' -GlobalInputPaths $globalInputs)
+        $onlyAByName = @{}; foreach ($item in $goPlanOnlyAChanged) { $onlyAByName[$item.Name] = $item }
+        Assert-True ($goPlanAByName.a.Fingerprint -cne $onlyAByName.a.Fingerprint -and
+            $goPlanAByName.b.Fingerprint -ceq $onlyAByName.b.Fingerprint) `
+            '服务私有 pkg/proto 只使真实消费者 target 过期'
+
+        [IO.File]::WriteAllText((Join-Path $sharedDir 'shared.go'), 'shared-v2', [Text.UTF8Encoding]::new($false))
+        $goPlanSharedChanged = @(Get-PandoraPlannerGoTargetPlan -ProjectRoot $graphRoot -BuildTargets $graphTargets `
+                -PackageRecords $packages -ToolchainSignature 'toolchain-v1' -GlobalInputPaths $globalInputs)
+        $sharedByName = @{}; foreach ($item in $goPlanSharedChanged) { $sharedByName[$item.Name] = $item }
+        Assert-True ($onlyAByName.a.Fingerprint -cne $sharedByName.a.Fingerprint -and
+            $onlyAByName.b.Fingerprint -cne $sharedByName.b.Fingerprint) `
+            '共享 pkg 变化传播到全部真实消费者'
+
+        [IO.File]::WriteAllText((Join-Path $graphRoot 'go.work.sum'), 'sum-v2', [Text.UTF8Encoding]::new($false))
+        $goPlanGlobalChanged = @(Get-PandoraPlannerGoTargetPlan -ProjectRoot $graphRoot -BuildTargets $graphTargets `
+                -PackageRecords $packages -ToolchainSignature 'toolchain-v1' -GlobalInputPaths $globalInputs)
+        $globalByName = @{}; foreach ($item in $goPlanGlobalChanged) { $globalByName[$item.Name] = $item }
+        Assert-True ($sharedByName.a.Fingerprint -cne $globalByName.a.Fingerprint -and
+            $sharedByName.b.Fingerprint -cne $globalByName.b.Fingerprint) `
+            'go.work/go.mod/go.sum 这类全局不确定输入保守传播到所有 target'
+
+        $goPlanToolchainChanged = @(Get-PandoraPlannerGoTargetPlan -ProjectRoot $graphRoot -BuildTargets $graphTargets `
+                -PackageRecords $packages -ToolchainSignature 'toolchain-v2' -GlobalInputPaths $globalInputs)
+        $toolchainByName = @{}; foreach ($item in $goPlanToolchainChanged) { $toolchainByName[$item.Name] = $item }
+        Assert-True ($globalByName.a.Fingerprint -cne $toolchainByName.a.Fingerprint -and
+            $globalByName.b.Fingerprint -cne $toolchainByName.b.Fingerprint) `
+            '工具链变化保守传播到所有 target'
+    }
 
     $cleanupState = @{ Attempts = [Collections.Generic.List[string]]::new() }
     $cleanupRecords = @('first', 'broken', 'last') | ForEach-Object {

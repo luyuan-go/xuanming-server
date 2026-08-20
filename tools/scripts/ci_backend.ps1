@@ -245,6 +245,8 @@ $contractTests = @(
     'tools/scripts/tests/run_services_listener_query_contract_test.ps1'
     # 策划专用热启动：强指纹复用本机二进制，非 login/login 两波批量启动与 exact-PID 统一就绪。
     'tools/scripts/tests/run_services_planner_fast_start_contract_test.ps1'
+    # 标准 Press any key 只能代表玩家链已可玩：login/Envoy/Hub exact owner 三门全过才允许成功退出。
+    'tools/scripts/tests/planner_playable_exit_contract_test.ps1'
     # 策划本机 MySQL 热启动：SQL 强收据跳过重复 init DDL，miss 时单 mysql 进程批量重放。
     'tools/scripts/tests/dev_migrate_planner_fast_contract_test.ps1'
     # 策划已安装基础设施的冷启动：批量 launch、共享 listener 轮询与 direct/Kafka-child exact owner。
