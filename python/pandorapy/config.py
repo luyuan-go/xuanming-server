@@ -24,6 +24,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
+from pandorapy import cellroute
+
 # Go 的 time.ParseDuration 支持 ns/us/ms/s/m/h。yaml 里实际只用到 s/m/h,
 # 这里把 ms 也收进来(有配置写过 "500ms"),其余按 Go 的单位表补齐。
 _DURATION_RE = re.compile(r"(?P<value>\d+(?:\.\d+)?)(?P<unit>ns|us|ms|s|m|h)")
@@ -117,11 +119,14 @@ class GrpcConf(BaseModel):
     # ★ 这两个字段此前**没有建模**。pydantic 默认 extra="ignore"(本仓刻意设成
     # allow,理由见 BaseConf),于是 yaml 里配了、Python 侧当没看见 —— 静默丢弃。
     max_conn_age_grace: str = ""
-    # enable_rate_limit:Go 侧是 Kratos 的 BBR 自适应限流(过载保护)。
+    # enable_rate_limit:BBR 自适应限流(过载保护)。对应 Go 侧
+    # pkg/middleware/ratelimit.go(底层 go-kratos/aegis),Python 侧实现见
+    # pandorapy/bbr.py,装配见 server.build_grpc_server。
     #
-    # ★ Python 侧**没有实现**。所以这里显式建模成字段并在装配时 fail-fast,
-    # 而不是继续静默忽略:yaml 里写着 true、运维以为有过载保护、实际一点都没有,
-    # 是比"没这功能"糟糕得多的状态(§14:开关打开后的分支必须是真实实现)。
+    # dev 默认关;prod 由 tools/scripts/gen_cluster_config.ps1 -Prod **机械强制**
+    # 置 true(12 个 unary session-gate 服务 + login + push,契约测试
+    # gen_cluster_prod_ratelimit_contract_test.ps1 锁定)。也就是说这不是可选项 ——
+    # 这 14 个服务要切 Python,这个开关必须能真跑。
     enable_rate_limit: bool = False
 
     def timeout_td(self) -> _dt.timedelta:
@@ -281,6 +286,9 @@ class BaseConf(BaseModel):
     node: NodeConf = Field(default_factory=NodeConf)
     snowflake: SnowflakeConf = Field(default_factory=SnowflakeConf)
     config_table: ConfigTableConf = Field(default_factory=ConfigTableConf)
+    cell_route: cellroute.RouterConfig = Field(
+        default_factory=cellroute.RouterConfig
+    )
 
     # 未在 Python 侧建模的段(locker / registry / timeouts ...)会落到这里而不是被拒绝。
     # 刻意这样:同一份 yaml 要同时喂给 Go 和 Python,Python 侧还没迁到的功能段必须能
@@ -304,37 +312,29 @@ class BaseConf(BaseModel):
         return self
 
     def assert_unsupported_sections(self) -> None:
-        """配了 Python 侧尚未实现的功能段就**拒绝启动**。
+        """配置段的装配前自检 —— 配错就**拒绝启动**。
 
         ★ 为什么不是"忽略 + 打个 WARN":这些段配上去是为了改变行为的。
         忽略掉之后系统行为与配置意图**不一致而且不报错** —— 运维看着 yaml
         以为 cell 路由已经生效,实际所有玩家都落在单 Cell 上。
         起不来是刺眼的,静默跑错是致命的(CLAUDE.md §14)。
+
+        2026-08 起 cellroute 装配已补齐(`pandorapy.cellroute` 的 `build_router` +
+        `pandorapy.cellroute_etcd` 的表热更),因此这里不再拒绝 `mode` 非空,
+        改为跑与 Go 逐条同义的 `RouterConfig.Validate` —— 未知 mode / static 缺 cells /
+        etcd 缺 endpoints 仍然拒启,判据与 Go 同一份。
         """
-        extra = self.model_extra or {}
-        cell_route = extra.get("cell_route") or {}
-        # ★ 判据是 **mode 非空**,不是"这一段存不存在"。
-        #
-        # Go 的关闭态就是 `mode` 为空(pkg/config.go:63「mode 空=单 Cell 不路由」),
-        # 而不是不写这一段。按"段存在"判会把 `cell_route: {mode: ""}` 这种
-        # **合法的单 Cell 配置**也拒掉 —— 一个防止静默出错的闸,自己变成了
-        # 让服务起不来的原因,方向就反了。
-        mode = ""
-        if isinstance(cell_route, dict):
-            mode = str(cell_route.get("mode") or "").strip()
-        if mode:
+        try:
+            self.cell_route.validate_mode()
+        except cellroute.CellRouteError as exc:
             raise UnsupportedSectionError(
                 section="cell_route",
                 # 与 Go 侧同名:各服务 main.go 在 cellroute 装配失败时打的就是它。
                 event="cellroute_init_failed",
-                message=(
-                    f"配置要求 cell_route.mode={mode!r},但 Python 侧只实现了单 Cell"
-                    "(pandorapy/cellroute.py "
-                    "有静态表与路由算法,缺 BuildRouter 装配 / keyspace 分片 / 表热更)。"
-                    "继续启动会让所有玩家静默落在单 Cell 上,与配置意图不符 —— "
-                    "要么用 Go 版跑这个服务,要么先把 cellroute 装配做完。"
-                ),
-            )
+                # 消息里必须出现 **yaml 里的段名** `cell_route`(带下划线),
+                # 而不只是包名 `cellroute`。拿到报错的人要能直接 grep yaml。
+                message=f"cell_route 配置非法:{exc}",
+            ) from exc
 
 
 class ConfigLoadError(Exception):

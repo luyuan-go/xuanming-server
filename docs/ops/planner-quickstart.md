@@ -29,12 +29,19 @@ Redis / Kafka / Envoy 与 22 个后端服务；SVN 已带固定安装包，Git/�
 `Press any key to continue`；**看到这行就是现在可以登录进游戏**。启动失败会保留错误窗口，但不会
 显示这条标准成功提示。
 
-`installers/planner-db/central-mysql.json` 是唯一模式开关：文件存在即连接中心 MySQL，
+策划双击入口会按已部署证据自动选择数据库模式。`installers/planner-db/central-mysql.json` 是当前唯一
+受支持的中心数据库 bundle：文件存在即锁定中心 MySQL，
 本机不下载、解包、启动、停止或重置 MySQL。首次会要求输入一次性 enrollment code，
 中心建好独立 workspace 后，密码只保存在当前 Windows 用户的 DPAPI 凭据文件。建库/迁移
 正在处理时会按服务端节奏等待，总截止为 10 分钟。配置损坏、DNS/TLS/认证/schema
-预检不通都会中止，**不会静默回退到本机 MySQL**。没有该文件时才保持下文的
-`local-owned` 动态端口行为。
+预检不通都会中止，**不会静默回退到本机 MySQL**。从未登记过中心 workspace 的机器若没有该
+bundle，则立即使用下文 `local-owned` 动态端口；已有 central applied state、runtime profile 或
+workspace identity 后 bundle 丢失仍会 fail-closed。精确规则见
+[`decision-revisit-planner-database-fallback.md`](../design/decision-revisit-planner-database-fallback.md)。
+
+当前中心 provisioner 只支持 Oracle MySQL 8+，不是 TiDB。远端 TiDB 方案仍处于
+[`decision-revisit-planner-central-tidb.md`](../design/decision-revisit-planner-central-tidb.md)
+的待拍板/阻断状态，不能只改 endpoint 冒充完成。
 
 这条路线不会占用或复用 Docker MySQL 的 `3307`：本项目原生 MySQL 会从 `13307..13398`
 自动选择可用端口，验证确属本工作区后记录在 `run/localinfra/cfg/ports.json`，服务配置副本生成到
@@ -66,8 +73,10 @@ Docker 与免 Docker 来回切换时，脚本会依据 `run/dev/mysql-port-appli
 社交库配置自动完整重启宿主服务，避免旧进程继续连接上一次模式的数据库。
 日常再次验收时**直接重复双击启动即可，不需要先点停止**：健康且输入未变化的基础设施和服务保持
 原进程，只有 Go 依赖或策划表变化真正影响的服务才会更新；重启电脑后进程虽全没了，安装与有效构建
-收据仍在，会直接拉起缺失进程而不重装、不重编未变化服务。`策划一键停止-免Docker-测试版.cmd`
-只用于你明确想把整套本机后端完全关掉时。
+收据仍在，会直接拉起缺失进程而不重装、不重编未变化服务。想关闭游戏后端但保留热基础设施，双击
+`策划一键停止业务-保留基础设施-免Docker-测试版.cmd`：它只停 22 个业务服务及 allocator 拉起的
+本机 Hub/Battle DS，不停止或启动 MySQL、Redis、Kafka、Envoy。`策划一键停止-免Docker-测试版.cmd`
+仍用于你明确想把整套本机后端完全关掉时。
 
 连续双击启动/停止也不会并发穿插：整条导表、基础设施、迁移和业务服务链共用工作区编排锁；
 已有一轮在执行时，第二轮会明确退出，不会停掉刚由另一轮启动的 MySQL。
@@ -101,6 +110,7 @@ MachineGuid、SID 且 DPAPI 也可解密，客户端单独无法可靠识别，�
 |---|---|
 | 启动 | 双击 `策划一键启动-免Docker-测试版.cmd` |
 | **改完资源后重来一次(日常最常用)** | 双击 `策划一键重启DS-免Docker-测试版.cmd` |
+| 停业务与本机 DS，保留 MySQL/Redis/Kafka/Envoy | 双击 `策划一键停止业务-保留基础设施-免Docker-测试版.cmd` |
 | 完全关掉本机后端（非日常必需） | 双击 `策划一键停止-免Docker-测试版.cmd` |
 
 **两个入口都会自己先导表**(策划 xlsx → `configtable/dist`),不用另外双击导表脚本。
@@ -115,8 +125,11 @@ pwsh tools/scripts/start.ps1 -Mode local -DsLauncher editor -GenTables
 # 导表 + 只重启本机 DS 和读表的服务(其余原样不动,快)
 pwsh tools/scripts/start.ps1 -Mode local -DsLauncher editor -GenTables -DsOnly
 
-# 停止
-pwsh tools/scripts/start.ps1 -Mode local -Down
+# 只停业务服务和本机 DS，保留基础设施
+pwsh tools/scripts/run_services.ps1 -Action down
+
+# 完整停止
+pwsh tools/scripts/start.ps1 -Mode local -NoDocker -Down
 ```
 
 ### 改了策划表怎么生效

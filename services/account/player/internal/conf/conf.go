@@ -49,8 +49,12 @@ type PlayerConf struct {
 
 	// PlayerNameResolveAuthSecret/Audience 校验 team→player ResolvePlayerNames 的独立
 	// request-bound internalrpcauth 身份，不得复用 DS callback secret 或玩家 JWT。
-	PlayerNameResolveAuthSecret   string `yaml:"player_name_resolve_auth_secret,omitempty" json:"player_name_resolve_auth_secret,omitempty"`
-	PlayerNameResolveAuthAudience string `yaml:"player_name_resolve_auth_audience,omitempty" json:"player_name_resolve_auth_audience,omitempty"`
+	PlayerNameResolveAuthSecret         string `yaml:"player_name_resolve_auth_secret,omitempty" json:"player_name_resolve_auth_secret,omitempty"`
+	PlayerNameResolveAuthAudience       string `yaml:"player_name_resolve_auth_audience,omitempty" json:"player_name_resolve_auth_audience,omitempty"`
+	FriendPlayerNameResolveAuthSecret   string `yaml:"friend_player_name_resolve_auth_secret,omitempty" json:"friend_player_name_resolve_auth_secret,omitempty"`
+	FriendPlayerNameResolveAuthAudience string `yaml:"friend_player_name_resolve_auth_audience,omitempty" json:"friend_player_name_resolve_auth_audience,omitempty"`
+	GuildPlayerNameResolveAuthSecret    string `yaml:"guild_player_name_resolve_auth_secret,omitempty" json:"guild_player_name_resolve_auth_secret,omitempty"`
+	GuildPlayerNameResolveAuthAudience  string `yaml:"guild_player_name_resolve_auth_audience,omitempty" json:"guild_player_name_resolve_auth_audience,omitempty"`
 
 	// HeroSelectionEnabled 出战英雄选择功能开关(默认 false,demo 阶段跳过选英雄,
 	// 与 login demo-skip 风格一致;关闭时 SelectHero 返回 ERR_PLAYER_FEATURE_DISABLED)。
@@ -152,6 +156,12 @@ func (c *Config) Defaults() {
 	if c.Player.PlayerNameResolveAuthSecret != "" && c.Player.PlayerNameResolveAuthAudience == "" {
 		c.Player.PlayerNameResolveAuthAudience = "player:name"
 	}
+	if c.Player.FriendPlayerNameResolveAuthSecret != "" && c.Player.FriendPlayerNameResolveAuthAudience == "" {
+		c.Player.FriendPlayerNameResolveAuthAudience = "player:name"
+	}
+	if c.Player.GuildPlayerNameResolveAuthSecret != "" && c.Player.GuildPlayerNameResolveAuthAudience == "" {
+		c.Player.GuildPlayerNameResolveAuthAudience = "player:name"
+	}
 	if len(c.Player.ConsumeTopics) == 0 {
 		c.Player.ConsumeTopics = []string{kafkax.TopicPlayerUpdate}
 	}
@@ -163,21 +173,43 @@ func (c *Config) Defaults() {
 	}
 }
 
-// ValidatePlayerNameResolver 防止内部名称解析只配半套凭据后静默拒绝全部 Team 请求。
+// ValidatePlayerNameResolver 防止内部名称解析只配半套凭据后静默拒绝申请展示。
+// team/friend/guild 各持独立 HMAC key；旧 team 字段保留以支持滚动升级。
 func (c *Config) ValidatePlayerNameResolver() error {
-	if c.Player.PlayerNameResolveAuthSecret == "" {
-		if c.Player.PlayerNameResolveAuthAudience != "" {
-			return fmt.Errorf("player.player_name_resolve_auth_audience requires player_name_resolve_auth_secret")
+	type callerCredential struct {
+		caller   string
+		field    string
+		secret   string
+		audience string
+	}
+	credentials := []callerCredential{
+		{"team", "player_name_resolve_auth", c.Player.PlayerNameResolveAuthSecret, c.Player.PlayerNameResolveAuthAudience},
+		{"friend", "friend_player_name_resolve_auth", c.Player.FriendPlayerNameResolveAuthSecret, c.Player.FriendPlayerNameResolveAuthAudience},
+		{"guild", "guild_player_name_resolve_auth", c.Player.GuildPlayerNameResolveAuthSecret, c.Player.GuildPlayerNameResolveAuthAudience},
+	}
+	seenSecrets := make(map[string]string, len(credentials))
+	hasVerifier := false
+	for _, credential := range credentials {
+		if credential.secret == "" {
+			if credential.audience != "" {
+				return fmt.Errorf("player.%s_audience requires %s_secret", credential.field, credential.field)
+			}
+			continue
 		}
-		return nil
+		hasVerifier = true
+		if err := internalrpcauth.ValidateSecret(credential.secret); err != nil {
+			return fmt.Errorf("player.%s_secret: %w", credential.field, err)
+		}
+		if err := internalrpcauth.ValidateIdentity(credential.audience); err != nil {
+			return fmt.Errorf("player.%s_audience: %w", credential.field, err)
+		}
+		if priorCaller, reused := seenSecrets[credential.secret]; reused {
+			return fmt.Errorf("player %s player-name HMAC key must differ from %s caller key",
+				credential.caller, priorCaller)
+		}
+		seenSecrets[credential.secret] = credential.caller
 	}
-	if err := internalrpcauth.ValidateSecret(c.Player.PlayerNameResolveAuthSecret); err != nil {
-		return fmt.Errorf("player.player_name_resolve_auth_secret: %w", err)
-	}
-	if err := internalrpcauth.ValidateIdentity(c.Player.PlayerNameResolveAuthAudience); err != nil {
-		return fmt.Errorf("player.player_name_resolve_auth_audience: %w", err)
-	}
-	if c.Node.RedisClient.Host == "" && len(c.Node.RedisClient.Addrs) == 0 {
+	if hasVerifier && c.Node.RedisClient.Host == "" && len(c.Node.RedisClient.Addrs) == 0 {
 		return fmt.Errorf("player.player_name_resolve_auth_secret requires node.redis_client replay authority")
 	}
 	return nil

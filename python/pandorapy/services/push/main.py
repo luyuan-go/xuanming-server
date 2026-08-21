@@ -16,7 +16,6 @@ kafka 13 个业务 topic 的消息先原子写入 Redis 投递缓冲(唯一定�
                                     (allow_unverified=true 时降为
                                      redis_eviction_policy_unverifiable_allowed WARN)
     ⑧ cellroute_init_failed         多 Cell 路由表建不起来            fail-fast
-                                    (**Python 侧落在闸③**,见下方说明)
     ⑨ kafka_brokers_empty           brokers 缺失                      fail-fast
     ⑩ push_topics_empty             topics 缺失                       fail-fast
     ⑪ dlq_producer_init_failed      DLQ producer 建不起来             fail-fast
@@ -27,12 +26,12 @@ kafka 13 个业务 topic 的消息先原子写入 Redis 投递缓冲(唯一定�
      kafka_brokers_empty 是 os.Exit 而不是 WARN,这里逐条照搬,**不要"顺手统一"成
      其它服务的宽松档**。
 
-  ⚠️ 闸⑧的落点差异(诚实标注):Go 在建完 consumer 之后调 `etcdtable.BuildRouter`,
-     失败 os.Exit。Python 侧 `cellroute` 只有静态表与路由算法、缺 BuildRouter 装配,
-     所以 `pandorapy.config.BaseConf` 的校验器在**加载配置时**就对
-     `cell_route.mode` 非空拒启(报 config_scan_failed)。方向一致(都是拒启),
-     但事件名与时点不同 —— 单 Cell(当前唯一形态)两边行为完全相同。
-     补齐 BuildRouter 后应把这道闸挪回原位并改用 cellroute_init_failed。
+  ⚠️ 闸⑧与 Go 同位:建完 consumer 之后调 `cellroute_etcd.build_router`,失败即拒启,
+     成功则把 router + 本实例 (self_region, self_cell) 注入每个消费者。
+     `cell_route.mode` 为空(单 Cell,当前唯一形态)时 router 为 None,
+     消费者拥有全部玩家,行为与单 Cell 历史完全一致。
+     配置本身的自检(未知 mode / static 缺 cells / etcd 缺 endpoints)仍在闸③,
+     与 Go 的 `RouterConfig.Validate` 同一份判据。
 
 后台循环五条(全部走 pandorapy.safego / server.run:裸 create_task 的协程死掉后
 进程照跑、health 照答 SERVING、**零日志**):
@@ -66,6 +65,7 @@ import sys
 from pandora.push.v1 import push_pb2_grpc
 
 from pandorapy import kafka_topics, kafkax
+from pandorapy import cellroute_etcd
 from pandorapy import log as plog
 from pandorapy import redisx
 from pandorapy import server as pserver
@@ -238,6 +238,9 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
 
     producers: list = []
     consumers: list[pcons.PushKafkaConsumer] = []
+    # ★ 必须在 try **之前**声明:它在 finally 里被读。写在 try 内部的话,
+    # 任何在赋值行之前失败的闸都会让 finally 抛 NameError,把真正的退出原因顶掉。
+    cell_watcher = None
     try:
         # ── 闸⑥⑦ 持久性/驱逐门 ─────────────────────────────────────────
         if not await verify_eviction_policy(
@@ -323,6 +326,32 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                 topic=topic, group=cfg.kafka.group_id, dlq_topic=dlq_topic,
             )
 
+        # ── ⑧ cellroute 装配(位置是契约:与 Go 同在建完 consumer 之后)─────
+        #
+        # off(mode 空,当前唯一形态)→ router 为 None,消费者拥有全部玩家,行为不变。
+        # static → 本地铺表;etcd → 连 etcd 全量 Get + watch 热更,watcher 在 finally 关。
+        #
+        # ★ 为什么这道闸必须 fail-fast:配了 cell_route 却按单 Cell 跑,消息会被写进
+        #   **本 cell** 的 Redis 投递缓冲,而玩家连接在别的 cell —— 写错缓存 + ACK,
+        #   静默丢,不报错。起不来是刺眼的,静默投错是致命的。
+        try:
+            router, cell_watcher = await cellroute_etcd.build_router(cfg.cell_route)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            logger.error("cellroute_init_failed", err=str(exc))
+            return 1
+        if router is not None:
+            for kc in consumers:
+                kc.set_cell_ownership(
+                    router, cfg.cell_route.self_region, cfg.cell_route.self_cell
+                )
+            logger.info(
+                "cellroute_enabled",
+                self_region=cfg.cell_route.self_region,
+                self_cell=cfg.cell_route.self_cell,
+            )
+
         # 跨 Pod 唤醒信号:写缓冲的 Pod 本地无连接时 PUBLISH player_id,
         # 持有连接的 Pod 订阅后立即拉取投递;30s 兜底轮询保留为信号丢失时的兜底。
         wake_signal = pwake.RedisWakeSignal(rdb)
@@ -392,6 +421,9 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         for kc in consumers:
             with contextlib.suppress(Exception):
                 kc.stop()
+        if cell_watcher is not None:
+            with contextlib.suppress(Exception):
+                await cell_watcher.close()
         for producer in producers:
             with contextlib.suppress(Exception):
                 await producer.close()

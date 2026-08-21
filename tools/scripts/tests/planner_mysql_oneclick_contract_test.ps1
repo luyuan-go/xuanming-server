@@ -38,6 +38,13 @@ try {
     [Environment]::SetEnvironmentVariable($requireCentralEnvName, $null, 'Process')
     $local = Get-PandoraPlannerMysqlStartupMode -ProjectRoot $tempRoot
     Assert-True ($local -ceq 'local-owned') '无 central-mysql.json 时保持 local-owned'
+    $identityOnlyPath = Join-Path $tempRoot 'identity-only.json'
+    Set-PandoraPlannerDbIdentity -WorkspaceId '01arz3ndektsv4rrffq69g5fav' -IdentityPath $identityOnlyPath | Out-Null
+    Assert-Throws {
+        Get-PandoraPlannerMysqlStartupMode -ProjectRoot $tempRoot -IdentityPath $identityOnlyPath | Out-Null
+    } 'workspace.*bundle|bundle.*workspace|中心.*identity|identity.*中心' `
+        '已有远端 workspace identity 后缺 bundle 不能回落本机'
+    Remove-Item -LiteralPath $identityOnlyPath -Force
     [Environment]::SetEnvironmentVariable($requireCentralEnvName, '1', 'Process')
     Assert-Throws {
         Get-PandoraPlannerMysqlStartupMode -ProjectRoot $tempRoot | Out-Null
@@ -120,13 +127,20 @@ try {
     Assert-True ($runServices -match 'New-PandoraMysqlServiceRuntimeConfig') 'run_services 使用中心 secret YAML renderer'
     Assert-True ($runServices -match 'Remove-PandoraMysqlServiceRuntimeConfig') 'run_services 启动读取后清理 secret YAML'
     Assert-True ($start -match 'ProfileFingerprint') '-DsOnly 对比 profile fingerprint'
-    Assert-True ($plannerCmd -match 'set "PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL=1"') `
-        '策划 CMD 显式要求中心数据库，发布漏 bundle 时不得回退本机 MySQL'
-    Assert-True ($plannerCmd -match 'if not exist "%~dp0installers\\planner-db\\central-mysql\.json"') `
-        '策划 CMD 在导表和基础设施动作前检查远端 bundle'
-    Assert-True ($plannerCmd.IndexOf('if not exist "%~dp0installers\planner-db\central-mysql.json"') -lt `
-        $plannerCmd.IndexOf('call "%~dp0tools\scripts\bootstrap_pwsh.cmd"')) `
-        '远端 bundle 缺失必须在 PowerShell 自举前快速失败'
+    Assert-True ($start -match '数据库强制 central-managed') '选择中心模式时明确打印本机 MySQL 零动作'
+    Assert-True ($devAll -match 'mode=central-managed backend=oracle-mysql') `
+        '启动日志明确区分远端生命周期模式与当前数据库引擎'
+    Assert-True ($plannerCmd -match 'if exist "%~dp0installers\\planner-db\\central-mysql\.json"[\s\S]+set "PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL=1"') `
+        '策划 CMD 仅在发现远端 bundle 后锁定 central，防止检查后文件消失时回落'
+    Assert-True ($plannerCmd -match 'set "PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL="\s*\r?\n\s*if exist') `
+        '策划 CMD 先清除父 shell 遗留的 central-required 标志，再按当前 bundle 自动选择'
+    Assert-True ($plannerCmd -notmatch 'Remote planner database bundle is missing') `
+        '从未登记远端且缺 bundle 时不得阻断本机 local-owned 启动'
+    Assert-True ($plannerCmd -match 'echo \[planner\] launcher=%~f0') `
+        '策划 CMD 打印真实入口绝对路径，避免同名旧工作区混淆'
+    Assert-True ($plannerCmd -match 'echo \[planner\] database=central-managed' -and
+        $plannerCmd -match 'echo \[planner\] database=local-owned') `
+        '策划 CMD 在自动选择后明确打印 central/local 意图'
 } finally {
     if ($hadRequireCentralEnv) {
         [Environment]::SetEnvironmentVariable($requireCentralEnvName, $originalRequireCentralEnv, 'Process')

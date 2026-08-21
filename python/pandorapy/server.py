@@ -96,32 +96,33 @@ def build_grpc_server(
     """
     options: list[tuple[str, Any]] = conn_age_options(grpc_conf)
 
-    # ★ enable_rate_limit 在 Python 侧**没有实现**(Go 用 Kratos 的 BBR 自适应限流)。
-    # 配了就必须 fail-fast,不能静默忽略:yaml 写着 true、运维以为有过载保护、
-    # 实际一点都没有 —— 那比"没这功能"糟糕得多(§14)。
-    if grpc_conf.enable_rate_limit:
-        raise NotImplementedError(
-            "server.grpc.enable_rate_limit=true,但 Python 侧尚未实现自适应限流(BBR)。"
-            "要么把它关掉(与当前实际行为一致),要么先把限流实现出来 —— "
-            "不能让配置声称有一道并不存在的过载保护。"
-        )
-
-    # 拦截器顺序(与 Kratos 默认 middleware 链 Trace → Logging → Metrics 同序)。
+    # 拦截器顺序(与 Kratos 默认 middleware 链 Trace → Logging → Metrics → [RateLimit]
+    # → KillSwitch 同序,见 pkg/grpcserver/grpcserver.go:44)。
     # 实测语义:列表里**第一个是最外层**,它拿到的 continuation 会跑后面的。
     #
     #   ① trace/身份  最外层 —— 后面每一条日志(含 access log)都要落在它的
     #                 contextvars 作用域内。放在里层的话,它的 finally 一 reset,
     #                 外层 access log 才开始打 → 四个事件全都没有 trace_id
-    #   ② 可观测      记录后面每一道拒绝(含 auth 401、关停、超时)
-    #   ③ 关停        在鉴权之前 —— 服务已关停时不该再做鉴权工作,而且必须
+    #   ② 可观测      记录后面每一道拒绝(含 auth 401、限流、关停、超时)
+    #   ③ 限流        BBR 过载丢负载。**在可观测之内**,被丢的请求才进得了指标;
+    #                 **在关停之外**,与 Go 同序
+    #   ④ 关停        在鉴权之前 —— 服务已关停时不该再做鉴权工作,而且必须
     #                 **在业务 handler 之前**返回,否则副作用照样发生
-    #   ④ 超时        给业务 handler 套 deadline
-    #   ⑤ 鉴权
+    #   ⑤ 超时        给业务 handler 套 deadline
+    #   ⑥ 鉴权
     chain: list[grpc.aio.ServerInterceptor] = [
         pintercept.TraceInterceptor(),
         pintercept.ObservabilityInterceptor(),
-        pintercept.KillSwitchInterceptor(),
     ]
+    # 第 4 层:BBR 自适应限流(过载保护)。dev 默认关,prod 由
+    # tools/scripts/gen_cluster_config.ps1 -Prod 机械置 true(14 个客户端面服务)。
+    #
+    # 无阈值可配 —— BBR 按 CPU / inflight / RT 自己判断过载,这也是它区别于
+    # Envoy 那道 local_ratelimit(固定令牌桶)的地方:后者挡的是未鉴权洪水,
+    # 这里保的是"进程别被自己的负载压垮"。两道闸不可互相替代。
+    if grpc_conf.enable_rate_limit:
+        chain.append(pintercept.RateLimitInterceptor())
+    chain.append(pintercept.KillSwitchInterceptor())
     timeout = grpc_conf.timeout_td().total_seconds()
     if timeout > 0:
         chain.append(pintercept.TimeoutInterceptor(timeout))

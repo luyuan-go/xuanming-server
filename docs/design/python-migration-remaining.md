@@ -142,8 +142,9 @@
 
 ### 4.10 其余共性
 - **服务端 RPC 超时**：`config.py:71` 建模了 `timeout`、`:79-80` 还写了 `timeout_td()`，**全仓零调用**；Go `grpcserver.go:71-72` 会挂 `kgrpc.Timeout`，dialogue yaml 写着 15s。Python 侧没有任何服务端 deadline，慢 handler 的 task 在 server 上无限累积。字段"看起来配了"，最阴。
-- **未建模的 yaml 段被静默吞掉**：`config.py:138/:157` 两处 `extra="allow"`，`:154` 自陈未建模 `snowflake` / `cell_route` 等段。建议做一次性的启动期白名单告警，堵住 snowflake / cell_route / session_gate / killswitch / registry 一整类。
-- **`pkg/cellroute/etcdtable`**：`grep WireRouter python/` 零命中；`pandorapy/cellroute.py` 只有静态表。几乎每个服务的 main 都有一道它的 fail-fast。
+- ~~**未建模的 yaml 段被静默吞掉**~~：`cell_route` 已于 2026-08-20 在 `config.BaseConf` 建成**正式字段**（`cellroute.RouterConfig`），校验走 `validate_mode()`。其余（snowflake / session_gate / killswitch / registry）仍建议做启动期白名单告警。
+- ~~**`pkg/cellroute/etcdtable`**~~：已于 2026-08-20 迁完 —— `pandorapy/cellroute_etcd.py`（全量 Get 铺初始表 + watch 整表替换 + 三条不变量）与 `cellroute.build_router`（off/static/etcd 三分支）。Go 的 `WireRouter` 没有对应物是**刻意的**：Python 侧统一返回 `(router, watcher)` 让 main 显式接线并在 `finally` 关 watcher，回调式注入会让"忘了关"没有任何信号。三处调用方（friend / player / data_service `main.py`）已于同日接线，建不起来一律 `cellroute_init_failed` 拒启 —— "配了分片却按单 Cell 跑"是运维以为分了、实际一片没分。
+- ~~**`friend_sharding.go` / `profile_sharding.go` 的落点观测**~~：已于 2026-08-20 迁完 —— `pandorapy/services/friend/sharding.py`（`accept_idempotency_key` / `edge_build_key` 幂等键口径 + `distinct_edge_regions` / `cross_shard_friendship` 判定 + `friend_edge_sharding` 日志）与 `player/biz.py::_log_profile_placement`（`profile_placement`）。router 未注入时整条不执行，与 Go 同分支。
 - **`redisx.lock` 无法表达 auction 的 key 前缀**：`redisx.py:130-132` 硬编码 `pandora:lock:`，而 auction 刻意覆盖成 `pandora:auction:market:`（`market_locker.go:72`）。传全名会被拼成 `pandora:lock:pandora:auction:market:5` → 两边各锁各的、都能拿到锁。**`redisx.py:122-127` 的注释亲自预见了这个失败形态**，但留下的 API 恰好堵死了唯一的覆盖用例。
 - **proto 序列化的跨语言字节确定性未验证**：inventory `bagEntryFingerprint = sha256(proto.Marshal(entry))`（`bag_repo.go:214`）是对 protobuf 字节求哈希 —— unknown fields 保序、map 迭代序、默认值省略策略都可能不同。另 Go `json.Marshal` 默认对 `< > &` 做 HTML 转义（login `ds_admission.go:66` 的两个摘要），是除空格/字段序之外的第三个逐位差异点。
 - **unknown fields 必须保留**：player `biz/reward.go:56` 复用读取时的 stored message 只覆盖两个字段，禁止 `ParseFromString→新建对象→SerializeToString`（等效 DiscardUnknown，混跑窗口内静默清掉新副本刚写的字段）。

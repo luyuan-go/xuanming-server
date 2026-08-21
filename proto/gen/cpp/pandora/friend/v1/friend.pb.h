@@ -2666,6 +2666,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED FriendRequestInfo final : public ::
     kRequestIdFieldNumber = 1,
     kFromPlayerIdFieldNumber = 2,
     kCreatedMsFieldNumber = 4,
+    kFromPlayerNoFieldNumber = 5,
   };
   // string from_nickname = 3 [json_name = "fromNickname"];
   void clear_from_nickname() ;
@@ -2712,11 +2713,21 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED FriendRequestInfo final : public ::
   void _internal_set_created_ms(::int64_t value);
 
   public:
+  // uint64 from_player_no = 5 [json_name = "fromPlayerNo"];
+  void clear_from_player_no() ;
+  [[nodiscard]] ::uint64_t from_player_no() const;
+  void set_from_player_no(::uint64_t value);
+
+  private:
+  ::uint64_t _internal_from_player_no() const;
+  void _internal_set_from_player_no(::uint64_t value);
+
+  public:
   // @@protoc_insertion_point(class_scope:pandora.friend.v1.FriendRequestInfo)
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<2, 4,
+      ::google::protobuf::internal::TcParseTable<3, 5,
                           0, 57,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
@@ -2749,6 +2760,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED FriendRequestInfo final : public ::
     ::uint64_t request_id_;
     ::uint64_t from_player_id_;
     ::int64_t created_ms_;
+    ::uint64_t from_player_no_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -6108,6 +6120,30 @@ inline ::int64_t FriendRequestInfo::_internal_created_ms() const {
 inline void FriendRequestInfo::_internal_set_created_ms(::int64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.created_ms_ = value;
+}
+
+// uint64 from_player_no = 5 [json_name = "fromPlayerNo"];
+inline void FriendRequestInfo::clear_from_player_no() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.from_player_no_ = ::uint64_t{0u};
+  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
+}
+inline ::uint64_t FriendRequestInfo::from_player_no() const {
+  // @@protoc_insertion_point(field_get:pandora.friend.v1.FriendRequestInfo.from_player_no)
+  return _internal_from_player_no();
+}
+inline void FriendRequestInfo::set_from_player_no(::uint64_t value) {
+  _internal_set_from_player_no(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  // @@protoc_insertion_point(field_set:pandora.friend.v1.FriendRequestInfo.from_player_no)
+}
+inline ::uint64_t FriendRequestInfo::_internal_from_player_no() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.from_player_no_;
+}
+inline void FriendRequestInfo::_internal_set_from_player_no(::uint64_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.from_player_no_ = value;
 }
 
 // -------------------------------------------------------------------

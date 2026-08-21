@@ -19,7 +19,7 @@ import re
 import pytest
 from pandora.push.v1 import push_pb2
 
-from pandorapy import errcode, kafka_topics, kafkax
+from pandorapy import cellroute, errcode, kafka_topics, kafkax
 from pandorapy.services.push import biz as pbiz
 from pandorapy.services.push import conf as pconf
 from pandorapy.services.push import connection as pconn
@@ -568,6 +568,73 @@ async def test_zero_player_key_is_poison() -> None:
     with pytest.raises(kafkax.PoisonError):
         await kc.handle(FakeMsg(kafka_topics.TOPIC_TEAM_UPDATE, key=b"0"))
     assert offline.calls == []
+
+
+# ── cell 归属判定(对应 Go 的 consumer_sharding.go)──────────────────────────
+
+
+def _single_cell_router(region: int, cell: int) -> cellroute.Router:
+    """一张把全部逻辑分片指向 (region, cell) 的表 —— 归属判定只关心 region/cell。"""
+    raw = {lc: f"{region}:{cell}" for lc in range(cellroute.LOGICAL_CELL_COUNT)}
+    return cellroute.Router(cellroute.build_static_table_from_raw(raw))
+
+
+def test_owns_player_without_router_is_unknown_but_owned() -> None:
+    """不注入 router(单 Cell / dev)= 拥有全部玩家,且 known=False(不做归属判定)。"""
+    kc = _consumer(kafka_topics.TOPIC_TEAM_UPDATE)
+    assert kc._owns_player(7) == ((0, 0), True, False)  # noqa: SLF001
+
+
+def test_owns_player_local_cell_owned() -> None:
+    kc = _consumer(kafka_topics.TOPIC_TEAM_UPDATE)
+    kc.set_cell_ownership(_single_cell_router(1, 3), 1, 3)
+    assert kc._owns_player(7) == ((1, 3), True, True)  # noqa: SLF001
+
+
+def test_owns_player_foreign_cell_not_owned() -> None:
+    """★ 三值的核心分支:归属**已知**且不是本 cell。"""
+    kc = _consumer(kafka_topics.TOPIC_TEAM_UPDATE)
+    kc.set_cell_ownership(_single_cell_router(1, 9), 1, 3)
+    assert kc._owns_player(7) == ((1, 9), False, True)  # noqa: SLF001
+
+
+def test_owns_player_zero_id_is_unknown() -> None:
+    """player_id=0 走不到归属判定(前面的 key 闸已毒丸),这里保证它不会误判成"不归我"。"""
+    kc = _consumer(kafka_topics.TOPIC_TEAM_UPDATE)
+    kc.set_cell_ownership(_single_cell_router(1, 3), 1, 3)
+    assert kc._owns_player(0) == ((0, 0), True, False)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_foreign_player_is_poisoned_with_no_side_effect() -> None:
+    """★ 不归本 cell 的消息必须毒丸留证,且**零本地副作用**。
+
+    写进本 cell 的投递缓冲 = 给一个连在别的 cell 的玩家写缓存并 ACK,
+    消息静默丢失且没有任何错误。所以断言两条:抛毒丸 + offline 一次都没被调。
+    """
+    cm = pconn.ConnectionManager()
+    offline = RecordingOffline()
+    kc = _consumer(kafka_topics.TOPIC_TEAM_UPDATE, conns=cm, offline=offline)
+    kc.set_cell_ownership(_single_cell_router(1, 9), 1, 3)
+    with pytest.raises(kafkax.PoisonError):
+        await kc.handle(FakeMsg(kafka_topics.TOPIC_TEAM_UPDATE, key=b"7"))
+    assert offline.calls == []
+
+
+@pytest.mark.asyncio
+async def test_owned_player_still_delivered_under_sharding() -> None:
+    """归本 cell 的消息在开了分片之后照常投递 —— 防"接上闸就全毒丸"。"""
+    cm = pconn.ConnectionManager()
+
+    async def _w(_frame) -> None:  # noqa: ANN001
+        return None
+
+    cm.register(7, _w)
+    offline = RecordingOffline()
+    kc = _consumer(kafka_topics.TOPIC_TEAM_UPDATE, conns=cm, offline=offline)
+    kc.set_cell_ownership(_single_cell_router(1, 3), 1, 3)
+    await kc.handle(FakeMsg(kafka_topics.TOPIC_TEAM_UPDATE, key=b"7"))
+    assert [pid for pid, _ in offline.calls] == [7]
 
 
 @pytest.mark.asyncio

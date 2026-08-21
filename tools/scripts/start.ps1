@@ -4272,8 +4272,13 @@ function Invoke-Local {
         return
     }
     if ($NoDocker) {
-        Write-Step "local 模式(免 Docker):基础设施(本机原生进程) + 22 个 go 服务(宿主进程)"
-        Write-Info "MySQL/Redis/Kafka/Envoy 走免安装二进制;不装 Docker Desktop、不起 TiDB。"
+        if ($env:PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL -eq '1') {
+            Write-Step "local 模式(策划远端数据库):本机 Redis/Kafka/Envoy + 22 个业务服务"
+            Write-Info "数据库强制 central-managed；本机不下载、启动、停止或重置 MySQL。"
+        } else {
+            Write-Step "local 模式(免 Docker):基础设施(本机原生进程) + 22 个 go 服务(宿主进程)"
+            Write-Info "MySQL/Redis/Kafka/Envoy 走免安装二进制;不装 Docker Desktop、不起 TiDB。"
+        }
     } else {
         Write-Step "local 模式:基础设施(docker) + 22 个 go 服务(宿主进程)"
         Write-Info "策划本地联调用这个;服务可在 VS Code 断点调试。"

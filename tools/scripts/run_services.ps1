@@ -277,7 +277,9 @@ if ($SocialOnMysql) {
 }
 
 function Get-ServiceConfigPath($svc) {
-    Assert-NoDockerMysqlOwned
+    # MySQL exact PID/exe/my.ini/listener 归属已在脚本入口检查一次，完整启动又会在
+    # Test-InfraReady 紧邻批量配置/拉起前复核一次。这里不能按 22 个服务重复跑 CIM，
+    # 否则冷启动仅“配置生成”就会白耗约 7 秒；单服务动作仍受入口检查保护。
     $svcDir = Join-Path $ProjectRoot $svc.Dir
     $source = Join-Path $svcDir $svc.Conf
     if (-not $NoDocker -or $MysqlPort -eq 3307) { return $svc.Conf }

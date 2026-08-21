@@ -66,10 +66,6 @@ class DialogueUsecase:
         # router 是确定性 region/cell 路由器(scale-cellular-20m.md §4.2)。
         # 可为 None:单 Cell / dev / 阶段 1~2 不分片,会话 owner 落点观测退化为不打日志。
         # 分片部署时由 main 经 set_cell_router 注入。None-safe。
-        #
-        # Python 侧本轮**未实现** cellroute(它依赖 etcd,而 Python 的 etcd 客户端生态
-        # 是这次迁移唯一的高风险项 —— 最主流的 python-etcd3 已 20 个月未更新)。
-        # 保留这个接缝和 None 分支,行为与 Go 侧单 Cell 完全一致。
         self._router = None
 
     def set_cell_router(self, router: object | None) -> None:

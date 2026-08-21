@@ -40,6 +40,12 @@ guild:
   max_guild_members: 100
   max_group_members: 50
   max_name_len: 24
+  player_name_resolver_addr: "player.pandora.svc.cluster.local:20002"
+  player_name_resolver_auth_secret: "__GUILD_PLAYER_NAME_RESOLVE_AUTH_SECRET_32B_CHANGE_ME__"
+  player_name_resolver_auth_audience: "player:name"
+  player_no_resolver_addr: "login.pandora.svc.cluster.local:20001"
+  player_no_resolver_auth_secret: "__GUILD_PLAYER_NO_RESOLVE_AUTH_SECRET_32B_CHANGE_ME__"
+  player_no_resolver_auth_audience: "login:player-no"
 
 # 会话现行性门(R5 复审 P0-1,INC-20260722-004):客户端面请求 jti 必须等于 login 会话
 # 权威当前一代,顶号后旧 JWT 立即失效。生产必须 require: true(强制档:gate 未装配 =

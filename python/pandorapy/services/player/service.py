@@ -132,11 +132,19 @@ def _system_only(context) -> int:  # noqa: ANN001
 
 
 class PlayerInternalService(pgrpc.PlayerInternalServiceServicer):
-    """受 payload-bound Team 服务身份保护的 player 名称最小投影。"""
+    """受 payload-bound team/friend/guild 服务身份保护的名称最小投影。"""
 
     __slots__ = ("_uc", "_verifier")
 
-    def __init__(self, uc, verifier: internalrpcauth.Verifier | None) -> None:  # noqa: ANN001
+    def __init__(
+        self,
+        uc,
+        verifier: (
+            internalrpcauth.Verifier
+            | internalrpcauth.MultiCallerVerifier
+            | None
+        ),
+    ) -> None:  # noqa: ANN001
         self._uc = uc
         self._verifier = verifier
 

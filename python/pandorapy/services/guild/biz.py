@@ -11,7 +11,7 @@
      放开的话公会 / 群会变成**无主**:没人能审批、没人能解散,只能人工改库。
   ② 推送原则 2:通知**不回发操作者本人**(申请通知发给会长 / 官员;审批结果发给申请人)。
      唯一例外是解散 —— 那是全员事件,会长自己也要收到。
-  ③ nickname 一律留空,由客户端按 player_id 解析展示名(§5.8 最小数据单位)。
+  ③ 申请列表的 nickname / player_no 从各自权威按需投影，不写回公会库。
   ④ RPC 只回客户端可见结构(§9.14):Guild / GuildMember / GuildJoinRequest,
      不回存储行。
 
@@ -29,6 +29,7 @@ from pandora.guild.v1 import guild_pb2
 
 from pandorapy import errcode, logwindow
 from pandorapy import log as plog
+from pandorapy.services import player_display
 from pandorapy.services.guild.rows import (
     GUILD_ROLE_LEADER,
     GUILD_ROLE_MEMBER,
@@ -130,6 +131,8 @@ class GuildUsecase:
         "_rate_quota",
         "_cache_read_log",
         "_cache_write_log",
+        "_player_name_resolver",
+        "_player_no_resolver",
     )
 
     def __init__(self, repo, cache, pusher, cfg) -> None:  # noqa: ANN001
@@ -141,10 +144,24 @@ class GuildUsecase:
         self._rate_quota: ActionRateQuota | None = None
         self._cache_read_log = logwindow.Window()
         self._cache_write_log = logwindow.Window()
+        self._player_name_resolver: player_display.PlayerNameResolver | None = None
+        self._player_no_resolver: player_display.PlayerNoResolver | None = None
 
     def set_rate_quota(self, quota: ActionRateQuota | None) -> None:
         """注入频率配额(可选;不注入 = 不限,dev 无 Redis 联调兼容)。"""
         self._rate_quota = quota
+
+    def set_player_name_resolver(
+        self, resolver: player_display.PlayerNameResolver | None
+    ) -> None:
+        """注入 player 角色昵称权威；未配置时仅省略该展示投影。"""
+        self._player_name_resolver = resolver
+
+    def set_player_no_resolver(
+        self, resolver: player_display.PlayerNoResolver | None
+    ) -> None:
+        """注入 login 玩家编号权威；未配置时仅省略该展示投影。"""
+        self._player_no_resolver = resolver
 
     # ── 频率配额门 ─────────────────────────────────────────────────────────
 
@@ -492,7 +509,11 @@ class GuildUsecase:
     async def list_join_requests(
         self, requester_id: int, cursor: int, limit: int
     ) -> tuple[list[guild_pb2.GuildJoinRequest], int]:
-        """列公会挂起申请。requester 须为该公会 LEADER / OFFICER,按 request_id 游标分页。"""
+        """列公会挂起申请并投影公开昵称/编号。
+
+        requester 须为该公会 LEADER / OFFICER，按 request_id 游标分页；展示权威
+        任一失败只省略对应字段，审批身份始终是 request_id。
+        """
         limit = clamp_limit(limit)
         m = await self._repo.get_member(requester_id)
         if m is None:
@@ -504,12 +525,20 @@ class GuildUsecase:
                 errcode.ErrGuildNoPermission, "only leader/officer can list requests"
             )
         rows = await self._repo.list_pending_requests(m.guild_id, cursor, limit)
+        names, numbers = await player_display.resolve_player_display(
+            [row.player_id for row in rows],
+            self._player_name_resolver,
+            self._player_no_resolver,
+            service="guild",
+        )
         out = [
             guild_pb2.GuildJoinRequest(
                 request_id=rq.request_id,
                 guild_id=rq.guild_id,
                 from_player_id=rq.player_id,
+                from_nickname=names.get(rq.player_id, ""),
                 created_ms=rq.created_ms,
+                from_player_no=numbers.get(rq.player_id, 0),
             )
             for rq in rows
         ]

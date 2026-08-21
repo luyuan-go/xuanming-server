@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -33,5 +35,24 @@ func TestNewPlayerNoResolveUsecaseDoesNotDependOnTeamAuthConfig(t *testing.T) {
 func TestNewPlayerNoResolveUsecaseRejectsRepositoryWithoutBatchAuthority(t *testing.T) {
 	if _, err := newPlayerNoResolveUsecase(struct{}{}); err == nil {
 		t.Fatal("repository without PlayerNoBatchReader must fail fast")
+	}
+}
+
+func TestMainWiresTeamFriendGuildPlayerNoVerifiers(t *testing.T) {
+	raw, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	for _, required := range []string{
+		"cfg.Login.PlayerNoResolveAuthSecret",
+		"cfg.Login.FriendPlayerNoResolveAuthSecret",
+		"cfg.Login.GuildPlayerNoResolveAuthSecret",
+		"internalrpcauth.NewMultiCallerVerifier",
+		"service.NewLoginInternalService(playerNoUC, playerNoVerifier)",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("main.go missing player-no multi-caller wiring %q", required)
+		}
 	}
 }

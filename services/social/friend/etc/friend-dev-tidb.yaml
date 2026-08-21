@@ -45,6 +45,12 @@ kafka:
 friend:
   max_friends: 200
   locator_addr: "127.0.0.1:20006"
+  player_name_resolver_addr: "127.0.0.1:20002"
+  player_name_resolver_auth_secret: "pandora-dev-friend-player-name-auth-key-v1!"
+  player_name_resolver_auth_audience: "player:name"
+  player_no_resolver_addr: "127.0.0.1:20001"
+  player_no_resolver_auth_secret: "pandora-dev-friend-player-no-auth-key-v1!"
+  player_no_resolver_auth_audience: "login:player-no"
 
 # 会话现行性门(R5 复审 P0-1,INC-20260722-004):校验客户端面请求 jti == login 会话权威
 # (pandora:sess,node.redis_client 指向的共享 Redis)当前一代,顶号后旧 JWT 立即失效。

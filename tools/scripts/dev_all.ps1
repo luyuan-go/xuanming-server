@@ -62,6 +62,13 @@ if ($NoDocker) {
         Initialize-PandoraPlannerMysqlRuntime -ProjectRoot $projectRoot
     }
     $centralManaged = $mysqlContext.Mode -ceq 'central-managed'
+    if ($centralManaged) {
+        Write-Host ("[数据库] mode=central-managed backend=oracle-mysql workspace={0} endpoint={1}:{2}" -f `
+                $mysqlContext.Profile.workspace_id, $mysqlContext.Profile.endpoint.host, $mysqlContext.Profile.endpoint.port) `
+            -ForegroundColor Cyan
+    } else {
+        Write-Host '[数据库] mode=local-owned backend=oracle-mysql' -ForegroundColor Yellow
+    }
     # 端口权威与“业务服务已经应用的端口”是两件事。只有完整服务启动成功才更新后者；
     # 即使上轮在基础设施启动后半途失败，下轮也仍会强制刷新旧 DSN 进程。
     $appliedMysql = Get-PandoraServiceAppliedMysqlState $projectRoot

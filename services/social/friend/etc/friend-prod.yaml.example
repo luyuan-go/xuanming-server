@@ -36,6 +36,12 @@ kafka:
 friend:
   max_friends: 200
   locator_addr: "player-locator:20006"
+  player_name_resolver_addr: "player.pandora.svc.cluster.local:20002"
+  player_name_resolver_auth_secret: "__FRIEND_PLAYER_NAME_RESOLVE_AUTH_SECRET_32B_CHANGE_ME__"
+  player_name_resolver_auth_audience: "player:name"
+  player_no_resolver_addr: "login.pandora.svc.cluster.local:20001"
+  player_no_resolver_auth_secret: "__FRIEND_PLAYER_NO_RESOLVE_AUTH_SECRET_32B_CHANGE_ME__"
+  player_no_resolver_auth_audience: "login:player-no"
 
 # 会话现行性门(R5 复审 P0-1,INC-20260722-004):生产强制档,顶号后旧 JWT 立即失效;
 # 权威端点漏配拒启,权威不可达 fail-closed。与 gen_cluster_config.ps1 -Prod 产物一致。

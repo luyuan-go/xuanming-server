@@ -221,7 +221,15 @@ class LoginInternalService(login_pb2_grpc.LoginInternalServiceServicer):
 
     __slots__ = ("_reader", "_verifier")
 
-    def __init__(self, reader, verifier: internalrpcauth.Verifier | None) -> None:  # noqa: ANN001
+    def __init__(
+        self,
+        reader,
+        verifier: (
+            internalrpcauth.Verifier
+            | internalrpcauth.MultiCallerVerifier
+            | None
+        ),
+    ) -> None:  # noqa: ANN001
         self._reader = reader
         self._verifier = verifier
 

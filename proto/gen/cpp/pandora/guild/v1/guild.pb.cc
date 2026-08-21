@@ -1982,11 +1982,11 @@ constexpr GuildJoinRequest::ParseTableT_ GuildJoinRequest::InternalGenerateParse
     {
       PROTOBUF_FIELD_OFFSET(GuildJoinRequest, _impl_._has_bits_),
       0, // no _extensions_
-      5, 56,  // max_field_number, fast_idx_mask
+      6, 56,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967264,  // skipmap
+      4294967232,  // skipmap
       offsetof(ParseTableT_, field_entries),
-      5,  // num_field_entries
+      6,  // num_field_entries
       0,  // num_aux_entries
       offsetof(ParseTableT_, field_names),  // no aux_entries
       class_data,
@@ -2017,7 +2017,10 @@ constexpr GuildJoinRequest::ParseTableT_ GuildJoinRequest::InternalGenerateParse
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(GuildJoinRequest, _impl_.created_ms_), 4>(),
        {40, 4, 0,
         PROTOBUF_FIELD_OFFSET(GuildJoinRequest, _impl_.created_ms_)}},
-      {::_pbi::TcParser::MiniParse, {}},
+      // uint64 from_player_no = 6 [json_name = "fromPlayerNo"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(GuildJoinRequest, _impl_.from_player_no_), 5>(),
+       {48, 5, 0,
+        PROTOBUF_FIELD_OFFSET(GuildJoinRequest, _impl_.from_player_no_)}},
       {::_pbi::TcParser::MiniParse, {}},
     }}, {{
       65535, 65535
@@ -2032,6 +2035,8 @@ constexpr GuildJoinRequest::ParseTableT_ GuildJoinRequest::InternalGenerateParse
       {PROTOBUF_FIELD_OFFSET(GuildJoinRequest, _impl_.from_nickname_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUtf8String | ::_fl::kRepAString)},
       // int64 created_ms = 5 [json_name = "createdMs"];
       {PROTOBUF_FIELD_OFFSET(GuildJoinRequest, _impl_.created_ms_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // uint64 from_player_no = 6 [json_name = "fromPlayerNo"];
+      {PROTOBUF_FIELD_OFFSET(GuildJoinRequest, _impl_.from_player_no_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
     }},
     // no aux_entries
     {{
@@ -2053,7 +2058,8 @@ inline constexpr GuildJoinRequest::Impl_::Impl_(
         request_id_{::uint64_t{0u}},
         guild_id_{::uint64_t{0u}},
         from_player_id_{::uint64_t{0u}},
-        created_ms_{::int64_t{0}} {}
+        created_ms_{::int64_t{0}},
+        from_player_no_{::uint64_t{0u}} {}
 
 template <typename>
 constexpr GuildJoinRequest::GuildJoinRequest(::_pbi::ConstantInitialized,
@@ -4877,17 +4883,19 @@ const ::uint32_t
         5,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::guild::v1::GuildJoinRequest, _impl_._has_bits_),
-        8, // hasbit index offset
+        9, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::guild::v1::GuildJoinRequest, _impl_.request_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::guild::v1::GuildJoinRequest, _impl_.guild_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::guild::v1::GuildJoinRequest, _impl_.from_player_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::guild::v1::GuildJoinRequest, _impl_.from_nickname_),
         PROTOBUF_FIELD_OFFSET(::pandora::guild::v1::GuildJoinRequest, _impl_.created_ms_),
+        PROTOBUF_FIELD_OFFSET(::pandora::guild::v1::GuildJoinRequest, _impl_.from_player_no_),
         1,
         2,
         3,
         0,
         4,
+        5,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::guild::v1::CreateGuildRequest, _impl_._has_bits_),
         4, // hasbit index offset
@@ -5064,35 +5072,35 @@ static const ::_pbi::MigrationSchema
         {0, sizeof(::pandora::guild::v1::GuildMember)},
         {11, sizeof(::pandora::guild::v1::Guild)},
         {26, sizeof(::pandora::guild::v1::GuildJoinRequest)},
-        {39, sizeof(::pandora::guild::v1::CreateGuildRequest)},
-        {44, sizeof(::pandora::guild::v1::CreateGuildResponse)},
-        {51, sizeof(::pandora::guild::v1::ApplyJoinRequest)},
-        {56, sizeof(::pandora::guild::v1::ApplyJoinResponse)},
-        {63, sizeof(::pandora::guild::v1::ApproveJoinRequest)},
-        {68, sizeof(::pandora::guild::v1::ApproveJoinResponse)},
-        {73, sizeof(::pandora::guild::v1::RejectJoinRequest)},
-        {78, sizeof(::pandora::guild::v1::RejectJoinResponse)},
-        {83, sizeof(::pandora::guild::v1::LeaveGuildRequest)},
-        {84, sizeof(::pandora::guild::v1::LeaveGuildResponse)},
-        {89, sizeof(::pandora::guild::v1::KickMemberRequest)},
-        {94, sizeof(::pandora::guild::v1::KickMemberResponse)},
-        {99, sizeof(::pandora::guild::v1::DisbandGuildRequest)},
-        {100, sizeof(::pandora::guild::v1::DisbandGuildResponse)},
-        {105, sizeof(::pandora::guild::v1::TransferLeaderRequest)},
-        {110, sizeof(::pandora::guild::v1::TransferLeaderResponse)},
-        {115, sizeof(::pandora::guild::v1::SetOfficerRequest)},
-        {122, sizeof(::pandora::guild::v1::SetOfficerResponse)},
-        {127, sizeof(::pandora::guild::v1::GetGuildRequest)},
-        {132, sizeof(::pandora::guild::v1::GetGuildResponse)},
-        {139, sizeof(::pandora::guild::v1::GetMyGuildRequest)},
-        {140, sizeof(::pandora::guild::v1::GetMyGuildResponse)},
-        {147, sizeof(::pandora::guild::v1::ListMembersRequest)},
-        {156, sizeof(::pandora::guild::v1::ListMembersResponse)},
-        {165, sizeof(::pandora::guild::v1::ListJoinRequestsRequest)},
-        {172, sizeof(::pandora::guild::v1::ListJoinRequestsResponse)},
-        {181, sizeof(::pandora::guild::v1::GuildEvent)},
-        {194, sizeof(::pandora::guild::v1::GetPlayerGuildRequest)},
-        {199, sizeof(::pandora::guild::v1::GetPlayerGuildResponse)},
+        {41, sizeof(::pandora::guild::v1::CreateGuildRequest)},
+        {46, sizeof(::pandora::guild::v1::CreateGuildResponse)},
+        {53, sizeof(::pandora::guild::v1::ApplyJoinRequest)},
+        {58, sizeof(::pandora::guild::v1::ApplyJoinResponse)},
+        {65, sizeof(::pandora::guild::v1::ApproveJoinRequest)},
+        {70, sizeof(::pandora::guild::v1::ApproveJoinResponse)},
+        {75, sizeof(::pandora::guild::v1::RejectJoinRequest)},
+        {80, sizeof(::pandora::guild::v1::RejectJoinResponse)},
+        {85, sizeof(::pandora::guild::v1::LeaveGuildRequest)},
+        {86, sizeof(::pandora::guild::v1::LeaveGuildResponse)},
+        {91, sizeof(::pandora::guild::v1::KickMemberRequest)},
+        {96, sizeof(::pandora::guild::v1::KickMemberResponse)},
+        {101, sizeof(::pandora::guild::v1::DisbandGuildRequest)},
+        {102, sizeof(::pandora::guild::v1::DisbandGuildResponse)},
+        {107, sizeof(::pandora::guild::v1::TransferLeaderRequest)},
+        {112, sizeof(::pandora::guild::v1::TransferLeaderResponse)},
+        {117, sizeof(::pandora::guild::v1::SetOfficerRequest)},
+        {124, sizeof(::pandora::guild::v1::SetOfficerResponse)},
+        {129, sizeof(::pandora::guild::v1::GetGuildRequest)},
+        {134, sizeof(::pandora::guild::v1::GetGuildResponse)},
+        {141, sizeof(::pandora::guild::v1::GetMyGuildRequest)},
+        {142, sizeof(::pandora::guild::v1::GetMyGuildResponse)},
+        {149, sizeof(::pandora::guild::v1::ListMembersRequest)},
+        {158, sizeof(::pandora::guild::v1::ListMembersResponse)},
+        {167, sizeof(::pandora::guild::v1::ListJoinRequestsRequest)},
+        {174, sizeof(::pandora::guild::v1::ListJoinRequestsResponse)},
+        {183, sizeof(::pandora::guild::v1::GuildEvent)},
+        {196, sizeof(::pandora::guild::v1::GetPlayerGuildRequest)},
+        {201, sizeof(::pandora::guild::v1::GetPlayerGuildResponse)},
 };
 static const ::_pbi::MessageGlobalsBase* PROTOBUF_NONNULL const
     file_message_globals[] = {
@@ -5141,120 +5149,120 @@ const char descriptor_table_protodef_pandora_2fguild_2fv1_2fguild_2eproto[] ABSL
     "\001(\tR\004name\022\033\n\tleader_id\030\003 \001(\004R\010leaderId\022!"
     "\n\014member_count\030\004 \001(\005R\013memberCount\022\037\n\013max"
     "_members\030\005 \001(\005R\nmaxMembers\022\035\n\ncreated_ms"
-    "\030\006 \001(\003R\tcreatedMs\"\266\001\n\020GuildJoinRequest\022\035"
+    "\030\006 \001(\003R\tcreatedMs\"\334\001\n\020GuildJoinRequest\022\035"
     "\n\nrequest_id\030\001 \001(\004R\trequestId\022\031\n\010guild_i"
     "d\030\002 \001(\004R\007guildId\022$\n\016from_player_id\030\003 \001(\004"
     "R\014fromPlayerId\022#\n\rfrom_nickname\030\004 \001(\tR\014f"
     "romNickname\022\035\n\ncreated_ms\030\005 \001(\003R\tcreated"
-    "Ms\"9\n\022CreateGuildRequest\022\022\n\004name\030\002 \001(\tR\004"
-    "nameJ\004\010\001\020\002R\tplayer_id\"`\n\023CreateGuildResp"
-    "onse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.E"
-    "rrCodeR\004code\022\031\n\010guild_id\030\002 \001(\004R\007guildId\""
-    ">\n\020ApplyJoinRequest\022\031\n\010guild_id\030\002 \001(\004R\007g"
-    "uildIdJ\004\010\001\020\002R\tplayer_id\"b\n\021ApplyJoinResp"
-    "onse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.E"
-    "rrCodeR\004code\022\035\n\nrequest_id\030\002 \001(\004R\treques"
-    "tId\"D\n\022ApproveJoinRequest\022\035\n\nrequest_id\030"
-    "\002 \001(\004R\trequestIdJ\004\010\001\020\002R\tplayer_id\"E\n\023App"
-    "roveJoinResponse\022.\n\004code\030\001 \001(\0162\032.pandora"
-    ".common.v1.ErrCodeR\004code\"C\n\021RejectJoinRe"
-    "quest\022\035\n\nrequest_id\030\002 \001(\004R\trequestIdJ\004\010\001"
-    "\020\002R\tplayer_id\"D\n\022RejectJoinResponse\022.\n\004c"
-    "ode\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004c"
-    "ode\"$\n\021LeaveGuildRequestJ\004\010\001\020\002R\tplayer_i"
-    "d\"D\n\022LeaveGuildResponse\022.\n\004code\030\001 \001(\0162\032."
-    "pandora.common.v1.ErrCodeR\004code\"A\n\021KickM"
-    "emberRequest\022\033\n\ttarget_id\030\002 \001(\004R\010targetI"
-    "dJ\004\010\001\020\002R\tplayer_id\"D\n\022KickMemberResponse"
-    "\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCo"
-    "deR\004code\"&\n\023DisbandGuildRequestJ\004\010\001\020\002R\tp"
-    "layer_id\"F\n\024DisbandGuildResponse\022.\n\004code"
-    "\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004code"
-    "\"E\n\025TransferLeaderRequest\022\033\n\ttarget_id\030\002"
-    " \001(\004R\010targetIdJ\004\010\001\020\002R\tplayer_id\"H\n\026Trans"
-    "ferLeaderResponse\022.\n\004code\030\001 \001(\0162\032.pandor"
-    "a.common.v1.ErrCodeR\004code\"`\n\021SetOfficerR"
-    "equest\022\033\n\ttarget_id\030\002 \001(\004R\010targetId\022\035\n\ni"
-    "s_officer\030\003 \001(\010R\tisOfficerJ\004\010\001\020\002R\tplayer"
-    "_id\"D\n\022SetOfficerResponse\022.\n\004code\030\001 \001(\0162"
-    "\032.pandora.common.v1.ErrCodeR\004code\",\n\017Get"
-    "GuildRequest\022\031\n\010guild_id\030\001 \001(\004R\007guildId\""
-    "q\n\020GetGuildResponse\022.\n\004code\030\001 \001(\0162\032.pand"
-    "ora.common.v1.ErrCodeR\004code\022-\n\005guild\030\002 \001"
-    "(\0132\027.pandora.guild.v1.GuildR\005guild\"$\n\021Ge"
-    "tMyGuildRequestJ\004\010\001\020\002R\tplayer_id\"s\n\022GetM"
-    "yGuildResponse\022.\n\004code\030\001 \001(\0162\032.pandora.c"
-    "ommon.v1.ErrCodeR\004code\022-\n\005guild\030\002 \001(\0132\027."
-    "pandora.guild.v1.GuildR\005guild\"]\n\022ListMem"
-    "bersRequest\022\031\n\010guild_id\030\001 \001(\004R\007guildId\022\026"
-    "\n\006cursor\030\002 \001(\004R\006cursor\022\024\n\005limit\030\003 \001(\005R\005l"
-    "imit\"\237\001\n\023ListMembersResponse\022.\n\004code\030\001 \001"
-    "(\0162\032.pandora.common.v1.ErrCodeR\004code\0227\n\007"
-    "members\030\002 \003(\0132\035.pandora.guild.v1.GuildMe"
-    "mberR\007members\022\037\n\013next_cursor\030\003 \001(\004R\nnext"
-    "Cursor\"X\n\027ListJoinRequestsRequest\022\026\n\006cur"
-    "sor\030\002 \001(\004R\006cursor\022\024\n\005limit\030\003 \001(\005R\005limitJ"
-    "\004\010\001\020\002R\tplayer_id\"\253\001\n\030ListJoinRequestsRes"
-    "ponse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1."
-    "ErrCodeR\004code\022>\n\010requests\030\002 \003(\0132\".pandor"
-    "a.guild.v1.GuildJoinRequestR\010requests\022\037\n"
-    "\013next_cursor\030\003 \001(\004R\nnextCursor\"\271\001\n\nGuild"
-    "Event\0224\n\004type\030\001 \001(\0162 .pandora.guild.v1.G"
-    "uildEventTypeR\004type\022\031\n\010guild_id\030\002 \001(\004R\007g"
-    "uildId\022 \n\014to_player_id\030\003 \001(\004R\ntoPlayerId"
-    "\022\031\n\010actor_id\030\004 \001(\004R\007actorId\022\035\n\nguild_nam"
-    "e\030\005 \001(\tR\tguildName\"4\n\025GetPlayerGuildRequ"
-    "est\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\"\200\001\n\026Get"
-    "PlayerGuildResponse\022.\n\004code\030\001 \001(\0162\032.pand"
-    "ora.common.v1.ErrCodeR\004code\022\033\n\thas_guild"
-    "\030\002 \001(\010R\010hasGuild\022\031\n\010guild_id\030\003 \001(\004R\007guil"
-    "dId*m\n\tGuildRole\022\032\n\026GUILD_ROLE_UNSPECIFI"
-    "ED\020\000\022\025\n\021GUILD_ROLE_LEADER\020\001\022\026\n\022GUILD_ROL"
-    "E_OFFICER\020\002\022\025\n\021GUILD_ROLE_MEMBER\020\003*\223\001\n\017G"
-    "uildJoinStatus\022!\n\035GUILD_JOIN_STATUS_UNSP"
-    "ECIFIED\020\000\022\035\n\031GUILD_JOIN_STATUS_PENDING\020\001"
-    "\022\036\n\032GUILD_JOIN_STATUS_APPROVED\020\002\022\036\n\032GUIL"
-    "D_JOIN_STATUS_REJECTED\020\003*\377\001\n\016GuildEventT"
-    "ype\022 \n\034GUILD_EVENT_TYPE_UNSPECIFIED\020\000\022!\n"
-    "\035GUILD_EVENT_TYPE_JOIN_APPLIED\020\001\022\"\n\036GUIL"
-    "D_EVENT_TYPE_JOIN_APPROVED\020\002\022\"\n\036GUILD_EV"
-    "ENT_TYPE_JOIN_REJECTED\020\003\022\033\n\027GUILD_EVENT_"
-    "TYPE_KICKED\020\004\022\036\n\032GUILD_EVENT_TYPE_DISBAN"
-    "DED\020\005\022#\n\037GUILD_EVENT_TYPE_LEADER_CHANGED"
-    "\020\0062\234\n\n\014GuildService\022Z\n\013CreateGuild\022$.pan"
-    "dora.guild.v1.CreateGuildRequest\032%.pando"
-    "ra.guild.v1.CreateGuildResponse\022T\n\tApply"
-    "Join\022\".pandora.guild.v1.ApplyJoinRequest"
-    "\032#.pandora.guild.v1.ApplyJoinResponse\022Z\n"
-    "\013ApproveJoin\022$.pandora.guild.v1.ApproveJ"
-    "oinRequest\032%.pandora.guild.v1.ApproveJoi"
-    "nResponse\022W\n\nRejectJoin\022#.pandora.guild."
-    "v1.RejectJoinRequest\032$.pandora.guild.v1."
-    "RejectJoinResponse\022W\n\nLeaveGuild\022#.pando"
-    "ra.guild.v1.LeaveGuildRequest\032$.pandora."
-    "guild.v1.LeaveGuildResponse\022W\n\nKickMembe"
-    "r\022#.pandora.guild.v1.KickMemberRequest\032$"
-    ".pandora.guild.v1.KickMemberResponse\022]\n\014"
-    "DisbandGuild\022%.pandora.guild.v1.DisbandG"
-    "uildRequest\032&.pandora.guild.v1.DisbandGu"
-    "ildResponse\022c\n\016TransferLeader\022\'.pandora."
-    "guild.v1.TransferLeaderRequest\032(.pandora"
-    ".guild.v1.TransferLeaderResponse\022W\n\nSetO"
-    "fficer\022#.pandora.guild.v1.SetOfficerRequ"
-    "est\032$.pandora.guild.v1.SetOfficerRespons"
-    "e\022Q\n\010GetGuild\022!.pandora.guild.v1.GetGuil"
-    "dRequest\032\".pandora.guild.v1.GetGuildResp"
-    "onse\022W\n\nGetMyGuild\022#.pandora.guild.v1.Ge"
-    "tMyGuildRequest\032$.pandora.guild.v1.GetMy"
-    "GuildResponse\022Z\n\013ListMembers\022$.pandora.g"
-    "uild.v1.ListMembersRequest\032%.pandora.gui"
-    "ld.v1.ListMembersResponse\022i\n\020ListJoinReq"
-    "uests\022).pandora.guild.v1.ListJoinRequest"
-    "sRequest\032*.pandora.guild.v1.ListJoinRequ"
-    "estsResponse\022c\n\016GetPlayerGuild\022\'.pandora"
-    ".guild.v1.GetPlayerGuildRequest\032(.pandor"
-    "a.guild.v1.GetPlayerGuildResponseb\006proto"
-    "3"
+    "Ms\022$\n\016from_player_no\030\006 \001(\004R\014fromPlayerNo"
+    "\"9\n\022CreateGuildRequest\022\022\n\004name\030\002 \001(\tR\004na"
+    "meJ\004\010\001\020\002R\tplayer_id\"`\n\023CreateGuildRespon"
+    "se\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.Err"
+    "CodeR\004code\022\031\n\010guild_id\030\002 \001(\004R\007guildId\">\n"
+    "\020ApplyJoinRequest\022\031\n\010guild_id\030\002 \001(\004R\007gui"
+    "ldIdJ\004\010\001\020\002R\tplayer_id\"b\n\021ApplyJoinRespon"
+    "se\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.Err"
+    "CodeR\004code\022\035\n\nrequest_id\030\002 \001(\004R\trequestI"
+    "d\"D\n\022ApproveJoinRequest\022\035\n\nrequest_id\030\002 "
+    "\001(\004R\trequestIdJ\004\010\001\020\002R\tplayer_id\"E\n\023Appro"
+    "veJoinResponse\022.\n\004code\030\001 \001(\0162\032.pandora.c"
+    "ommon.v1.ErrCodeR\004code\"C\n\021RejectJoinRequ"
+    "est\022\035\n\nrequest_id\030\002 \001(\004R\trequestIdJ\004\010\001\020\002"
+    "R\tplayer_id\"D\n\022RejectJoinResponse\022.\n\004cod"
+    "e\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004cod"
+    "e\"$\n\021LeaveGuildRequestJ\004\010\001\020\002R\tplayer_id\""
+    "D\n\022LeaveGuildResponse\022.\n\004code\030\001 \001(\0162\032.pa"
+    "ndora.common.v1.ErrCodeR\004code\"A\n\021KickMem"
+    "berRequest\022\033\n\ttarget_id\030\002 \001(\004R\010targetIdJ"
+    "\004\010\001\020\002R\tplayer_id\"D\n\022KickMemberResponse\022."
+    "\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCode"
+    "R\004code\"&\n\023DisbandGuildRequestJ\004\010\001\020\002R\tpla"
+    "yer_id\"F\n\024DisbandGuildResponse\022.\n\004code\030\001"
+    " \001(\0162\032.pandora.common.v1.ErrCodeR\004code\"E"
+    "\n\025TransferLeaderRequest\022\033\n\ttarget_id\030\002 \001"
+    "(\004R\010targetIdJ\004\010\001\020\002R\tplayer_id\"H\n\026Transfe"
+    "rLeaderResponse\022.\n\004code\030\001 \001(\0162\032.pandora."
+    "common.v1.ErrCodeR\004code\"`\n\021SetOfficerReq"
+    "uest\022\033\n\ttarget_id\030\002 \001(\004R\010targetId\022\035\n\nis_"
+    "officer\030\003 \001(\010R\tisOfficerJ\004\010\001\020\002R\tplayer_i"
+    "d\"D\n\022SetOfficerResponse\022.\n\004code\030\001 \001(\0162\032."
+    "pandora.common.v1.ErrCodeR\004code\",\n\017GetGu"
+    "ildRequest\022\031\n\010guild_id\030\001 \001(\004R\007guildId\"q\n"
+    "\020GetGuildResponse\022.\n\004code\030\001 \001(\0162\032.pandor"
+    "a.common.v1.ErrCodeR\004code\022-\n\005guild\030\002 \001(\013"
+    "2\027.pandora.guild.v1.GuildR\005guild\"$\n\021GetM"
+    "yGuildRequestJ\004\010\001\020\002R\tplayer_id\"s\n\022GetMyG"
+    "uildResponse\022.\n\004code\030\001 \001(\0162\032.pandora.com"
+    "mon.v1.ErrCodeR\004code\022-\n\005guild\030\002 \001(\0132\027.pa"
+    "ndora.guild.v1.GuildR\005guild\"]\n\022ListMembe"
+    "rsRequest\022\031\n\010guild_id\030\001 \001(\004R\007guildId\022\026\n\006"
+    "cursor\030\002 \001(\004R\006cursor\022\024\n\005limit\030\003 \001(\005R\005lim"
+    "it\"\237\001\n\023ListMembersResponse\022.\n\004code\030\001 \001(\016"
+    "2\032.pandora.common.v1.ErrCodeR\004code\0227\n\007me"
+    "mbers\030\002 \003(\0132\035.pandora.guild.v1.GuildMemb"
+    "erR\007members\022\037\n\013next_cursor\030\003 \001(\004R\nnextCu"
+    "rsor\"X\n\027ListJoinRequestsRequest\022\026\n\006curso"
+    "r\030\002 \001(\004R\006cursor\022\024\n\005limit\030\003 \001(\005R\005limitJ\004\010"
+    "\001\020\002R\tplayer_id\"\253\001\n\030ListJoinRequestsRespo"
+    "nse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.Er"
+    "rCodeR\004code\022>\n\010requests\030\002 \003(\0132\".pandora."
+    "guild.v1.GuildJoinRequestR\010requests\022\037\n\013n"
+    "ext_cursor\030\003 \001(\004R\nnextCursor\"\271\001\n\nGuildEv"
+    "ent\0224\n\004type\030\001 \001(\0162 .pandora.guild.v1.Gui"
+    "ldEventTypeR\004type\022\031\n\010guild_id\030\002 \001(\004R\007gui"
+    "ldId\022 \n\014to_player_id\030\003 \001(\004R\ntoPlayerId\022\031"
+    "\n\010actor_id\030\004 \001(\004R\007actorId\022\035\n\nguild_name\030"
+    "\005 \001(\tR\tguildName\"4\n\025GetPlayerGuildReques"
+    "t\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\"\200\001\n\026GetPl"
+    "ayerGuildResponse\022.\n\004code\030\001 \001(\0162\032.pandor"
+    "a.common.v1.ErrCodeR\004code\022\033\n\thas_guild\030\002"
+    " \001(\010R\010hasGuild\022\031\n\010guild_id\030\003 \001(\004R\007guildI"
+    "d*m\n\tGuildRole\022\032\n\026GUILD_ROLE_UNSPECIFIED"
+    "\020\000\022\025\n\021GUILD_ROLE_LEADER\020\001\022\026\n\022GUILD_ROLE_"
+    "OFFICER\020\002\022\025\n\021GUILD_ROLE_MEMBER\020\003*\223\001\n\017Gui"
+    "ldJoinStatus\022!\n\035GUILD_JOIN_STATUS_UNSPEC"
+    "IFIED\020\000\022\035\n\031GUILD_JOIN_STATUS_PENDING\020\001\022\036"
+    "\n\032GUILD_JOIN_STATUS_APPROVED\020\002\022\036\n\032GUILD_"
+    "JOIN_STATUS_REJECTED\020\003*\377\001\n\016GuildEventTyp"
+    "e\022 \n\034GUILD_EVENT_TYPE_UNSPECIFIED\020\000\022!\n\035G"
+    "UILD_EVENT_TYPE_JOIN_APPLIED\020\001\022\"\n\036GUILD_"
+    "EVENT_TYPE_JOIN_APPROVED\020\002\022\"\n\036GUILD_EVEN"
+    "T_TYPE_JOIN_REJECTED\020\003\022\033\n\027GUILD_EVENT_TY"
+    "PE_KICKED\020\004\022\036\n\032GUILD_EVENT_TYPE_DISBANDE"
+    "D\020\005\022#\n\037GUILD_EVENT_TYPE_LEADER_CHANGED\020\006"
+    "2\234\n\n\014GuildService\022Z\n\013CreateGuild\022$.pando"
+    "ra.guild.v1.CreateGuildRequest\032%.pandora"
+    ".guild.v1.CreateGuildResponse\022T\n\tApplyJo"
+    "in\022\".pandora.guild.v1.ApplyJoinRequest\032#"
+    ".pandora.guild.v1.ApplyJoinResponse\022Z\n\013A"
+    "pproveJoin\022$.pandora.guild.v1.ApproveJoi"
+    "nRequest\032%.pandora.guild.v1.ApproveJoinR"
+    "esponse\022W\n\nRejectJoin\022#.pandora.guild.v1"
+    ".RejectJoinRequest\032$.pandora.guild.v1.Re"
+    "jectJoinResponse\022W\n\nLeaveGuild\022#.pandora"
+    ".guild.v1.LeaveGuildRequest\032$.pandora.gu"
+    "ild.v1.LeaveGuildResponse\022W\n\nKickMember\022"
+    "#.pandora.guild.v1.KickMemberRequest\032$.p"
+    "andora.guild.v1.KickMemberResponse\022]\n\014Di"
+    "sbandGuild\022%.pandora.guild.v1.DisbandGui"
+    "ldRequest\032&.pandora.guild.v1.DisbandGuil"
+    "dResponse\022c\n\016TransferLeader\022\'.pandora.gu"
+    "ild.v1.TransferLeaderRequest\032(.pandora.g"
+    "uild.v1.TransferLeaderResponse\022W\n\nSetOff"
+    "icer\022#.pandora.guild.v1.SetOfficerReques"
+    "t\032$.pandora.guild.v1.SetOfficerResponse\022"
+    "Q\n\010GetGuild\022!.pandora.guild.v1.GetGuildR"
+    "equest\032\".pandora.guild.v1.GetGuildRespon"
+    "se\022W\n\nGetMyGuild\022#.pandora.guild.v1.GetM"
+    "yGuildRequest\032$.pandora.guild.v1.GetMyGu"
+    "ildResponse\022Z\n\013ListMembers\022$.pandora.gui"
+    "ld.v1.ListMembersRequest\032%.pandora.guild"
+    ".v1.ListMembersResponse\022i\n\020ListJoinReque"
+    "sts\022).pandora.guild.v1.ListJoinRequestsR"
+    "equest\032*.pandora.guild.v1.ListJoinReques"
+    "tsResponse\022c\n\016GetPlayerGuild\022\'.pandora.g"
+    "uild.v1.GetPlayerGuildRequest\032(.pandora."
+    "guild.v1.GetPlayerGuildResponseb\006proto3"
 };
 static const ::_pbi::DescriptorTable* PROTOBUF_NONNULL const
     descriptor_table_pandora_2fguild_2fv1_2fguild_2eproto_deps[1] = {
@@ -5264,7 +5272,7 @@ static ::absl::once_flag descriptor_table_pandora_2fguild_2fv1_2fguild_2eproto_o
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_pandora_2fguild_2fv1_2fguild_2eproto = {
     false,
     false,
-    4921,
+    4959,
     descriptor_table_protodef_pandora_2fguild_2fv1_2fguild_2eproto,
     "pandora/guild/v1/guild.proto",
     &descriptor_table_pandora_2fguild_2fv1_2fguild_2eproto_once,
@@ -5988,9 +5996,9 @@ GuildJoinRequest::GuildJoinRequest(
                offsetof(Impl_, request_id_),
            reinterpret_cast<const char*>(&from._impl_) +
                offsetof(Impl_, request_id_),
-           offsetof(Impl_, created_ms_) -
+           offsetof(Impl_, from_player_no_) -
                offsetof(Impl_, request_id_) +
-               sizeof(Impl_::created_ms_));
+               sizeof(Impl_::from_player_no_));
 
   // @@protoc_insertion_point(copy_constructor:pandora.guild.v1.GuildJoinRequest)
 }
@@ -6005,9 +6013,9 @@ inline void GuildJoinRequest::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) 
   ::memset(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, request_id_),
            0,
-           offsetof(Impl_, created_ms_) -
+           offsetof(Impl_, from_player_no_) -
                offsetof(Impl_, request_id_) +
-               sizeof(Impl_::created_ms_));
+               sizeof(Impl_::from_player_no_));
 }
 GuildJoinRequest::~GuildJoinRequest() {
   // @@protoc_insertion_point(destructor:pandora.guild.v1.GuildJoinRequest)
@@ -6061,10 +6069,10 @@ PROTOBUF_NOINLINE void GuildJoinRequest::Clear() {
   if (CheckHasBit(cached_has_bits, 0x00000001U)) {
     _impl_.from_nickname_.ClearNonDefaultToEmpty();
   }
-  if (BatchCheckHasBit(cached_has_bits, 0x0000001eU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000003eU)) {
     ::memset(&_impl_.request_id_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.created_ms_) -
-        reinterpret_cast<char*>(&_impl_.request_id_)) + sizeof(_impl_.created_ms_));
+        reinterpret_cast<char*>(&_impl_.from_player_no_) -
+        reinterpret_cast<char*>(&_impl_.request_id_)) + sizeof(_impl_.from_player_no_));
   }
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
@@ -6135,6 +6143,15 @@ PROTOBUF_NOINLINE void GuildJoinRequest::Clear() {
     }
   }
 
+  // uint64 from_player_no = 6 [json_name = "fromPlayerNo"];
+  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+    if (this_._internal_from_player_no() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          6, this_._internal_from_player_no(), target);
+    }
+  }
+
   if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
     target =
         ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
@@ -6160,7 +6177,7 @@ PROTOBUF_NOINLINE void GuildJoinRequest::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
     // string from_nickname = 4 [json_name = "fromNickname"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (!this_._internal_from_nickname().empty()) {
@@ -6196,6 +6213,13 @@ PROTOBUF_NOINLINE void GuildJoinRequest::Clear() {
             this_._internal_created_ms());
       }
     }
+    // uint64 from_player_no = 6 [json_name = "fromPlayerNo"];
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+      if (this_._internal_from_player_no() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
+            this_._internal_from_player_no());
+      }
+    }
   }
   return this_.MaybeComputeUnknownFieldsSize(total_size,
                                              &this_._impl_._cached_size_);
@@ -6214,7 +6238,7 @@ void GuildJoinRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (!from._internal_from_nickname().empty()) {
         _this->_internal_set_from_nickname(from._internal_from_nickname());
@@ -6244,6 +6268,11 @@ void GuildJoinRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
         _this->_impl_.created_ms_ = from._impl_.created_ms_;
       }
     }
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+      if (from._internal_from_player_no() != 0) {
+        _this->_impl_.from_player_no_ = from._impl_.from_player_no_;
+      }
+    }
   }
   _this->_impl_._has_bits_[0] |= cached_has_bits;
   _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
@@ -6266,8 +6295,8 @@ void GuildJoinRequest::InternalSwap(GuildJoinRequest* PROTOBUF_RESTRICT PROTOBUF
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.from_nickname_, &other->_impl_.from_nickname_, arena);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(GuildJoinRequest, _impl_.created_ms_)
-      + sizeof(GuildJoinRequest::_impl_.created_ms_)
+      PROTOBUF_FIELD_OFFSET(GuildJoinRequest, _impl_.from_player_no_)
+      + sizeof(GuildJoinRequest::_impl_.from_player_no_)
       - PROTOBUF_FIELD_OFFSET(GuildJoinRequest, _impl_.request_id_)>(
           reinterpret_cast<char*>(&_impl_.request_id_),
           reinterpret_cast<char*>(&other->_impl_.request_id_));

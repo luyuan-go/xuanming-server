@@ -73,6 +73,18 @@ RPC_CANCELED = Counter(
     # 弱网 / 高峰时把真正的未捕获异常淹掉。
     ["service", "method"],
 )
+RATELIMIT_DROPPED = Counter(
+    "pandora_ratelimit_dropped_total",
+    "BBR 自适应限流丢弃的请求数",
+    # 被丢的请求同时也会计进 pandora_rpc_total{code=resource_exhausted}
+    # (RateLimit 拦截器在 Observability 内层,与 Go 侧链序一致)。但那个 label
+    # 混着**所有**来源的 RESOURCE_EXHAUSTED —— 出事时第一个问题是"到底是不是
+    # BBR 在丢",拿混合曲线答不了,所以这里单独计一份归因明确的。
+    #
+    # 只计数、不打日志:过载时每丢一条就写一行日志,等于在最不该增加负载的时刻
+    # 给进程加 I/O,会把 BBR 本身变成放大器。Go 侧同样一行日志都不打。
+    ["service", "method"],
+)
 
 
 # ── 运行时标识 ──────────────────────────────────────────────────────────────

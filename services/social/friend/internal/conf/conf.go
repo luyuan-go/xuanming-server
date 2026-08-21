@@ -2,10 +2,12 @@
 package conf
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/luyuancpp/pandora/pkg/config"
 	"github.com/luyuancpp/pandora/pkg/dbguard"
+	"github.com/luyuancpp/pandora/pkg/internalrpcauth"
 )
 
 // Config 是 friend 服务的完整配置。
@@ -38,6 +40,15 @@ type FriendConf struct {
 	// LocatorAddr player_locator gRPC 地址(host:port)。
 	// 空 → ListFriends 不查在线状态(is_online 全 false,弱依赖)。
 	LocatorAddr string `yaml:"locator_addr,omitempty" json:"locator_addr,omitempty"`
+
+	// PlayerNameResolver* / PlayerNoResolver* 分别是 friend→player 与
+	// friend→login 的公开展示投影。两个 authority 使用独立 HMAC key。
+	PlayerNameResolverAddr         string `yaml:"player_name_resolver_addr,omitempty" json:"player_name_resolver_addr,omitempty"`
+	PlayerNameResolverAuthSecret   string `yaml:"player_name_resolver_auth_secret,omitempty" json:"player_name_resolver_auth_secret,omitempty"`
+	PlayerNameResolverAuthAudience string `yaml:"player_name_resolver_auth_audience,omitempty" json:"player_name_resolver_auth_audience,omitempty"`
+	PlayerNoResolverAddr           string `yaml:"player_no_resolver_addr,omitempty" json:"player_no_resolver_addr,omitempty"`
+	PlayerNoResolverAuthSecret     string `yaml:"player_no_resolver_auth_secret,omitempty" json:"player_no_resolver_auth_secret,omitempty"`
+	PlayerNoResolverAuthAudience   string `yaml:"player_no_resolver_auth_audience,omitempty" json:"player_no_resolver_auth_audience,omitempty"`
 
 	// RecommendLimit 单次推荐好友数量(默认 10,硬上限 20,超界收敛到 20)。
 	RecommendLimit int `yaml:"recommend_limit,omitempty" json:"recommend_limit,omitempty"`
@@ -103,12 +114,54 @@ func (c *Config) Defaults() {
 	if c.Friend.PairGuardRetentionDays <= 0 {
 		c.Friend.PairGuardRetentionDays = 30
 	}
+	if c.Friend.PlayerNameResolverAddr != "" && c.Friend.PlayerNameResolverAuthAudience == "" {
+		c.Friend.PlayerNameResolverAuthAudience = "player:name"
+	}
+	if c.Friend.PlayerNoResolverAddr != "" && c.Friend.PlayerNoResolverAuthAudience == "" {
+		c.Friend.PlayerNoResolverAuthAudience = "login:player-no"
+	}
 	if c.Server.Grpc.Addr == "" {
 		c.Server.Grpc.Addr = ":20004"
 	}
 	if c.Server.Http.Addr == "" {
 		c.Server.Http.Addr = ":21004"
 	}
+}
+
+// ValidatePlayerDisplayResolvers 防止弱依赖配置不完整，导致运行时所有申请行静默降级。
+func (c *Config) ValidatePlayerDisplayResolvers() error {
+	if err := validateResolver("friend.player_name_resolver", c.Friend.PlayerNameResolverAddr,
+		c.Friend.PlayerNameResolverAuthSecret, c.Friend.PlayerNameResolverAuthAudience); err != nil {
+		return err
+	}
+	if err := validateResolver("friend.player_no_resolver", c.Friend.PlayerNoResolverAddr,
+		c.Friend.PlayerNoResolverAuthSecret, c.Friend.PlayerNoResolverAuthAudience); err != nil {
+		return err
+	}
+	if c.Friend.PlayerNameResolverAddr != "" && c.Friend.PlayerNoResolverAddr != "" &&
+		c.Friend.PlayerNameResolverAuthSecret == c.Friend.PlayerNoResolverAuthSecret {
+		return fmt.Errorf("friend.player_name_resolver_auth_secret must differ from friend.player_no_resolver_auth_secret")
+	}
+	return nil
+}
+
+func validateResolver(prefix, addr, secret, audience string) error {
+	if addr == "" {
+		if secret != "" {
+			return fmt.Errorf("%s_auth_secret requires %s_addr", prefix, prefix)
+		}
+		if audience != "" {
+			return fmt.Errorf("%s_auth_audience requires %s_addr", prefix, prefix)
+		}
+		return nil
+	}
+	if err := internalrpcauth.ValidateSecret(secret); err != nil {
+		return fmt.Errorf("%s_auth_secret: %w", prefix, err)
+	}
+	if err := internalrpcauth.ValidateIdentity(audience); err != nil {
+		return fmt.Errorf("%s_auth_audience: %w", prefix, err)
+	}
+	return nil
 }
 
 // RetentionMode 返回生效的保留期清理模式(默认 ModeReportOnly = 只报告不删)。

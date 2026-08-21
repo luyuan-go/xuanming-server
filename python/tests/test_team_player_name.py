@@ -394,9 +394,21 @@ def test_player_name_resolver_config_defaults_and_fails_closed() -> None:
 
     player_cfg = pconf.Config()
     player_cfg.player.player_name_resolve_auth_secret = AUTH_SECRET
+    # ★ 配了内部 RPC 鉴权就必须有 Redis 重放权威 —— 验签靠 nonce 去重挡重放,
+    # 没有共享 Redis 时多副本各记各的,同一个签名在别的副本上照样能重放一次。
+    # 这条在 conf.validate_player_name_resolver 里是 fail-closed 的,所以最小可用
+    # 配置**必须**含 redis;不给就等于在测一个真实跑不起来的组合。
+    player_cfg.node.redis_client.host = "127.0.0.1:6379"
     player_cfg.apply_defaults()
     player_cfg.validate_player_name_resolver()
     assert player_cfg.player.player_name_resolve_auth_audience == "player:name"
+
+    # 反向钉住上面那条规则本身:有鉴权、没 Redis → 必须拒。
+    no_replay = pconf.Config()
+    no_replay.player.player_name_resolve_auth_secret = AUTH_SECRET
+    no_replay.apply_defaults()
+    with pytest.raises(ValueError, match="replay authority"):
+        no_replay.validate_player_name_resolver()
 
     dangling_team = tconf.Config()
     dangling_team.team.player_name_resolver_auth_audience = "player:name"

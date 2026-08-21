@@ -565,10 +565,19 @@ owner 用它**拒**带玩家 JWT 的调用。同一个符号，两种相反的�
 ### 5.4 复跑校验命令
 
 **跨实现对拍**（推进剩下 19 个服务的主循环，不是可选步骤）：
-探针与完整说明在 `python/tools/parity/`（`README.md` + `probe_dialogue.py` + `probe_owner.py`）。
+探针与完整说明在 `python/tools/parity/`。现有 7 份：`probe_owner.py`、`probe_dialogue.py`、
+`probe_login.py`、`probe_mission.py`、`probe_auction.py`，以及 2026-08-21 新增的
+`probe_hub.py`（hub_allocator，36 场景）与 `probe_ds.py`（ds_allocator，43 场景）。
 那份 README 里有起服务的准确命令（**工作目录必须是服务目录**，配表与 DSN 的相对路径
 都相对进程 cwd 解析）、Go 版起到错开端口的做法，以及四条写探针的规矩。
 2026-08-19 抓到的 7 条缺陷全部来自这一步，没有一条是单元测试能发现的。
+
+两个 allocator 探针都**必须把两侧 `mode` 改成 `"mock"`**：`dev` 默认 `local`，
+会真去 exec Windows DS 进程，两个实现各起一份、端口互抢，diff 里全是与实现无关的噪声。
+它们各自还踩到一条新坑，已写进 README：hub 的分片镜像按 **pod 名**建行（不按 player_id
+分区，只分段挡不住跨运行污染，解法是打相对基线的**增量**而不是把人数盖掉）；
+ds 的分配是**一次性资源占用**（每条场景必须用自己的 `match_id`，复用则全部落进
+`allocate_idempotent_hit` 快路径，diff 零但什么都没验）。
 
 **单元测试**：
 
@@ -650,7 +659,7 @@ TiDB 版本与排序规则**行为探针**、fence 租约抢占……），业�
 |---|---:|---|---|---|
 | `safego` | 120 | 33 / 19 | **本轮已补** | 见 §5.2.3 ⑧ |
 | `sessiongate` | 95 | 28 / **14** | **零** | 13 个服务在 `internal/server/grpc.go` 里挂 `pmw.SessionCurrent`。缺了 = 顶号后的旧 JWT 在 exp 前（默认 24h）**仍保有全部按 player_id 定向的能力**（好友申请 / 交易 / 背包），正是 INC-20260722-004 的形状，且**完全静默**。⚠️ **第 14 处是 push，形态不同**：`Subscribe` 是 server stream，Kratos 的 unary 中间件链**对它一律不生效**，Go 是在 service 层手写补齐的（`service/push.go:66-104` + `biz/push.go:145-211`，含 30s 看门狗与 `sessionFailClose=3`）。迁 push 的人去找中间件会找不到 |
-| `cellroute` | 767 | 16 / 13 | 有表实现、**无装配入口** | yaml 配了 `cell_route` 段时 Python 静默按单 Cell 跑 |
+| `cellroute` | 767 | 16 / 13 | **已补齐装配层**(2026-08-20) | 见 §6.4「仍未做」表的更新说明 |
 | `internalrpcauth` | 442 | 13 / 4 | **零** | 东西向 RPC 的 HMAC 签名（绑 caller+method+subject+ts+nonce）。签名对不上是响亮的；**漏掉 nonce 消费**则重放保护静默消失 |
 | `kafkax` 的 producer/consumer/topics | 898 | — / 12 | **只迁了一致性哈希** | 见 §6.1.2 |
 | `releasetrack` | 48 | 11 / 2 | **零** | sha256 cohort 选择必须跨语言逐位一致，否则同一玩家在 Go 副本判 canary、Python 副本判 stable。只被两个 allocator 用，随 allocator 的档期 |
@@ -800,15 +809,42 @@ writerlease 的选举/激活超时/无主告警三条故障注入，再落码。
 | Kill-Switch 没接进拦截器链 | 新增 `KillSwitchInterceptor`，且**挡在业务 handler 之前**（跑完再丢弃结果等于没关）。健康检查豁免——挡住它等于把整个 Pod 从 Endpoints 摘掉 |
 | Kill-Switch 只做精确匹配 | 补 `*` / `<service>/*` / `feature/<名>` 三级，与 Go 的判定顺序逐级一致；feature 组按**代码注册的成员**展开，重复注册合并而非覆盖 |
 | `grpc.timeout` 解析了不生效 | 新增 `TimeoutInterceptor`，与客户端 deadline 取更短者，超时回 `DEADLINE_EXCEEDED` |
-| `GrpcConf` 静默丢弃两个字段 | `max_conn_age_grace` 显式建模并映射到 grpc option；`enable_rate_limit` 建模后**启动即 fail-fast**——Python 侧没有 BBR，配着 true 却没有过载保护比"没这功能"糟糕得多 |
+| `GrpcConf` 静默丢弃两个字段 | `max_conn_age_grace` 显式建模并映射到 grpc option；`enable_rate_limit` 曾建模后**启动即 fail-fast**（当时 Python 侧没有 BBR，配着 true 却没有过载保护比"没这功能"糟糕得多）。**2026-08-21 起该 fail-fast 已撤销**：`pandorapy/bbr.py` 补齐自适应限流，`build_grpc_server` 按开关插 `RateLimitInterceptor`，详见下方"④ BBR 自适应限流"|
 | 指标名与 Go 不相交 | 改成 `pandora_rpc_total` / `pandora_rpc_duration_seconds`，label 与分桶逐值对齐（桶不一致 = 两栈 P99 不可比）。业务 errcode 维度另开 `pandora_rpc_inband_total`（Go 只把它打进日志） |
+
+**④ BBR 自适应限流（2026-08-21）**
+
+`enable_rate_limit` 不是可选项：`tools/scripts/gen_cluster_config.ps1 -Prod` 对
+**14 个服务**（12 个 unary session-gate + `login` + `push`）机械强制写 `true`，
+带 FATAL 校验和契约测试 `gen_cluster_prod_ratelimit_contract_test.ps1`。
+所以在原先的 fail-fast 语义下，这 14 个服务在 Python 栈上**生产配置直接起不来** ——
+这是硬切换阻塞项，不是"锦上添花"。
+
+**为什么手抄而不是用库**（CLAUDE.md §15.1 标准能力优先，先查证过）：
+
+- GitHub 仓库搜索 `python adaptive concurrency limit load shedding` 与
+  `BBR rate limit python` 均返回 **0 个仓库**。
+- `go-kratos/aegis`（BBR 原版，239★）Go 98.9%，最后一次 release 在三年前；
+  `Netflix/concurrency-limits`（3.6k★）是 **Java 100%**。
+- Python 侧星最多的几个 —— slowapi(2.0k★，本身只是 wrapper，"实际限流工作由
+  limits 完成")、aiolimiter(775★，漏桶)、limits(642★，固定/滑动窗)、
+  PyrateLimiter(515★，漏桶) —— **全部是"按 key 配阈值的配额执行器"**，
+  与"按机器实时负载自适应丢弃"是两类东西，替代不了。
+
+**唯一一处刻意与 Go 不同**：信号源。Go 版读 cgroup CPU 使用率；Python 版换成
+**事件循环线程的饱和度**（`time.thread_time()` 增量 / 墙钟增量）。原因是
+asyncio 单线程跑满时，4 核容器的 cgroup CPU 只有 ≈250‰，永远碰不到 800 阈值 ——
+照抄的话这个限流器**在最需要它的时候恒不触发**。这一条写在 `bbr.py` 模块 docstring 里。
+
+第二处刻意分叉：Go 的 `minRT` 在空窗口时算 `int64(math.Ceil(math.MaxFloat64))`
+（未定义行为）；Python 显式返回 1 并注释说明，不复制 UB。
 
 **③ 接线缺口**
 
 - `snowflake_etcd` 接进 dialogue main（`node_id_source` 二选一，失租 `os._exit(1)`），并从**零测试**补到 8 条真 etcd 用例。
 - `trade` 的 Noop 账本闸从"Go 的 main.go 里"下沉到 `TradeUsecase.__init__` —— Python 侧 trade 没有 main，那句 docstring 曾是一句不成立的承诺。现在忘记接账本在结构上不可能通过。
 - 移植 `redisx` 的限流原语（`Quota` / `ActionQuota` / `Cooldown` / `ArmPenalty`），trade 的 `rate_quota_per_min` 从此有可注入实现。
-- `cell_route.mode` 非空时**拒绝启动**（此前静默按单 Cell 跑，与配置意图不符且零信号）。
+- `cell_route.mode` 非空时按 Go 的同一判据校验(2026-08-20 起已补齐装配层,`static` / `etcd` 都能真正建 Router;只有非法 / 未知 mode 才拒启)。
 - `auth` 补 TTL ≥ 1s 启动闸 + `AdditionalSecrets`（不停服密钥轮换的载体），并把"过期 / 非法"拆成两个错误码——合成一个之后客户端只能一律重试，密钥配错那天会变成全量重试风暴。
 - `proto_gen.ps1` 加生成 Python stub —— 此前改完 proto 只重生成 Go，Python 侧还在用旧 stub（加字段读不到、改字段号**串字段**，而 CI 跑旧 stub 照样全绿）。
 
@@ -824,7 +860,8 @@ writerlease 的选举/激活超时/无主告警三条故障注入，再落码。
 
 | 项 | 现状与影响 |
 |---|---|
-| **cellroute 装配本体** | 静态表、路由算法、均衡铺表都有且有测试；缺 `BuildRouter` 按 mode 装配、keyspace 分片、表热更、etcdtable 源。**已不再静默出错**（配了 `cell_route.mode` 才拒启），但要用多 Cell 仍须先做完这层 |
+| ~~**cellroute 装配本体**~~ | **已完成(2026-08-20)**:`cellroute.build_router`(off/static/etcd 三分支)、`FullLocation` / `in_cell_shard` / `cell_tag` keyspace 分片、`AtomicTable` + `encode_entry` / `decode_entries` 表热更编解码、`cellroute_etcd`(全量 Get 铺初始表 + watch 整表替换)。`config.BaseConf` 正式建模 `cell_route` 字段,校验统一走 `RouterConfig.validate_mode`;push 的 cell 归属毒丸闸已按 Go 同位接线。测试 `tests/test_cellroute.py`(34 条)+ `tests/test_push_service.py` 的 6 条归属用例,毒丸闸已做变异验证 |
+| ~~**cellroute 在 friend / player / data_service 的接线**~~ | **已完成(2026-08-20)**:三处 `main.py` 都在建完 usecase 之后调 `cellroute_etcd.build_router` 并注入(对应 Go 的 `etcdtable.WireRouter`),watcher 在 `finally` 关。补齐了 Go 的两处观测:`pandorapy/services/friend/sharding.py`(幂等键口径 `accept_idempotency_key` / `edge_build_key` + 落点判定 + `friend_edge_sharding` 日志)与 player 的 `_log_profile_placement`(`profile_placement`,接在 `update_mmr` 成功之后)。测试 `tests/test_friend_sharding.py`(20 条,`edge_build_key` 已做变异验证) |
 | **Grafana 面板不入库** | 仓库里只有告警规则与数据源，**没有 dashboards 目录**。指标侧的机制已补齐（`pandora_runtime_info{runtime="python"}`，面板按 instance join 即可分栈），但面板 JSON 本身没有写——照着别人现有的看板猜面板属于臆造，需要人拍板做哪几块 |
 | **`snowflake_etcd` 只接了 dialogue** | 不是遗漏:其余 19 个服务**还没有 main.py**，无处可接。谁写下一个 main，照 dialogue 那段抄即可 |
 

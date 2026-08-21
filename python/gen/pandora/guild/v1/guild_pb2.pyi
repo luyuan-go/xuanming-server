@@ -75,18 +75,20 @@ class Guild(_message.Message):
     def __init__(self, guild_id: _Optional[int] = ..., name: _Optional[str] = ..., leader_id: _Optional[int] = ..., member_count: _Optional[int] = ..., max_members: _Optional[int] = ..., created_ms: _Optional[int] = ...) -> None: ...
 
 class GuildJoinRequest(_message.Message):
-    __slots__ = ("request_id", "guild_id", "from_player_id", "from_nickname", "created_ms")
+    __slots__ = ("request_id", "guild_id", "from_player_id", "from_nickname", "created_ms", "from_player_no")
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     GUILD_ID_FIELD_NUMBER: _ClassVar[int]
     FROM_PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
     FROM_NICKNAME_FIELD_NUMBER: _ClassVar[int]
     CREATED_MS_FIELD_NUMBER: _ClassVar[int]
+    FROM_PLAYER_NO_FIELD_NUMBER: _ClassVar[int]
     request_id: int
     guild_id: int
     from_player_id: int
     from_nickname: str
     created_ms: int
-    def __init__(self, request_id: _Optional[int] = ..., guild_id: _Optional[int] = ..., from_player_id: _Optional[int] = ..., from_nickname: _Optional[str] = ..., created_ms: _Optional[int] = ...) -> None: ...
+    from_player_no: int
+    def __init__(self, request_id: _Optional[int] = ..., guild_id: _Optional[int] = ..., from_player_id: _Optional[int] = ..., from_nickname: _Optional[str] = ..., created_ms: _Optional[int] = ..., from_player_no: _Optional[int] = ...) -> None: ...
 
 class CreateGuildRequest(_message.Message):
     __slots__ = ("name",)

@@ -24,8 +24,10 @@ Git 只跟踪本说明。策划 SVN 的同一路径由发布维护者放入两�
 CA 私钥只留在内部 PKI；SVN 仅分发公开 CA 证书。`endpoint.host` 必须出现在服务端证书
 SAN 中，并与 `tls_server_name` 完全一致。
 
-目录存在且两个文件都通过校验时，一键启动选择 `central-managed`，绝不回落本机 MySQL；
-目录或配置不存在时 Git 开发工作区继续使用既有 `local-owned`。中心模式首次双击只要求输入
+目录存在且两个文件都通过校验时，策划一键启动选择 `central-managed`，绝不回落本机 MySQL；
+从未登记过中心 workspace 的机器缺少配置时继续使用既有 `local-owned`。一旦已有 central applied
+state、runtime profile 或 workspace identity，bundle 丢失会 fail-closed，禁止断网/漏包后切到另一套
+本机数据。中心模式首次双击只要求输入
 管理员另行交付的 43 字符一次性 enrollment code；成功后稳定 `workspace_id` 写入当前用户
 `%LOCALAPPDATA%\Pandora\planner-db\identity.json`，runtime 密码只以当前用户 DPAPI 密文保存。
 

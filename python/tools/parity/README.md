@@ -36,6 +36,49 @@ cd services/runtime/owner && sed -e 's/":20017"/":20117"/' -e 's/":21017"/":2111
 cd python && PYTHONUTF8=1 .venv/Scripts/python.exe tools/parity/probe_owner.py 20017 7300000 > /tmp/py.txt 2>&1 && PYTHONUTF8=1 .venv/Scripts/python.exe tools/parity/probe_owner.py 20117 7400000 > /tmp/go.txt 2>&1 && diff /tmp/py.txt /tmp/go.txt && echo "零差异"
 ```
 
+## hub_allocator（`probe_hub.py`，端口 20021/20121）
+
+⚠️ **必须把两侧的 `mode` 都改成 `"mock"`**（确定性假分片）。`dev` 默认是 `local`，
+会去 exec 一个真的 Windows Hub DS 进程；`agones` 需要 k8s。`mock` 是唯一能让两个实现
+看到**同一份分片拓扑**的模式，否则 diff 里全是"分片名不一样"的噪声。
+
+```bash
+cd services/battle/hub_allocator && sed -e 's/^mode: "local"/mode: "mock"/' -e 's/":20021"/":20121"/' -e 's/":21021"/":21121"/' etc/hub_allocator-dev.yaml > etc/hub_allocator-diffport.yaml
+```
+
+Python 侧同样要一份只改 `mode` 的副本。跑：
+
+```bash
+cd python && PYTHONUTF8=1 .venv/Scripts/python.exe tools/parity/probe_hub.py 20021 7500000 > /tmp/py.txt 2>&1 && PYTHONUTF8=1 .venv/Scripts/python.exe tools/parity/probe_hub.py 20121 7600000 > /tmp/go.txt 2>&1 && diff /tmp/py.txt /tmp/go.txt && echo "零差异"
+```
+
+**它比 owner/dialogue 多踩的一个坑（规矩②的加强版）**：分片镜像
+`pandora:hub:shard:{pod}` 按 **pod 名**建行，**不按 player_id 分区** —— 只分 player_id
+段挡不住它，上一轮留下的 `player_count` 会被下一轮读到。但人数正是要验的东西，
+不能按规矩③盖掉。`probe_hub.py` 的做法是**打相对本次运行基线的增量**
+（`dump_hubs` 的 `count_delta`），并在收尾把自己占的名额全部 `ReleaseHub` 还回去
+（场景 36 断言全部回到 `+0`）。绝对起点的差异被消掉，记账正确性照样逐字节比。
+
+## ds_allocator（`probe_ds.py`，端口 20020/20120）
+
+同样**必须把两侧 `mode` 都改成 `"mock"`**（确定性假地址）。`dev` 默认 `local`，
+会真去 exec 一个 Windows DS 进程——两个实现各 exec 一份、端口互抢，
+diff 里全是"谁抢到端口"的噪声，与实现分叉无关。
+
+```bash
+cd services/battle/ds_allocator && sed -e 's/^mode: "local"/mode: "mock"/' -e 's/":20020"/":20120"/' -e 's/":21020"/":21120"/' etc/ds_allocator-dev.yaml > etc/ds_allocator-diffport.yaml
+```
+
+```bash
+cd python && PYTHONUTF8=1 .venv/Scripts/python.exe tools/parity/probe_ds.py 20020 7700000 > /tmp/py.txt 2>&1 && PYTHONUTF8=1 .venv/Scripts/python.exe tools/parity/probe_ds.py 20120 7800000 > /tmp/go.txt 2>&1 && diff /tmp/py.txt /tmp/go.txt && echo "零差异"
+```
+
+**它自己的坑（规矩①的另一种形态）**：分配是**一次性资源占用**，不像 owner 那样能反复重置。
+所以每条场景必须用**自己的 `match_id`**（`BASE + n`），不能复用——复用的话第二条起
+永远落在 `allocate_idempotent_hit` 快路径上，diff 是零但什么都没验。
+`ListBattles` 则不需要 hub 那套基线增量：`match_id` 本身就带段，
+`dump_battles` 直接按 `mine` 集合过滤掉别的运行留下的行即可。
+
 ## 四条写探针的规矩（每条都是踩出来的）
 
 **① 先证明"真的走到了目标分支"，再看 diff。**

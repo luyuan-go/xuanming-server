@@ -46,6 +46,10 @@ try {
         -TeamResumeAuthSecret 'prod-team-resume-auth-0123456789abcdef-012' `
         -PlayerNoResolveAuthSecret 'prod-player-no-resolve-auth-0123456789abcdef-013' `
         -PlayerNameResolveAuthSecret 'prod-player-name-resolve-auth-0123456789abcdef-014' `
+        -FriendPlayerNameResolveAuthSecret 'prod-friend-player-name-auth-0123456789abcdef-101' `
+        -FriendPlayerNoResolveAuthSecret 'prod-friend-player-no-auth-0123456789abcdef-102' `
+        -GuildPlayerNameResolveAuthSecret 'prod-guild-player-name-auth-0123456789abcdef-103' `
+        -GuildPlayerNoResolveAuthSecret 'prod-guild-player-no-auth-0123456789abcdef-104' `
         -AllocationAbortAuthSecret 'prod-allocation-abort-auth-0123456789abcdef-009' `
         -DsAuthMode enforce -DsAuthorityMode redis `
         -DsFenceEtcdEndpoints 'https://etcd.pandora.svc:2379' `

@@ -19,12 +19,15 @@ function Get-PandoraPlannerCentralMysqlBundlePath {
 }
 
 function Get-PandoraPlannerMysqlStartupMode {
-    param([Parameter(Mandatory)][string]$ProjectRoot)
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [string]$IdentityPath = ''
+    )
     $bundle = Get-PandoraPlannerCentralMysqlBundlePath -ProjectRoot $ProjectRoot
     if (Test-Path -LiteralPath $bundle -PathType Leaf) { return 'central-managed' }
 
-    # 策划双击入口只允许远端 workspace。发布包漏放 bundle 时必须在任何本机 MySQL
-    # 备料/启动之前阻断；普通开发者手动执行 start.ps1 -NoDocker 仍保留 local-owned。
+    # CMD 发现 bundle 后会锁定本轮 central 选择；若检查后文件消失，必须在任何本机
+    # MySQL 备料/启动之前阻断，不能因 TOCTOU 静默回落 local-owned。
     if ("$env:PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL" -ceq '1') {
         throw "策划一键启动要求远端中心数据库，但发布包缺少:$bundle；已拒绝启动本机 MySQL。请让发布维护者补齐 central-mysql.json 与公开 CA 证书"
     }
@@ -35,6 +38,19 @@ function Get-PandoraPlannerMysqlStartupMode {
     $applied = Get-PandoraServiceAppliedMysqlState -ProjectRoot $ProjectRoot
     if ($applied -and "$($applied.Mode)" -ceq 'central') {
         throw "本项目已登记 central MySQL applied state，但中心 bundle 缺失:$bundle；拒绝回退本机 MySQL"
+    }
+    if ([string]::IsNullOrWhiteSpace($IdentityPath)) {
+        $IdentityPath = Get-PandoraMysqlProfileDefaultIdentityPath
+    }
+    if (Test-Path -LiteralPath $IdentityPath) {
+        try {
+            $identity = Get-PandoraPlannerDbIdentity -IdentityPath $IdentityPath
+        } catch {
+            throw "本机已有不可解析的中心 workspace identity，但中心 bundle 缺失:$bundle；拒绝回退本机 MySQL。详情:$($_.Exception.Message)"
+        }
+        if ($identity) {
+            throw "本机已绑定中心 workspace identity=$($identity.workspace_id)，但中心 bundle 缺失:$bundle；拒绝回退本机 MySQL"
+        }
     }
     $profilePath = Get-PandoraMysqlProfileDefaultOutputPath -ProjectRoot $ProjectRoot
     if (Test-Path -LiteralPath $profilePath -PathType Leaf) {

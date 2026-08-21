@@ -81,6 +81,11 @@ param(
     # Team→Player ResolvePlayerNames 的独立服务身份 key。签名端 team 与验签端 player 必须同值，
     # 且不得复用 player-no、JWT、DS callback、placement、resume 或 allocation-abort 权限域。
     [string]$PlayerNameResolveAuthSecret = $env:PANDORA_PLAYER_NAME_RESOLVE_AUTH_SECRET,
+    # Friend/Guild 申请列表使用各自 caller 与独立 key，不能冒充 team 或彼此。
+    [string]$FriendPlayerNameResolveAuthSecret = $env:PANDORA_FRIEND_PLAYER_NAME_RESOLVE_AUTH_SECRET,
+    [string]$FriendPlayerNoResolveAuthSecret = $env:PANDORA_FRIEND_PLAYER_NO_RESOLVE_AUTH_SECRET,
+    [string]$GuildPlayerNameResolveAuthSecret = $env:PANDORA_GUILD_PLAYER_NAME_RESOLVE_AUTH_SECRET,
+    [string]$GuildPlayerNoResolveAuthSecret = $env:PANDORA_GUILD_PLAYER_NO_RESOLVE_AUTH_SECRET,
     # Matchmaker(PVP/PVE)→DS allocator AbortPreactiveBattle 的独立 payload-bound HMAC。
     # 该权限可物理删除精确 GameServer，绝不能与 JWT、DS callback、placement 或 resume 复用。
     [string]$AllocationAbortAuthSecret = $env:PANDORA_ALLOCATION_ABORT_AUTH_SECRET,
@@ -156,6 +161,10 @@ $DevMatchResumeAuthSecret = 'pandora-dev-match-resume-auth-key-v1!'
 $DevTeamResumeAuthSecret = 'pandora-dev-team-resume-auth-key-v1!'
 $DevPlayerNoResolveAuthSecret = 'pandora-dev-team-player-no-auth-key-v1!'
 $DevPlayerNameResolveAuthSecret = 'pandora-dev-team-player-name-auth-key-v1!'
+$DevFriendPlayerNameResolveAuthSecret = 'pandora-dev-friend-player-name-auth-key-v1!'
+$DevFriendPlayerNoResolveAuthSecret = 'pandora-dev-friend-player-no-auth-key-v1!'
+$DevGuildPlayerNameResolveAuthSecret = 'pandora-dev-guild-player-name-auth-key-v1!'
+$DevGuildPlayerNoResolveAuthSecret = 'pandora-dev-guild-player-no-auth-key-v1!'
 $DevAllocationAbortAuthSecret = 'pandora-dev-allocation-abort-auth-key-v1!'
 
 
@@ -359,6 +368,32 @@ $EffectivePlayerNoResolveAuthSecret = if ([string]::IsNullOrWhiteSpace($PlayerNo
     }
     $PlayerNoResolveAuthSecret
 }
+
+function Resolve-DisplayProjectionSecret {
+    param(
+        [string]$Value,
+        [string]$DevValue,
+        [string]$Flag,
+        [string]$EnvName,
+        [string]$Description
+    )
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        if ($Prod) {
+            throw "[FATAL] -Prod 必须提供 $Flag 或 $EnvName；$Description 不得携带公开 dev key。"
+        }
+        return $DevValue
+    }
+    if ([System.Text.Encoding]::UTF8.GetByteCount($Value) -lt 32) {
+        throw "[FATAL] $Flag 至少需要 32 字节。"
+    }
+    if ($Value -match '[\x00-\x1F\x7F-\x9F]') {
+        throw "[FATAL] $Flag 含控制字符，拒绝写入 YAML。"
+    }
+    if ($Prod -and $Value -ceq $DevValue) {
+        throw "[FATAL] -Prod 的 $Description service key 不能使用仓库公开 dev key。"
+    }
+    return $Value
+}
 $EffectivePlayerNameResolveAuthSecret = if ([string]::IsNullOrWhiteSpace($PlayerNameResolveAuthSecret)) {
     if ($Prod) {
         throw '[FATAL] -Prod 必须提供 -PlayerNameResolveAuthSecret 或 PANDORA_PLAYER_NAME_RESOLVE_AUTH_SECRET；Team→Player 玩家名字解析不得携带公开 dev key。'
@@ -376,6 +411,18 @@ $EffectivePlayerNameResolveAuthSecret = if ([string]::IsNullOrWhiteSpace($Player
     }
     $PlayerNameResolveAuthSecret
 }
+$EffectiveFriendPlayerNameResolveAuthSecret = Resolve-DisplayProjectionSecret `
+    $FriendPlayerNameResolveAuthSecret $DevFriendPlayerNameResolveAuthSecret `
+    '-FriendPlayerNameResolveAuthSecret' 'PANDORA_FRIEND_PLAYER_NAME_RESOLVE_AUTH_SECRET' 'Friend→Player name resolve'
+$EffectiveFriendPlayerNoResolveAuthSecret = Resolve-DisplayProjectionSecret `
+    $FriendPlayerNoResolveAuthSecret $DevFriendPlayerNoResolveAuthSecret `
+    '-FriendPlayerNoResolveAuthSecret' 'PANDORA_FRIEND_PLAYER_NO_RESOLVE_AUTH_SECRET' 'Friend→Login player-no resolve'
+$EffectiveGuildPlayerNameResolveAuthSecret = Resolve-DisplayProjectionSecret `
+    $GuildPlayerNameResolveAuthSecret $DevGuildPlayerNameResolveAuthSecret `
+    '-GuildPlayerNameResolveAuthSecret' 'PANDORA_GUILD_PLAYER_NAME_RESOLVE_AUTH_SECRET' 'Guild→Player name resolve'
+$EffectiveGuildPlayerNoResolveAuthSecret = Resolve-DisplayProjectionSecret `
+    $GuildPlayerNoResolveAuthSecret $DevGuildPlayerNoResolveAuthSecret `
+    '-GuildPlayerNoResolveAuthSecret' 'PANDORA_GUILD_PLAYER_NO_RESOLVE_AUTH_SECRET' 'Guild→Login player-no resolve'
 $EffectiveAllocationAbortAuthSecret = if ([string]::IsNullOrWhiteSpace($AllocationAbortAuthSecret)) {
     if ($Prod) {
         throw '[FATAL] -Prod 必须提供 -AllocationAbortAuthSecret 或 PANDORA_ALLOCATION_ABORT_AUTH_SECRET；未入场 GameServer 销毁 RPC 不得使用公开 dev key。'
@@ -407,6 +454,10 @@ $allAuthoritySecrets = @(
     @{ n = 'Team resume service identity'; v = $EffectiveTeamResumeAuthSecret },
     @{ n = 'Team to Login player-no resolve service identity'; v = $EffectivePlayerNoResolveAuthSecret },
     @{ n = 'Team to Player player-name resolve service identity'; v = $EffectivePlayerNameResolveAuthSecret },
+    @{ n = 'Friend to Player player-name resolve service identity'; v = $EffectiveFriendPlayerNameResolveAuthSecret },
+    @{ n = 'Friend to Login player-no resolve service identity'; v = $EffectiveFriendPlayerNoResolveAuthSecret },
+    @{ n = 'Guild to Player player-name resolve service identity'; v = $EffectiveGuildPlayerNameResolveAuthSecret },
+    @{ n = 'Guild to Login player-no resolve service identity'; v = $EffectiveGuildPlayerNoResolveAuthSecret },
     @{ n = 'allocation abort service identity'; v = $EffectiveAllocationAbortAuthSecret }
 ) | Where-Object { $null -ne $_.v }
 for ($i = 0; $i -lt $allAuthoritySecrets.Count; $i++) {
@@ -685,6 +736,72 @@ $PlayerNameResolveAuthAudienceBindings = @(
 $PlayerNameResolveAuthAudience = 'player:name'
 $PlayerNameResolveAddressBindings = @(
     @{ Service = 'team'; Section = 'team'; Child = 'player_name_resolver_addr'; Value = 'player:20002' }
+)
+$ApplicationDisplayAuthGroups = @(
+    @{
+        Effective = $EffectiveFriendPlayerNameResolveAuthSecret
+        Dev = $DevFriendPlayerNameResolveAuthSecret
+        Audience = $PlayerNameResolveAuthAudience
+        SecretBindings = @(
+            @{ Service = 'player'; Section = 'player'; Child = 'friend_player_name_resolve_auth_secret' },
+            @{ Service = 'friend'; Section = 'friend'; Child = 'player_name_resolver_auth_secret' }
+        )
+        AudienceBindings = @(
+            @{ Service = 'player'; Section = 'player'; Child = 'friend_player_name_resolve_auth_audience' },
+            @{ Service = 'friend'; Section = 'friend'; Child = 'player_name_resolver_auth_audience' }
+        )
+        AddressBindings = @(
+            @{ Service = 'friend'; Section = 'friend'; Child = 'player_name_resolver_addr'; Value = 'player:20002' }
+        )
+    },
+    @{
+        Effective = $EffectiveFriendPlayerNoResolveAuthSecret
+        Dev = $DevFriendPlayerNoResolveAuthSecret
+        Audience = $PlayerNoResolveAuthAudience
+        SecretBindings = @(
+            @{ Service = 'login'; Section = 'login'; Child = 'friend_player_no_resolve_auth_secret' },
+            @{ Service = 'friend'; Section = 'friend'; Child = 'player_no_resolver_auth_secret' }
+        )
+        AudienceBindings = @(
+            @{ Service = 'login'; Section = 'login'; Child = 'friend_player_no_resolve_auth_audience' },
+            @{ Service = 'friend'; Section = 'friend'; Child = 'player_no_resolver_auth_audience' }
+        )
+        AddressBindings = @(
+            @{ Service = 'friend'; Section = 'friend'; Child = 'player_no_resolver_addr'; Value = 'login:20001' }
+        )
+    },
+    @{
+        Effective = $EffectiveGuildPlayerNameResolveAuthSecret
+        Dev = $DevGuildPlayerNameResolveAuthSecret
+        Audience = $PlayerNameResolveAuthAudience
+        SecretBindings = @(
+            @{ Service = 'player'; Section = 'player'; Child = 'guild_player_name_resolve_auth_secret' },
+            @{ Service = 'guild'; Section = 'guild'; Child = 'player_name_resolver_auth_secret' }
+        )
+        AudienceBindings = @(
+            @{ Service = 'player'; Section = 'player'; Child = 'guild_player_name_resolve_auth_audience' },
+            @{ Service = 'guild'; Section = 'guild'; Child = 'player_name_resolver_auth_audience' }
+        )
+        AddressBindings = @(
+            @{ Service = 'guild'; Section = 'guild'; Child = 'player_name_resolver_addr'; Value = 'player:20002' }
+        )
+    },
+    @{
+        Effective = $EffectiveGuildPlayerNoResolveAuthSecret
+        Dev = $DevGuildPlayerNoResolveAuthSecret
+        Audience = $PlayerNoResolveAuthAudience
+        SecretBindings = @(
+            @{ Service = 'login'; Section = 'login'; Child = 'guild_player_no_resolve_auth_secret' },
+            @{ Service = 'guild'; Section = 'guild'; Child = 'player_no_resolver_auth_secret' }
+        )
+        AudienceBindings = @(
+            @{ Service = 'login'; Section = 'login'; Child = 'guild_player_no_resolve_auth_audience' },
+            @{ Service = 'guild'; Section = 'guild'; Child = 'player_no_resolver_auth_audience' }
+        )
+        AddressBindings = @(
+            @{ Service = 'guild'; Section = 'guild'; Child = 'player_no_resolver_addr'; Value = 'login:20001' }
+        )
+    }
 )
 $AllocationAbortAuthSecretBindings = @(
     @{ Service = 'matchmaker'; Section = 'match'; Child = 'allocation_abort_auth_secret' },
@@ -1305,6 +1422,22 @@ function Convert-Secret([string]$ServiceName, [string]$Text) {
     }
     foreach ($binding in @($PlayerNameResolveAddressBindings | Where-Object Service -CEQ $ServiceName)) {
         Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $binding.Value
+    }
+    foreach ($group in $ApplicationDisplayAuthGroups) {
+        foreach ($binding in @($group.SecretBindings | Where-Object Service -CEQ $ServiceName)) {
+            if ($group.Effective -ceq $group.Dev) {
+                Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $group.Dev
+            } else {
+                $Text = Set-YamlDirectString $ServiceName $Text $binding.Section $binding.Child `
+                    $group.Dev $group.Effective
+            }
+        }
+        foreach ($binding in @($group.AudienceBindings | Where-Object Service -CEQ $ServiceName)) {
+            Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $group.Audience
+        }
+        foreach ($binding in @($group.AddressBindings | Where-Object Service -CEQ $ServiceName)) {
+            Assert-YamlDirectString $ServiceName $Text $binding.Section $binding.Child $binding.Value
+        }
     }
     foreach ($binding in @($AllocationAbortAuthSecretBindings | Where-Object Service -CEQ $ServiceName)) {
         if ($EffectiveAllocationAbortAuthSecret -ceq $DevAllocationAbortAuthSecret) {
@@ -1966,6 +2099,17 @@ function Assert-GeneratedSet {
         }
         foreach ($binding in @($PlayerNameResolveAddressBindings | Where-Object Service -CEQ $svc.Name)) {
             Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child $binding.Value
+        }
+        foreach ($group in $ApplicationDisplayAuthGroups) {
+            foreach ($binding in @($group.SecretBindings | Where-Object Service -CEQ $svc.Name)) {
+                Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child $group.Effective
+            }
+            foreach ($binding in @($group.AudienceBindings | Where-Object Service -CEQ $svc.Name)) {
+                Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child $group.Audience
+            }
+            foreach ($binding in @($group.AddressBindings | Where-Object Service -CEQ $svc.Name)) {
+                Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child $binding.Value
+            }
         }
         foreach ($binding in @($AllocationAbortAuthSecretBindings | Where-Object Service -CEQ $svc.Name)) {
             Assert-YamlDirectString $svc.Name $yaml $binding.Section $binding.Child `

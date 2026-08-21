@@ -657,11 +657,30 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
     session_repo = ldata.RedisSessionRepo(rdb) if rdb is not None else None
     jti_repo = ldata.RedisTicketJTIRepo(rdb) if rdb is not None else None
 
-    # team → login 内部 player_no 批量解析验签。handler 始终注册；未配置时它
-    # fail-closed。配置了 secret 就必须有共享 Redis replay authority，不能退化成
-    # 进程内 nonce 表（多副本下可跨 Pod 重放）。
-    player_no_verifier: internalrpcauth.Verifier | None = None
-    if lg.player_no_resolve_auth_secret:
+    # team/friend/guild → login 内部 player_no 批量解析验签。每个 caller 有独立
+    # key；MultiCaller 只按 caller 选 verifier，最终仍做 payload-bound 校验。
+    player_no_verifier = None
+    player_no_credentials = (
+        (
+            "team",
+            lg.player_no_resolve_auth_secret,
+            lg.player_no_resolve_auth_audience,
+        ),
+        (
+            "friend",
+            lg.friend_player_no_resolve_auth_secret,
+            lg.friend_player_no_resolve_auth_audience,
+        ),
+        (
+            "guild",
+            lg.guild_player_no_resolve_auth_secret,
+            lg.guild_player_no_resolve_auth_audience,
+        ),
+    )
+    enabled_player_no_credentials = [
+        item for item in player_no_credentials if item[1]
+    ]
+    if enabled_player_no_credentials:
         if rdb is None:
             logger.error(
                 "player_no_resolve_auth_requires_redis",
@@ -669,25 +688,31 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
             )
             return 1
         try:
-            player_no_verifier = internalrpcauth.Verifier(
-                lg.player_no_resolve_auth_secret,
-                "team",
-                lg.player_no_resolve_auth_audience,
-                PLAYER_NO_RESOLVE_MAX_CLOCK_SKEW_SEC,
-                internalrpcauth.RedisReplayStore(
-                    rdb, PLAYER_NO_RESOLVE_NONCE_PREFIX
-                ),
+            replay = internalrpcauth.RedisReplayStore(
+                rdb, PLAYER_NO_RESOLVE_NONCE_PREFIX
             )
+            verifiers = [
+                internalrpcauth.Verifier(
+                    secret,
+                    caller,
+                    audience,
+                    PLAYER_NO_RESOLVE_MAX_CLOCK_SKEW_SEC,
+                    replay,
+                )
+                for caller, secret, audience in enabled_player_no_credentials
+            ]
+            player_no_verifier = internalrpcauth.MultiCallerVerifier(*verifiers)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001
             logger.error("player_no_resolve_verifier_init_failed", err=str(exc))
             return 1
-        logger.info(
-            "player_no_resolve_verifier_ready",
-            caller="team",
-            audience=lg.player_no_resolve_auth_audience,
-        )
+        for caller, _secret, audience in enabled_player_no_credentials:
+            logger.info(
+                "player_no_resolve_verifier_ready",
+                caller=caller,
+                audience=audience,
+            )
     else:
         logger.warning(
             "player_no_resolve_verifier_disabled",

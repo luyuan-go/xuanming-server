@@ -53,6 +53,9 @@ func TestLoginDeploymentConfigsCarryPlayerNoResolveVerifier(t *testing.T) {
 			if cfg.Login.PlayerNoResolveAuthSecret == "" {
 				t.Fatalf("%s missing player_no_resolve_auth_secret", rel)
 			}
+			if cfg.Login.FriendPlayerNoResolveAuthSecret == "" || cfg.Login.GuildPlayerNoResolveAuthSecret == "" {
+				t.Fatalf("%s missing friend/guild player-no verifier keys", rel)
+			}
 			if err := cfg.Validate(); err != nil {
 				t.Fatalf("%s player_no verifier config: %v", rel, err)
 			}

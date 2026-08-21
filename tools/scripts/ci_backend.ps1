@@ -243,6 +243,8 @@ $contractTests = @(
     'tools/scripts/tests/mysql_service_runtime_config_contract_test.ps1'
     'tools/scripts/tests/planner_mysql_oneclick_contract_test.ps1'
     'tools/scripts/tests/planner_mysql_preflight_contract_test.ps1'
+    # 策划可只停业务与本机 DS，保留 MySQL/Redis/Kafka/Envoy；不得误接 infra/K8s down。
+    'tools/scripts/tests/planner_keep_infra_stop_contract_test.ps1'
     # Windows Get-NetTCPConnection 单次可阻塞数秒；快速 listener seam 仍须保留 PID/exe/my.ini 归属闸。
     'tools/scripts/tests/run_services_listener_query_contract_test.ps1'
     # 策划专用热启动：强指纹复用本机二进制，非 login/login 两波批量启动与 exact-PID 统一就绪。

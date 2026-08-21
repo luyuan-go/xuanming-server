@@ -20,6 +20,7 @@ import (
 	"github.com/luyuancpp/pandora/pkg/cellroute"
 	"github.com/luyuancpp/pandora/pkg/errcode"
 	plog "github.com/luyuancpp/pandora/pkg/log"
+	"github.com/luyuancpp/pandora/pkg/playerdisplay"
 	friendv1 "github.com/luyuancpp/pandora/proto/gen/go/pandora/friend/v1"
 
 	"github.com/luyuancpp/pandora/services/social/friend/internal/conf"
@@ -30,6 +31,16 @@ import (
 // toPlayerID 是接收方(= evt.to_player_id),kafka key 用它(不变量 §9)。
 type FriendEventPusher interface {
 	PushFriendEvent(ctx context.Context, toPlayerID uint64, evt *friendv1.FriendEvent) error
+}
+
+// PlayerNameResolver / PlayerNoResolver 只暴露客户端展示所需的公开投影；
+// 好友审批与持久化始终继续使用原始 player_id。
+type PlayerNameResolver interface {
+	ResolvePlayerNames(ctx context.Context, playerIDs []uint64) (map[uint64]string, error)
+}
+
+type PlayerNoResolver interface {
+	ResolvePlayerNos(ctx context.Context, playerIDs []uint64) (map[uint64]uint64, error)
 }
 
 // FriendUsecase 是 friend 服务业务逻辑核心。
@@ -50,6 +61,9 @@ type FriendUsecase struct {
 
 	// rateQuota 好友申请频率配额(anti-abuse §6 第 6 项)。可为 nil(不限)。
 	rateQuota ActionRateQuota
+
+	playerNameResolver PlayerNameResolver
+	playerNoResolver   PlayerNoResolver
 }
 
 // ActionRateQuota 申请类写入的 per-player 频率配额(实现 pkg/redisx.ActionQuota)。
@@ -62,6 +76,14 @@ type ActionRateQuota interface {
 // SetRateQuota 注入频率配额(可选;不注入 = 不限,dev 无 Redis 联调兼容)。
 func (u *FriendUsecase) SetRateQuota(q ActionRateQuota) {
 	u.rateQuota = q
+}
+
+func (u *FriendUsecase) SetPlayerNameResolver(r PlayerNameResolver) {
+	u.playerNameResolver = r
+}
+
+func (u *FriendUsecase) SetPlayerNoResolver(r PlayerNoResolver) {
+	u.playerNoResolver = r
 }
 
 // allowAction 频率配额门:窗内超额返回 ErrRateLimited(先于一切副作用);fail-open。
@@ -255,8 +277,8 @@ func (u *FriendUsecase) RejectFriend(ctx context.Context, playerID, requestID ui
 
 // ListFriendRequests 列出"发给本人且仍 pending"的好友请求(客户端可见结构 FriendRequestInfo)。
 //
-// 离线玩家错过 kafka push 后,靠本接口补拉待处理请求。from_nickname 留空,
-// 由客户端按 from_player_id 向 player 服务解析(CLAUDE.md §5.8 最小数据单位)。
+// 离线玩家错过 kafka push 后,靠本接口补拉待处理请求。from_nickname / from_player_no
+// 在最终结果页按 player/login 权威批量投影；失败只降级为空/0，原始 from_player_id 不变。
 func (u *FriendUsecase) ListFriendRequests(ctx context.Context, playerID uint64) ([]*friendv1.FriendRequestInfo, error) {
 	if playerID == 0 {
 		return nil, errcode.New(errcode.ErrInvalidArg, "player_id required")
@@ -265,12 +287,30 @@ func (u *FriendUsecase) ListFriendRequests(ctx context.Context, playerID uint64)
 	if err != nil {
 		return nil, err
 	}
+	playerIDs := make([]uint64, 0, len(rows))
+	for _, r := range rows {
+		if r.RequesterID != 0 {
+			playerIDs = append(playerIDs, r.RequesterID)
+		}
+	}
+	projection, err := playerdisplay.Resolve(ctx, playerIDs, u.playerNameResolver, u.playerNoResolver)
+	if err != nil {
+		return nil, err
+	}
+	for _, failure := range projection.Failures {
+		plog.With(ctx).Warnw("msg", "friend_request_display_resolve_failed",
+			"dependency", failure.Dependency,
+			"batch_size", len(failure.PlayerIDs),
+			"err", failure.Err)
+	}
 	infos := make([]*friendv1.FriendRequestInfo, 0, len(rows))
 	for _, r := range rows {
 		infos = append(infos, &friendv1.FriendRequestInfo{
 			RequestId:    r.RequestID,
 			FromPlayerId: r.RequesterID,
+			FromNickname: projection.Names[r.RequesterID],
 			CreatedMs:    r.CreatedMs,
+			FromPlayerNo: projection.Numbers[r.RequesterID],
 		})
 	}
 	return infos, nil

@@ -10,7 +10,7 @@ rem  (double-click to run)
 rem ------------------------------------------------------------
 rem  This is a TEST entry point. It does exactly what the regular
 rem  "live asset" one-click start does, EXCEPT that the infrastructure
-rem  (Redis / Kafka / Envoy) runs as plain native Windows
+rem  (MySQL / Redis / Kafka / Envoy) runs as plain native Windows
 rem  processes instead of Docker containers:
 rem
 rem    start.ps1 -Mode local -NoDocker -DsLauncher editor -GenTables
@@ -21,16 +21,17 @@ rem  portable binaries unpacked under run\localinfra\ - nothing is
 rem  installed into Windows, nothing is registered as a service, and
 rem  removing that folder removes everything.
 rem
-rem  SQL is always the remote planner workspace configured by
-rem  installers\planner-db\central-mysql.json. This entry refuses to start
-rem  a local MySQL when the bundle is missing or invalid. Runtime config copies
-rem  are generated under run\localinfra; tracked service YAML stays unchanged:
+rem  SQL uses the remote planner workspace when central-mysql.json is present.
+rem  A machine that has never enrolled remotely uses its exact-owned local
+rem  MySQL; once central state exists, failures never fall back to local data.
+rem  Runtime config copies stay under run\localinfra; tracked YAML is unchanged:
+rem    MySQL local-owned:auto(13307..13398) or central-managed
 rem    Redis 127.0.0.1:6380   Kafka 127.0.0.1:9093
 rem    Envoy :8443 (client) / 127.0.0.1:8444 (DS)
 rem
 rem  Differences you should know about:
-rem    * No SQL database is started on this PC. The current central enrollment
-rem      contract supports Oracle MySQL only; do not point it at TiDB.
+rem    * The current central enrollment contract supports Oracle MySQL only;
+rem      do not point it at TiDB. TiDB needs its own validated adapter.
 rem    * Prometheus / Grafana / Loki are NOT started (planners do not
 rem      use them; saves ~1 GB of RAM).
 rem    * The local Envoy is v1.28.0 (the last official Windows build).
@@ -54,17 +55,13 @@ rem  Stop: pwsh tools\scripts\start.ps1 -Mode local -NoDocker -Down
 rem ============================================================
 setlocal
 cd /d "%~dp0"
-set "PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL=1"
-
-rem Planner releases must contain the public remote-DB trust bundle. Fail here,
-rem before table generation or any local infrastructure lifecycle action, when
-rem packaging omitted it. The PowerShell seam repeats this check fail-closed.
-if not exist "%~dp0installers\planner-db\central-mysql.json" (
-  echo [ERROR] Remote planner database bundle is missing:
-  echo         installers\planner-db\central-mysql.json
-  echo         Local MySQL was NOT started. Ask the release maintainer to publish the endpoint and CA bundle.
-  if not defined PANDORA_NONINTERACTIVE pause ^>nul
-  exit /b 2
+echo [planner] launcher=%~f0
+set "PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL="
+if exist "%~dp0installers\planner-db\central-mysql.json" (
+  set "PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL=1"
+  echo [planner] database=central-managed
+) else (
+  echo [planner] database=local-owned ^(remote bundle not installed^)
 )
 
 rem This project requires PowerShell 7 (pwsh) and does NOT run on Windows

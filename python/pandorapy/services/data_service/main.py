@@ -45,6 +45,7 @@ import sys
 
 import asyncmy
 
+from pandorapy import cellroute_etcd
 from pandorapy import dbguard
 from pandorapy import godur
 from pandorapy import log as plog
@@ -230,6 +231,8 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         cache = None
         rc = cfg.node.redis_client
         rdb = None
+        # ★ 必须在 try **之前**声明:它在 finally 里被读。
+        cell_watcher = None
         if rc.endpoints():
             try:
                 # must_connect 内含启动期 Ping 闸:不探的话服务会带着一个死 Redis
@@ -286,9 +289,26 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
 
             # ── 装配链 ────────────────────────────────────────────────────
             uc = dbiz.DataUsecase(store, cache, cfg.data)
-            # cellroute 未在 Python 侧实现 —— 不注入 router = 单 Cell 行为,与 Go 侧
-            # router 为 nil 时完全一致(玩家数据 owner 落点观测退化为不打日志)。
-            # 配了 cell_route.mode 的话上面闸①之前就已经拒启了,不会走到这里。
+
+            # cellroute 装配(对应 Go 的 `etcdtable.WireRouter`)。
+            # off(mode 空)→ router 为 None = 单 Cell,玩家数据 owner 落点观测不打日志,
+            # 与 Go 侧 router 为 nil 完全一致;static / etcd → 真正建表并注入。
+            # 非法 mode 在上面 config 加载阶段就已经打 cellroute_init_failed 拒启了。
+            try:
+                router, cell_watcher = await cellroute_etcd.build_router(cfg.cell_route)
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                logger.error("cellroute_init_failed", err=str(exc))
+                return 1
+            if router is not None:
+                uc.set_cell_router(router)
+                logger.info(
+                    "cellroute_enabled",
+                    self_region=cfg.cell_route.self_region,
+                    self_cell=cfg.cell_route.self_cell,
+                )
+
             svc = dsvc.DataService(uc)
 
             # ★ auth_required=False:对齐 Go 的 NewGRPCServer(没挂 AuthRequired)。
@@ -326,6 +346,9 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             )
             return 0
         finally:
+            if cell_watcher is not None:
+                with contextlib.suppress(Exception):
+                    await cell_watcher.close()
             if rdb is not None:
                 with contextlib.suppress(Exception):
                     await rdb.aclose()

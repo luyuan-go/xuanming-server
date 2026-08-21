@@ -251,6 +251,17 @@ $fn = @($ast.FindAll({
 }, $true))
 Assert-True ($fn.Count -eq 1) 'run_services.ps1 存在唯一的 Get-ServiceConfigPath'
 if ($fn.Count -eq 1) {
+    Assert-True ($fn[0].Extent.Text -notmatch 'Assert-NoDockerMysqlOwned') `
+        '整批配置生成不得为每个服务重复执行昂贵的 mysqld CIM 归属检查'
+}
+$mysqlOwnershipCalls = @($ast.FindAll({
+    param($n)
+    $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'Assert-NoDockerMysqlOwned'
+}, $true))
+Assert-True ($mysqlOwnershipCalls.Count -eq 2) `
+    'MySQL exact 归属只在脚本入口与整批依赖探活各复核一次'
+if ($fn.Count -eq 1) {
     Invoke-Expression $fn[0].Extent.Text
     function Assert-NoDockerMysqlOwned {}
     $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pandora-localinfra-conf-{0}" -f [guid]::NewGuid().ToString('N'))
@@ -299,8 +310,8 @@ if ($fn.Count -eq 1) {
     foreach ($file in $mysqlConfigs) {
         $sourceDsnCount += [regex]::Matches([IO.File]::ReadAllText($file.FullName), 'tcp\(127\.0\.0\.1:3307\)').Count
     }
-    Assert-True ($mysqlConfigs.Count -eq 13) '当前 13 份 MySQL dev 配置全部进入测试清单'
-    Assert-True ($sourceDsnCount -eq 14) '当前 14 条 MySQL DSN 全部进入测试清单(inventory 含两条)'
+    Assert-True ($mysqlConfigs.Count -eq 15) '当前 15 份 MySQL dev 配置全部进入测试清单'
+    Assert-True ($sourceDsnCount -eq 16) '当前 16 条 MySQL DSN 全部进入测试清单(inventory 含两条)'
 
     $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pandora-localinfra-all-conf-{0}" -f [guid]::NewGuid().ToString('N'))
     $ProjectRoot = $sandbox
@@ -325,7 +336,7 @@ if ($fn.Count -eq 1) {
             Assert-True ($text -notmatch 'tcp\(127\.0\.0\.1:3307\)') "$relative 无残留 3307 MySQL DSN"
             $renderedDsnCount += [regex]::Matches($text, 'tcp\(127\.0\.0\.1:13308\)').Count
         }
-        Assert-True ($renderedDsnCount -eq 14) '生成配置共 14 条 DSN 全部改到选中端口'
+        Assert-True ($renderedDsnCount -eq 16) '生成配置共 16 条 DSN 全部改到选中端口'
     } finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }

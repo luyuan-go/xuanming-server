@@ -50,6 +50,9 @@ auction:
   max_quantity_per_order: 1000000
   max_price: 1000000000
   max_active_orders_per_player: 200  # 单玩家 PENDING+活跃挂单硬上限,Redis Lua 原子预留
+  # 与 auction-dev.yaml 保持逐字一致 —— 本文件只错开端口用于并排对拍,
+  # 业务旋钮一旦不同,diff 里就会出现与实现分叉无关的假差异。
+  rate_quota_per_min: 60
   default_list_limit: 50
   max_list_limit: 200
   # inventory 内网 gRPC 地址(:20015)。配上 → 成交走真实结算(SettleAuctionMatch:

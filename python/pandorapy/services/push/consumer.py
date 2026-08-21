@@ -38,6 +38,7 @@ from prometheus_client import Counter
 from pandora.push.v1 import push_pb2
 
 from pandorapy import errcode, kafka_topics, kafkax
+from pandorapy import cellroute
 from pandorapy import log as plog
 from pandorapy import logwindow
 
@@ -128,6 +129,7 @@ class PushKafkaConsumer:
     __slots__ = (
         "topic", "broadcast", "_conns", "_offline", "_consumer", "_wake",
         "_wake_fail_log", "_buffer_fail_log", "_bcast_dropped_log",
+        "_router", "_self_region", "_self_cell", "_route_unknown_log",
     )
 
     def __init__(
@@ -159,6 +161,13 @@ class PushKafkaConsumer:
         self._wake_fail_log = logwindow.Window()
         self._buffer_fail_log = logwindow.Window()
         self._bcast_dropped_log = logwindow.Window()
+        # cell 归属:router 为 None = 单 Cell,本实例拥有全部玩家(历史行为)。
+        # 分片部署时由 main 经 `set_cell_ownership` 注入 —— 用 setter 而非构造参数,
+        # 避免单 Cell 阶段所有调用点被迫改签名(与 Go 侧 SetCellOwnership 同形)。
+        self._router = None
+        self._self_region = 0
+        self._self_cell = 0
+        self._route_unknown_log = logwindow.Window()
 
         initial_offset = "earliest"  # 定向 topic:组内断点续传
         if self.broadcast:
@@ -185,6 +194,39 @@ class PushKafkaConsumer:
     def set_wake_publisher(self, wake) -> None:  # noqa: ANN001
         """注入跨 Pod 唤醒信号发布端(main 装配;None-safe)。"""
         self._wake = wake
+
+    def set_cell_ownership(
+        self, router, self_region: int, self_cell: int
+    ) -> None:  # noqa: ANN001  cellroute.Router | None
+        """注入确定性 region/cell 路由器 + 本实例所在 cell 身份。
+
+        对应 Go 的 `KafkaConsumer.SetCellOwnership`。None-safe:不调用 / router 传 None
+        时(单 Cell / dev),消费者拥有全部玩家,handle 不做归属判定。
+        """
+        self._router = router
+        self._self_region = self_region
+        self._self_cell = self_cell
+
+    def _owns_player(self, player_id: int) -> tuple[tuple[int, int], bool, bool]:
+        """一名玩家是否归本 push 实例所在 cell 所有。
+
+        返回 `((owner_region, owner_cell), owned, known)`:
+          - router 为 None / player_id 为 0 / 路由失败 → `((0,0), True, False)`:
+            视为本实例拥有(不阻断交付),known=False 表示归属未知 / 不适用。
+          - 否则 known=True,owned = (玩家 owner region/cell == 本实例 region/cell)。
+
+        ★ 三值而非两值是关键:"不归我"与"不知道归谁"处置**相反**
+          (前者毒丸留证,后者 fail-open + 告警)。合成一个布尔会让路由表拖动时
+          全量消息被毒丸进 DLQ —— 把"表没铺好"升级成"推送全断"。
+        """
+        if self._router is None or player_id == 0:
+            return (0, 0), True, False
+        try:
+            loc = self._router.route(player_id)
+        except cellroute.CellRouteError:
+            return (0, 0), True, False
+        owned = loc.region_id == self._self_region and loc.cell_id == self._self_cell
+        return (loc.region_id, loc.cell_id), owned, True
 
     async def run(self) -> None:
         await self._consumer.run()
@@ -270,9 +312,46 @@ class PushKafkaConsumer:
             )
             raise kafkax.poison(f"kafka key resolves to player_id=0 (topic={msg.topic})")
 
-        # ── 2. cell 归属判定:**未移植**,理由见 main.py 的闸⑧ 注释 ────────
-        #     (Python 侧 cell_route.mode 非空会在配置加载期直接拒启,
-        #      所以运行到这里必然是单 Cell = 本实例拥有全部玩家。)
+        # ── 2. cell 归属:非本 cell 玩家的消息**毒丸投 DLQ,不本地处理** ────
+        #
+        # 为什么不是"告警 + 照常交付"(2026-07-22 Go 侧审计已改过一轮):本 cell 的
+        # Redis 投递缓冲对**连接所在的那个 cell** 不可见。照常交付 = 写错缓存 + ACK
+        # = 静默丢一条定向消息。毒丸留证才能由基础设施 / 人工重投到 owner cell。
+        #
+        # ⚠️ 诚实标注(与 Go 同):这里**不是**跨 cell 消息通道,没有自动转投。
+        # 业务生产者按 player_id 路由到正确 cell 的 kafka 集群是**部署面契约**;
+        # 本判定只是错配的兜底暴露(DLQ 告警 = 生产者路由或 cell 表配置有 bug)。
+        # 单 Cell 部署(当前唯一形态)router 为 None,不判定,行为与历史一致。
+        owner, owned, known = self._owns_player(player_id)
+        if known and not owned:
+            logger.error(
+                "push_player_not_owned_poisoned",
+                player_id=player_id, topic=msg.topic,
+                self_region=self._self_region, self_cell=self._self_cell,
+                owner_region=owner[0], owner_cell=owner[1],
+            )
+            raise kafkax.poison(
+                f"player {player_id} owned by region={owner[0]} cell={owner[1]}, "
+                f"not self region={self._self_region} cell={self._self_cell}"
+            )
+        if not known and self._router is not None:
+            # known=False 在此**只可能**是 route 失败(router 已注入且 player_id 非 0,
+            # 零值在上一道闸就毒丸了)。归属 UNKNOWN 却 fail-open 落到本 cell 的投递
+            # 缓冲:若本实例不是真 owner,连接不在本 cell = 静默误投并最终丢失。
+            # 与相邻的 not_owned 毒丸分支(有日志 + DLQ 留证)形成盲区,故显式 WARN。
+            # 行为未改(仍 fail-open 不阻断交付);改 fail-closed 需按 §9.22 单独拍板。
+            ok, streak = self._route_unknown_log.admit(
+                int(time.time() * 1000), DEGRADE_LOG_WINDOW_MS
+            )
+            if ok:
+                logger.warning(
+                    "push_player_owner_unknown_fail_open",
+                    player_id=player_id, topic=msg.topic,
+                    partition=msg.partition, offset=msg.offset,
+                    self_region=self._self_region, self_cell=self._self_cell,
+                    streak=streak,
+                    hint="cellroute 路由表抖动/缺失 → 归属未知仍投本 cell,多 Cell 下可能误投",
+                )
 
         # ── 3. 构 PushFrame ────────────────────────────────────────────────
         try:

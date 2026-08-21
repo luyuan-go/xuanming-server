@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from pandorapy import config as pconfig
 from pandorapy import dbguard
+from pandorapy import internalrpcauth
 
 DEFAULT_GRPC_ADDR = ":20008"
 DEFAULT_HTTP_ADDR = ":21008"
@@ -41,6 +42,8 @@ DEFAULT_CACHE_TTL = "60s"
 DEFAULT_REQUEST_RETENTION_DAYS = 90
 DEFAULT_SWEEP_INTERVAL = "5m"
 DEFAULT_SWEEP_BATCH = 500
+DEFAULT_PLAYER_NAME_RESOLVER_AUTH_AUDIENCE = "player:name"
+DEFAULT_PLAYER_NO_RESOLVER_AUTH_AUDIENCE = "login:player-no"
 
 # DS 回调令牌校验的默认值 —— 对应 Go 的 pkg/config.DSAuthConf.Defaults()。
 DEFAULT_DS_AUTH_AUTHORITY_MODE = "legacy"
@@ -179,6 +182,13 @@ class GuildConf(BaseModel):
     max_groups_per_player: int = 0
     # 公会 / 群名最大长度(utf8 rune 数,**不是字节**)。
     max_name_len: int = 0
+    # 入会申请公开展示投影。两个 authority 各用 guild 调用方的独立 HMAC 凭据。
+    player_name_resolver_addr: str = ""
+    player_name_resolver_auth_secret: str = ""
+    player_name_resolver_auth_audience: str = ""
+    player_no_resolver_addr: str = ""
+    player_no_resolver_auth_secret: str = ""
+    player_no_resolver_auth_audience: str = ""
     # 公会读缓存(Redis cache-aside)条目 TTL。写后删 + 短 TTL 兜底。
     cache_ttl: str = ""
     # 终态入会申请(approved/rejected)保留天数(§9.24)。pending 永不清。
@@ -254,10 +264,65 @@ class Config(pconfig.BaseConf):
             self.guild.sweep_interval = DEFAULT_SWEEP_INTERVAL
         if self.guild.sweep_batch <= 0:
             self.guild.sweep_batch = DEFAULT_SWEEP_BATCH
+        if (
+            self.guild.player_name_resolver_addr
+            and not self.guild.player_name_resolver_auth_audience
+        ):
+            self.guild.player_name_resolver_auth_audience = (
+                DEFAULT_PLAYER_NAME_RESOLVER_AUTH_AUDIENCE
+            )
+        if (
+            self.guild.player_no_resolver_addr
+            and not self.guild.player_no_resolver_auth_audience
+        ):
+            self.guild.player_no_resolver_auth_audience = (
+                DEFAULT_PLAYER_NO_RESOLVER_AUTH_AUDIENCE
+            )
         if not self.server.grpc.addr:
             self.server.grpc.addr = DEFAULT_GRPC_ADDR
         if not self.server.http.addr:
             self.server.http.addr = DEFAULT_HTTP_ADDR
+
+    def validate_player_display_resolvers(self) -> None:
+        """展示 resolver 的地址/凭据必须闭包，两个 authority 不得复用密钥。"""
+        g = self.guild
+        self._validate_resolver(
+            "guild.player_name_resolver",
+            g.player_name_resolver_addr,
+            g.player_name_resolver_auth_secret,
+            g.player_name_resolver_auth_audience,
+        )
+        self._validate_resolver(
+            "guild.player_no_resolver",
+            g.player_no_resolver_addr,
+            g.player_no_resolver_auth_secret,
+            g.player_no_resolver_auth_audience,
+        )
+        if (
+            g.player_name_resolver_auth_secret
+            and g.player_no_resolver_auth_secret
+            and g.player_name_resolver_auth_secret == g.player_no_resolver_auth_secret
+        ):
+            raise ValueError(
+                "guild.player_name_resolver_auth_secret must differ from "
+                "guild.player_no_resolver_auth_secret"
+            )
+
+    @staticmethod
+    def _validate_resolver(label: str, addr: str, secret: str, audience: str) -> None:
+        if not addr:
+            if secret or audience:
+                raise ValueError(f"{label} credentials require addr")
+            return
+        if not secret:
+            raise ValueError(f"{label}_auth_secret required when addr is configured")
+        if not audience:
+            raise ValueError(f"{label}_auth_audience required when addr is configured")
+        try:
+            internalrpcauth.validate_secret(secret)
+            internalrpcauth.validate_identity(audience)
+        except ValueError as exc:
+            raise ValueError(f"{label}: {exc}") from exc
 
     @classmethod
     def load(cls, path: str) -> "Config":

@@ -7,6 +7,8 @@ go 1.26.5
 // 2026-06-04 决策:从 go-zero 切换到 Kratos v2.9.2(详见 docs/design/pkg-copy-from-mmorpg.md §5)
 // 升级策略:patch 月度 / minor 季度 / major 年度评估(详见 docs/design/dependency-management.md)
 
+replace github.com/luyuancpp/pandora/proto => ../proto
+
 require (
 	// Kafka 客户端
 	github.com/IBM/sarama v1.43.1
@@ -18,6 +20,8 @@ require (
 
 	// 通用工具
 	github.com/google/uuid v1.6.0
+	// 公共玩家展示投影 gRPC client
+	github.com/luyuancpp/pandora/proto v0.0.0-00010101000000-000000000000
 
 	// Prometheus
 	github.com/prometheus/client_golang v1.21.1
