@@ -21,7 +21,21 @@ function Start-PandoraPlannerTimingSession {
         Enabled = $Enabled
         StartedAtMilliseconds = $StartedAtMilliseconds
         Rows = [Collections.Generic.List[object]]::new()
+        InfraStartMode = ''
         SummaryWritten = $false
+    }
+}
+
+function Set-PandoraPlannerInfraTimingMode {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][ValidateSet('parallel', 'serial')][string]$Mode)
+
+    $session = Get-PandoraPlannerTimingSession
+    if (-not $session -or -not $session.Enabled) { return }
+    if ($session.PSObject.Properties['InfraStartMode']) {
+        $session.InfraStartMode = $Mode
+    } else {
+        $session | Add-Member -NotePropertyName InfraStartMode -NotePropertyValue $Mode
     }
 }
 
@@ -94,7 +108,17 @@ function Get-PandoraPlannerTimingSummaryLines {
         '[耗时] {0}  {1} 秒  {2}{3}' -f $row.Name,
             (Format-PandoraPlannerSeconds ([int64]$row.ElapsedMilliseconds)), $row.Status, $suffix
     }
-    '[耗时] 注：导表、staging build、基础设施以及部分迁移会重叠；基础设施组件也并行，单项耗时不可相加。'
+    switch ([string]$session.InfraStartMode) {
+        'parallel' {
+            '[耗时] 注：导表、staging build、基础设施以及部分迁移会重叠；本轮基础设施组件并行，单项耗时不可相加。'
+        }
+        'serial' {
+            '[耗时] 注：导表、staging build、基础设施以及部分迁移会重叠；本轮基础设施串行，组件明细按执行顺序发生。'
+        }
+        default {
+            '[耗时] 注：导表、staging build、基础设施以及部分迁移会重叠；基础设施启动模式未登记。'
+        }
+    }
     '[耗时] 注：请以“并行准备总计”“基础设施总计”和“总计”的墙钟耗时为准。'
     '[耗时] 总计  {0} 秒' -f (Format-PandoraPlannerSeconds $TotalElapsedMilliseconds)
 }

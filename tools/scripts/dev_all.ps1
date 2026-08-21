@@ -196,9 +196,9 @@ if ($NoDocker) {
             $mysqlClient = Get-ChildItem -Path (Join-Path $ScriptDir '../../run/localinfra/dist/mysql') `
                 -Recurse -File -Filter 'mysql.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $mysqlClient) { throw 'MySQL 已就绪，但找不到本机 mysql.exe，无法启动迁移。' }
-            # 四个基础设施进程已在统一轮询前全部 launch。这里留在父 runspace 同步迁移，
-            # Kafka/Redis/Envoy 仍由各自 OS 进程继续启动，同时 dev_migrate 可递归复用父进程
-            # 已持有的工作区编排锁；严禁另起 pwsh 后用“跳过锁”绕过并发保护。
+            # callback 只保证 MySQL 已通过协议探活；仅 local_infra 实际选中并行 batch 时，
+            # Redis/Kafka/Envoy 才可能仍在后台启动，串行 fallback 不宣称重叠。migration 留在
+            # 父 runspace，dev_migrate 可递归复用已持有的工作区编排锁；严禁用 SkipLock 绕过。
             Write-Host '  [parallel] MySQL 已通过协议探活；migration 在父编排锁内执行。' `
                 -ForegroundColor DarkCyan
             $migrationWatch = [Diagnostics.Stopwatch]::StartNew()

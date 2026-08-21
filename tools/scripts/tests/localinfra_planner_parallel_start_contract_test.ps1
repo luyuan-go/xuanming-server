@@ -51,6 +51,36 @@ foreach ($functionAst in @($infraAst.FindAll({
     $functionsByName[$functionAst.Name] = $functionAst
 }
 
+# 组件明细只统计自身 listener + 协议探活/收尾；MySQL ready callback 里触发的 migration
+# 属于独立阶段，不能重复灌进“基础设施·MySQL”。用已知虚拟时刻直接验证公开 timing seam。
+Assert-True $functionsByName.ContainsKey('Add-PlannerInfraStateTiming') `
+    '[RED] 缺少基础设施组件计时 seam'
+Invoke-Expression $functionsByName['Add-PlannerInfraStateTiming'].Extent.Text
+$savedAddPlannerTiming = Get-Item -LiteralPath function:Add-PandoraPlannerTiming -ErrorAction SilentlyContinue
+try {
+    $script:VirtualInfraTimingRows = [Collections.Generic.List[object]]::new()
+    function Add-PandoraPlannerTiming {
+        param([string]$Name, [int64]$ElapsedMilliseconds, [string]$Status, [string]$Detail = '')
+        $script:VirtualInfraTimingRows.Add([pscustomobject]@{
+                Name = $Name; ElapsedMilliseconds = $ElapsedMilliseconds; Status = $Status; Detail = $Detail
+            })
+    }
+    Add-PlannerInfraStateTiming -State ([pscustomobject]@{
+            Name = 'mysql'; TimingStartedAtMilliseconds = [int64]0
+            ComponentFinishedAtMilliseconds = [int64]200
+            FinishedAtMilliseconds = [int64]600; ReadyAtMilliseconds = [int64]200
+        }) -Status '完成'
+    Assert-Equal 200 $script:VirtualInfraTimingRows[0].ElapsedMilliseconds `
+        '[RED] MySQL 组件行必须停在 200ms，不得重复包含 200-600ms migration callback'
+} finally {
+    if ($savedAddPlannerTiming) {
+        Set-Item -LiteralPath function:Add-PandoraPlannerTiming -Value $savedAddPlannerTiming.ScriptBlock
+    } else {
+        Remove-Item -LiteralPath function:Add-PandoraPlannerTiming -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Variable -Name VirtualInfraTimingRows -Scope Script -Force -ErrorAction SilentlyContinue
+}
+
 Assert-True ($infraSource -match "lib[/\\]planner_infra_fast_start\.ps1") `
     '[RED] local_infra 尚未加载策划基础设施并发 helper'
 Assert-True $functionsByName.ContainsKey('Invoke-PlannerInfraFastStart') `
@@ -71,6 +101,16 @@ Assert-True ($fastBody -notmatch 'Start-Job|Start-ThreadJob|ForEach-Object\s+-Pa
     'fast coordinator 禁止切换 runspace/job'
 Assert-True ($functionsByName['New-PlannerInfraStartState'].Body.Extent.Text -match 'TimingStartedAtMilliseconds') `
     '[RED] 组件明细起点必须与 listener deadline 起点分离'
+Assert-True ($functionsByName['New-PlannerInfraStartState'].Body.Extent.Text -match
+    'ComponentFinishedAtMilliseconds\s*=\s*\[int64\]0') `
+    '[RED] fast state 必须单独保存组件自身完成时刻'
+$completeReadyBody = $functionsByName['Complete-PlannerInfraReadyState'].Body.Extent.Text
+$completeStateIndex = $completeReadyBody.IndexOf('Complete-PlannerInfraStartState $State', [StringComparison]::Ordinal)
+$componentFinishedIndex = $completeReadyBody.IndexOf('$State.ComponentFinishedAtMilliseconds = [Environment]::TickCount64', [StringComparison]::Ordinal)
+$dependencyCallbackIndex = $completeReadyBody.IndexOf('$OnPlannerComponentReady', [StringComparison]::Ordinal)
+Assert-True ($completeStateIndex -ge 0 -and $componentFinishedIndex -gt $completeStateIndex -and
+    $dependencyCallbackIndex -gt $componentFinishedIndex) `
+    '[RED] 组件完成时刻必须在协议探活/收尾后、MySQL→migration callback 前冻结'
 foreach ($name in @('Start-LocalMysql', 'Start-LocalRedis', 'Start-LocalKafka', 'Start-LocalEnvoy')) {
     Assert-True ($functionsByName[$name].Body.Extent.Text -match '-TimingStartedAtMilliseconds\s+\$componentStartedAt') `
         "[RED] $name 明细耗时必须包含进程拉起前的组件准备"
@@ -85,6 +125,13 @@ Assert-True ($upBody -match 'Test-PandoraPlannerInfraBatchEligibility') `
     '[RED] Invoke-Up 没有使用 fast/Force/receipt/初始化资格闸'
 Assert-True ($upBody -match 'Invoke-PlannerInfraFastStart') `
     '[RED] Invoke-Up 没有接入 fast coordinator'
+$parallelModeIndex = $upBody.IndexOf("Set-PandoraPlannerInfraTimingMode -Mode parallel", [StringComparison]::Ordinal)
+$fastStartIndex = $upBody.IndexOf('Invoke-PlannerInfraFastStart', [StringComparison]::Ordinal)
+$serialModeIndex = $upBody.IndexOf("Set-PandoraPlannerInfraTimingMode -Mode serial", [StringComparison]::Ordinal)
+$firstSerialComponentIndex = $upBody.IndexOf("Invoke-PandoraPlannerTimedStep -Name '基础设施·MySQL'", [StringComparison]::Ordinal)
+Assert-True ($parallelModeIndex -ge 0 -and $fastStartIndex -gt $parallelModeIndex -and
+    $serialModeIndex -gt $fastStartIndex -and $firstSerialComponentIndex -gt $serialModeIndex) `
+    '[RED] batch eligible 必须登记 parallel；fallback 必须在首个组件前登记 serial'
 Assert-True ($upBody -match 'if\s*\(-not\s+\$PlannerFastStart\)\s*\{\s*Invoke-Status\s*\}') `
     '[RED] 策划 fast 成功后不得再重复执行整套端口/归属状态查询'
 foreach ($legacyCall in @('Start-LocalMysql', 'Start-LocalRedis', 'Start-LocalKafka', 'Start-LocalEnvoy')) {
@@ -279,8 +326,10 @@ $dependencyLaunchers = @($dependencyDefinitions | ForEach-Object {
             Ports = @($definition.Port)
             Process = [pscustomobject]@{ Id = $definition.ProcessId }
             StartedAtMilliseconds = [int64]0
+            TimingStartedAtMilliseconds = [int64]0
             TimeoutMilliseconds = [int64]30000
-            Ready = $false
+            Ready = $false; ReadyAtMilliseconds = [int64]0
+            ComponentFinishedAtMilliseconds = [int64]0; FinishedAtMilliseconds = [int64]0
             Failure = ''
         }
     }.GetNewClosure()
@@ -306,6 +355,8 @@ $dependencyStates = @(Invoke-PandoraPlannerInfraBatch -Launchers $dependencyLaun
     } -OnReady {
         param($State)
         $dependencyEvents.Add("ready:$($State.Name):$($dependencyClock.Milliseconds)")
+        $State.ComponentFinishedAtMilliseconds = [int64]$dependencyClock.Milliseconds
+        $dependencyEvents.Add("component-finished:$($State.Name):$($dependencyClock.Milliseconds)")
         if ($State.Name -ceq 'mysql') {
             $dependencyEvents.Add("migration-start:$($dependencyClock.Milliseconds)")
             # 同 runspace migration 会占用父 pipeline，但四组件早已全部 launch；用 400ms
@@ -313,6 +364,7 @@ $dependencyStates = @(Invoke-PandoraPlannerInfraBatch -Launchers $dependencyLaun
             $dependencyClock.Milliseconds += 400
             $dependencyEvents.Add("migration-end:$($dependencyClock.Milliseconds)")
         }
+        $State.FinishedAtMilliseconds = [int64]$dependencyClock.Milliseconds
     } -OnFailure { param($State, $Reason) throw "依赖边虚拟组件不应失败:$($State.Name)/$Reason" } `
     -Sleep { param($Milliseconds) $dependencyClock.Milliseconds += $Milliseconds } `
     -GetElapsedMilliseconds { return [int64]$dependencyClock.Milliseconds } -PollMilliseconds 100)
@@ -321,16 +373,50 @@ Assert-Equal 200 (@($dependencyStates | Where-Object Name -eq 'mysql')[0].ReadyA
     'MySQL 应在虚拟 200ms ready'
 Assert-Equal 700 (@($dependencyStates | Where-Object Name -eq 'kafka')[0].ReadyAtMilliseconds) `
     'Kafka 应在虚拟 700ms ready'
+Assert-Equal 200 (@($dependencyStates | Where-Object Name -eq 'mysql')[0].ComponentFinishedAtMilliseconds) `
+    'MySQL listener + 协议探活组件耗时应冻结在虚拟 200ms'
+Assert-Equal 700 (@($dependencyStates | Where-Object Name -eq 'kafka')[0].ComponentFinishedAtMilliseconds) `
+    'Kafka 组件耗时应为虚拟 700ms'
 Assert-Equal 1 @($dependencyEvents | Where-Object { $_ -ceq 'migration-start:200' }).Count `
     'MySQL ready callback 必须在 200ms 立即启动且只启动一次 migration'
 Assert-Equal 1 @($dependencyEvents | Where-Object { $_ -ceq 'migration-end:600' }).Count `
     '同 runspace migration 应在虚拟 600ms 完成'
+$dependencyMysqlState = @($dependencyStates | Where-Object Name -eq 'mysql')[0]
+Assert-Equal 400 ([int64]$dependencyMysqlState.FinishedAtMilliseconds -
+    [int64]$dependencyMysqlState.ComponentFinishedAtMilliseconds) `
+    'MySQL ready callback 中的 migration 独立耗时应为虚拟 400ms'
 $migrationStartIndex = $dependencyEvents.IndexOf('migration-start:200')
 $kafkaReadyIndex = $dependencyEvents.IndexOf('ready:kafka:700')
 Assert-True ($migrationStartIndex -ge 0 -and $kafkaReadyIndex -gt $migrationStartIndex) `
     'migration-start 必须发生在 Kafka 700ms ready 之前，不能退化为全基础设施 join 后迁移'
 Assert-Equal 700 $dependencyClock.Milliseconds `
     '同步 callback 只暂停 readiness 轮询；四组件已先 launch，总墙钟仍为 max(600,700) 而非 1100ms'
+
+$savedDependencyTimingSink = Get-Item -LiteralPath function:Add-PandoraPlannerTiming -ErrorAction SilentlyContinue
+try {
+    $script:DependencyTimingRows = [Collections.Generic.List[object]]::new()
+    function Add-PandoraPlannerTiming {
+        param([string]$Name, [int64]$ElapsedMilliseconds, [string]$Status, [string]$Detail = '')
+        $script:DependencyTimingRows.Add([pscustomobject]@{
+                Name = $Name; ElapsedMilliseconds = $ElapsedMilliseconds; Status = $Status; Detail = $Detail
+            })
+    }
+    foreach ($state in $dependencyStates) {
+        Add-PlannerInfraStateTiming -State $state -Status '完成'
+    }
+    $mysqlTimingRow = @($script:DependencyTimingRows | Where-Object Name -ceq '基础设施·MySQL')[0]
+    $kafkaTimingRow = @($script:DependencyTimingRows | Where-Object Name -ceq '基础设施·Kafka')[0]
+    Assert-Equal 200 $mysqlTimingRow.ElapsedMilliseconds `
+        'MySQL 明细只能是组件自身 200ms，不能重复包含 migration 到 600ms'
+    Assert-Equal 700 $kafkaTimingRow.ElapsedMilliseconds 'Kafka 明细应保持最慢组件的 700ms'
+} finally {
+    if ($savedDependencyTimingSink) {
+        Set-Item -LiteralPath function:Add-PandoraPlannerTiming -Value $savedDependencyTimingSink.ScriptBlock
+    } else {
+        Remove-Item -LiteralPath function:Add-PandoraPlannerTiming -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Variable -Name DependencyTimingRows -Scope Script -Force -ErrorAction SilentlyContinue
+}
 
 # 本次真实回归来自“本机 MySQL 已在运行”的复用分支。launcher 已完成 exact listener/
 # 账号验证并直接返回 Ready=true 时，也必须通知一次上层 callback，且不能再进入轮询。

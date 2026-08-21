@@ -17,7 +17,16 @@ function Assert-Contains([string]$Text, [string]$Pattern, [string]$Message) {
 Assert-True (Test-Path -LiteralPath $helper -PathType Leaf) '应提供统一的策划启动计时 helper'
 . $helper
 
+Assert-True ($null -ne (Get-Command Set-PandoraPlannerInfraTimingMode -ErrorAction SilentlyContinue)) `
+    '[RED] timing session 必须提供本轮基础设施并行/串行模式 seam'
 Start-PandoraPlannerTimingSession -Enabled $true -StartedAtMilliseconds 1000
+$unregisteredModeSummary = @(Get-PandoraPlannerTimingSummaryLines -TotalElapsedMilliseconds 0) -join "`n"
+Assert-True ($unregisteredModeSummary -notmatch '基础设施组件.*并行') `
+    '尚未通过 batch eligibility 前不得提前宣称基础设施组件并行'
+Stop-PandoraPlannerTimingSession
+
+Start-PandoraPlannerTimingSession -Enabled $true -StartedAtMilliseconds 1000
+Set-PandoraPlannerInfraTimingMode -Mode parallel
 Add-PandoraPlannerTiming -Name '环境检查' -ElapsedMilliseconds 1234 -Status '完成'
 Add-PandoraPlannerTiming -Name '基础设施·Kafka' -ElapsedMilliseconds 9876 -Status '失败' -Detail 'listener timeout'
 $lines = @(Get-PandoraPlannerTimingSummaryLines -TotalElapsedMilliseconds 11111)
@@ -27,10 +36,18 @@ Assert-Contains $summary '^策划一键启动耗时汇总' '汇总必须有稳�
 Assert-Contains $summary '(?m)^\[耗时\]\s+环境检查\s+1\.23 秒\s+完成\s*$' '成功步骤应换算成两位小数秒'
 Assert-Contains $summary '(?m)^\[耗时\]\s+基础设施·Kafka\s+9\.88 秒\s+失败\s+listener timeout\s*$' '失败步骤也必须保留耗时与原因'
 Assert-Contains $summary '导表、staging build、基础设施以及部分迁移会重叠' '汇总必须说明并行明细不可相加'
+Assert-Contains $summary '本轮基础设施组件并行，单项耗时不可相加' `
+    'batch eligible 本轮才允许宣称基础设施组件并行'
+Assert-True ($summary -notmatch '本轮基础设施串行') '并行本轮不得同时打印串行说明'
 Assert-Contains $summary '(?m)^\[耗时\]\s+总计\s+11\.11 秒\s*$' '汇总必须包含总耗时'
 
 Stop-PandoraPlannerTimingSession
 Start-PandoraPlannerTimingSession -Enabled $true -StartedAtMilliseconds 0
+Set-PandoraPlannerInfraTimingMode -Mode serial
+$serialSummary = @(Get-PandoraPlannerTimingSummaryLines -TotalElapsedMilliseconds 0) -join "`n"
+Assert-Contains $serialSummary '本轮基础设施串行' 'fallback 本轮必须明确打印基础设施串行'
+Assert-True ($serialSummary -notmatch '基础设施组件.*并行') `
+    'serial fallback 不得继续宣称基础设施组件并行'
 $clockValues = [Collections.Generic.Queue[int64]]::new()
 foreach ($value in @([int64]100, [int64]1334)) { $clockValues.Enqueue($value) }
 $result = Invoke-PandoraPlannerTimedStep -Name '成功动作' -GetElapsedMilliseconds { $clockValues.Dequeue() } `

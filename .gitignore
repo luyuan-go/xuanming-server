@@ -38,6 +38,12 @@ temp/
 *.swo
 *~
 
+# 一次性迁移/对拍诊断文件（正式工具与长期文档放入对应 docs/tools 目录）
+/HANDOFF-parity-probe.md
+/python/_metric_diff.py
+/python/tools/parity/_mkdiffconf.py
+/python/tools/parity/_ping_ds.py
+
 # 环境变量
 .env
 .env.local

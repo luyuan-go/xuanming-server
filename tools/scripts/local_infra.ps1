@@ -989,6 +989,7 @@ function New-PlannerInfraStartState {
         Reused = $Reused
         Ready = $false
         ReadyAtMilliseconds = [int64]0
+        ComponentFinishedAtMilliseconds = [int64]0
         FinishedAtMilliseconds = [int64]0
         CompletionHandled = $false
         Failure = ''
@@ -2544,7 +2545,10 @@ function Add-PlannerInfraStateTiming($State, [string]$Status, [string]$Detail = 
         'envoy' { 'Envoy' }
         default { [string]$State.Name }
     }
-    $finishedAt = if ([int64]$State.FinishedAtMilliseconds -gt 0) {
+    $finishedAt = if ($State.PSObject.Properties['ComponentFinishedAtMilliseconds'] -and
+        [int64]$State.ComponentFinishedAtMilliseconds -gt 0) {
+        [int64]$State.ComponentFinishedAtMilliseconds
+    } elseif ([int64]$State.FinishedAtMilliseconds -gt 0) {
         [int64]$State.FinishedAtMilliseconds
     } elseif ($Status -ne '失败' -and [int64]$State.ReadyAtMilliseconds -gt 0) {
         [int64]$State.ReadyAtMilliseconds
@@ -2562,6 +2566,9 @@ function Complete-PlannerInfraReadyState($State) {
     $detail = '组件就绪后的协议探活/收尾失败'
     try {
         Complete-PlannerInfraStartState $State
+        # 组件明细到协议探活/自身收尾为止。随后 callback 可能同步跑 MySQL migration，
+        # 那是独立阶段；仍由 callback 的成功/失败决定整批是否可继续。
+        $State.ComponentFinishedAtMilliseconds = [Environment]::TickCount64
         if ($null -ne $OnPlannerComponentReady) {
             $null = & $OnPlannerComponentReady $State
         }
@@ -2672,8 +2679,10 @@ function Invoke-Up {
         -MysqlInitialized ([IO.Directory]::Exists((Join-Path $DataDir 'mysql/mysql'))) `
         -KafkaInitialized ([IO.File]::Exists((Join-Path $DataDir 'kafka/meta.properties')))
     if ($plannerBatchEligible) {
+        Set-PandoraPlannerInfraTimingMode -Mode parallel
         Invoke-PlannerInfraFastStart
     } else {
+        Set-PandoraPlannerInfraTimingMode -Mode serial
         if (-not $CentralMysqlManaged) {
             Invoke-PandoraPlannerTimedStep -Name '基础设施·MySQL' -Action { Start-LocalMysql }
             Invoke-PlannerExternalComponentReady 'mysql'
