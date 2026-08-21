@@ -275,7 +275,7 @@ class MySQLMissionRepo:
                 progress=am.progress
             ).SerializeToString()
             dbguard.check_payload(
-                "player_mission_active.progress", blob, PROGRESS_PAYLOAD_MAX
+                "pandora_mission.player_mission_active.progress", blob, PROGRESS_PAYLOAD_MAX
             )
             await cur.execute(
                 "INSERT INTO player_mission_active "
@@ -323,7 +323,9 @@ class MySQLMissionRepo:
 
         for entry in mut.reward_logs:
             dbguard.check_payload(
-                "mission_reward_log.reward_pb", entry.reward_pb, REWARD_PAYLOAD_MAX
+                "pandora_mission.mission_reward_log.reward_pb",
+                entry.reward_pb,
+                REWARD_PAYLOAD_MAX,
             )
             try:
                 await cur.execute(
@@ -359,7 +361,7 @@ class MySQLMissionRepo:
 
         for payload in mut.push_payloads:
             dbguard.check_payload(
-                "mission_push_outbox.payload", payload, PUSH_PAYLOAD_MAX
+                "pandora_mission.mission_push_outbox.payload", payload, PUSH_PAYLOAD_MAX
             )
             await cur.execute(
                 "INSERT INTO mission_push_outbox (player_id, payload, created_at_ms) "

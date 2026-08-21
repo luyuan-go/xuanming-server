@@ -253,6 +253,12 @@ $contractTests = @(
     'tools/scripts/tests/planner_playable_exit_contract_test.ps1'
     # 策划本机 MySQL 热启动：SQL 强收据跳过重复 init DDL，miss 时单 mysql 进程批量重放。
     'tools/scripts/tests/dev_migrate_planner_fast_contract_test.ps1'
+    # fast migration 留在父 runspace 复用编排锁；所有 native child 必须由 Job Object 有界回收，
+    # 包括 stdin 卡死、输出超限和父 pwsh 被硬杀三条只在故障时出现的路径。
+    'tools/scripts/tests/planner_bounded_process_contract_test.ps1'
+    # canonical MySQL ownership(CIM/netstat)与固定 target 同处一个受限 Job；明文 DSN session
+    # 在 workspace 锁内清扫，覆盖 hard-kill/live-owner/reparse/cleanup-failure 故障路径。
+    'tools/scripts/tests/planner_owned_migration_worker_contract_test.ps1'
     # 策划已安装基础设施的冷启动：批量 launch、共享 listener 轮询与 direct/Kafka-child exact owner。
     'tools/scripts/tests/localinfra_planner_parallel_start_contract_test.ps1'
     # 策划并行准备：exact child 真实耗时/有界 drain、投机构建稳定重试与生产依赖接线。

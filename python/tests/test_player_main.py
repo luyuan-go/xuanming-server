@@ -113,8 +113,14 @@ def test_gate_event_names_exist_in_go_source(repo_root: pathlib.Path) -> None:
 
 
 def test_python_main_mentions_every_gate_event() -> None:
-    """Python 侧也必须逐条出现同名事件 —— 漏一条 = Loki 上那条告警对 Python 副本失效。"""
-    src = pathlib.Path(pmain.__file__).read_text(encoding="utf-8")
+    """Python 侧也必须逐条出现同名事件 —— 漏一条 = Loki 上那条告警对 Python 副本失效。
+
+    只看代码：注释/docstring 里写着事件名不代表真的打了这条日志
+    （理由见 tests/srcprobe.py）。
+    """
+    from tests.srcprobe import module_code_text
+
+    src = module_code_text(pmain)
     for event in (
         "abs_conf_path_failed",
         "config_load_failed",

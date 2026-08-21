@@ -38,6 +38,9 @@ param(
     # 一键启动已经把 MySQL 当作强依赖；此时连接失败不能再“跳过并返回成功”，否则会让
     # 后续服务拿旧 schema 启动。独立调用保持原有宽松行为。
     [switch]$RequireMysql,
+    # 只由策划 fast 父编排传入：probe/init/migrate 共用这一份墙钟预算。0 保持普通
+    # Docker / 人工调用的既有行为，不给它们暗加一个新超时。
+    [ValidateRange(0, 3600)][int]$TotalTimeoutSeconds = 0,
     [switch]$WhatIfOnly
 )
 
@@ -56,7 +59,20 @@ Write-Host "===== 数据库结构升级(dev) =====" -ForegroundColor Cyan
 
 $UseLocalClient = [bool]$MysqlClient
 $PlannerFastStart = $UseLocalClient -and ($env:PANDORA_PLANNER_FAST_START -ceq '1')
-if ($UseLocalClient -and -not (Test-Path -LiteralPath $MysqlClient)) {
+$PlannerMigrationDeadline = $null
+if ($PlannerFastStart) {
+    if ($TotalTimeoutSeconds -le 0) {
+        Write-Host '[ERR] 策划 fast migration 必须由父编排显式传入正数 -TotalTimeoutSeconds。' -ForegroundColor Red
+        exit 1
+    }
+    # 先起单一 Stopwatch，再加载 helper；Add-Type 与后续 PowerShell 处理也计入总预算。
+    $PlannerMigrationDeadline = [Diagnostics.Stopwatch]::StartNew()
+    . (Join-Path $ScriptDir 'lib/planner_bounded_process.ps1')
+} elseif ($TotalTimeoutSeconds -ne 0) {
+    Write-Host '[ERR] -TotalTimeoutSeconds 只允许策划本机 fast migration 使用。' -ForegroundColor Red
+    exit 1
+}
+if ($UseLocalClient -and -not $PlannerFastStart -and -not (Test-Path -LiteralPath $MysqlClient)) {
     Write-Host "[ERR] -MysqlClient 指向的文件不存在: $MysqlClient" -ForegroundColor Red
     exit 1
 }
@@ -67,6 +83,12 @@ if ($UseLocalClient -and $MysqlHost -cne '127.0.0.1') {
 
 function Assert-LocalMysqlOwned {
     if (-not $UseLocalClient) { return }
+    if ($PlannerFastStart) {
+        # fast 的 canonical CIM/netstat 只读检查，会在每个 target 前放进受限 probe Job；
+        # 父层这里只证明生产调用点仍持有同一工作区编排锁，不能再做可能无限卡住的裸检查。
+        Assert-PandoraOrchestrationLockHeld -ProjectRoot $ProjectRoot | Out-Null
+        return
+    }
     $state = Get-PandoraLocalInfraPortState $ProjectRoot
     if (-not $state -or [int]$state.MysqlPort -ne $MysqlPort -or
         -not (Get-PandoraLocalMysqlOwnedProcess $ProjectRoot $state)) {
@@ -74,11 +96,468 @@ function Assert-LocalMysqlOwned {
     }
 }
 
+function Get-PlannerMigrationRemainingTimeoutMilliseconds {
+    if (-not $PlannerFastStart -or $null -eq $PlannerMigrationDeadline) {
+        throw '策划 migration deadline 只允许 fast 路径读取。'
+    }
+    $totalMilliseconds = [int64]$TotalTimeoutSeconds * 1000L
+    $remaining = $totalMilliseconds - [int64]$PlannerMigrationDeadline.ElapsedMilliseconds
+    if ($remaining -le 0) {
+        throw "策划 migration 已耗尽 ${TotalTimeoutSeconds}s 总时限；拒绝继续启动新的原生进程。"
+    }
+    return [int][Math]::Min(3600000L, [Math]::Max(1L, $remaining))
+}
+
+function ConvertFrom-PlannerMigrationProcessText {
+    param([AllowNull()][string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return @() }
+    return @($Text -split "`r?`n" | Where-Object { $_ -ne '' })
+}
+
+function Get-PlannerMigrationProcessOutput {
+    param([Parameter(Mandatory)]$Result)
+    return @(
+        if ($Result.StandardOutputTruncated) { 'helper: stdout 超过保留上限，诊断已截断' }
+        if ($Result.StandardErrorTruncated) { 'helper: stderr 超过保留上限，诊断已截断' }
+        if (-not [string]::IsNullOrWhiteSpace("$($Result.Failure)")) { "helper: $($Result.Failure)" }
+        ConvertFrom-PlannerMigrationProcessText -Text $Result.StandardOutput
+        ConvertFrom-PlannerMigrationProcessText -Text $Result.StandardError
+    )
+}
+
+function Test-PlannerMigrationProcessResult {
+    param([Parameter(Mandatory)]$Result)
+    # ExitCode 已经把 timeout/stdin/drain 转成 -1；这里仍逐项钉死，并把截断也视作失败：
+    # migration 诊断一旦丢尾部，人无法判断失败点，不能拿半份输出继续发布。
+    return $Result.ExitCode -eq 0 -and -not $Result.TimedOut -and $Result.DrainCompleted -and
+        $Result.StandardInputCompleted -and -not $Result.StandardOutputTruncated -and
+        -not $Result.StandardErrorTruncated -and [string]::IsNullOrWhiteSpace("$($Result.Failure)")
+}
+
+function Invoke-PlannerOwnedMigrationProcess {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('mysql-planner-probe', 'mysql-show-databases', 'mysql-init-batch', 'pandora-migrate')]
+        [string]$Mode,
+        [AllowNull()][string]$StandardInput = $null,
+        [string]$Password = '',
+        [string]$TargetsFile = '',
+        [string]$ExpectedTargets = ''
+    )
+    if (-not $PlannerFastStart) { throw 'ownership worker 只允许策划 fast migration 调用。' }
+    Assert-PandoraOrchestrationLockHeld -ProjectRoot $ProjectRoot | Out-Null
+    $worker = Assert-PlannerMigrationTrustedLeaf -ProjectRoot $ProjectRoot `
+        -Path (Join-Path $ScriptDir 'lib/planner_owned_migration_worker.ps1') `
+        -TrustedRoot (Join-Path $ProjectRoot 'tools/scripts/lib') `
+        -ExpectedLeaf 'planner_owned_migration_worker.ps1'
+    $pwshExe = Join-Path $PSHOME 'pwsh.exe'
+    if (-not (Test-Path -LiteralPath $pwshExe -PathType Leaf)) {
+        throw "ownership probe 找不到当前 PowerShell:$pwshExe"
+    }
+
+    # child worker 没有密码、stdin 或 target，只做 canonical ownership read-only probe。
+    # MYSQL_PWD=$null 显式删除父环境里可能残留的同名变量，不能把秘密意外带进 probe。
+    $probeArguments = [Collections.Generic.List[string]]::new()
+    foreach ($argument in @(
+            '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $worker,
+            '-ProjectRoot', $ProjectRoot, '-MysqlPort', "$MysqlPort"
+        )) { $probeArguments.Add($argument) }
+    $probeInvoke = @{
+        Name = "ownership-before-$Mode"
+        FilePath = $pwshExe
+        ArgumentList = $probeArguments.ToArray()
+        WorkingDirectory = $ProjectRoot
+        Environment = @{ MYSQL_PWD = $null }
+        TimeoutMilliseconds = Get-PlannerMigrationRemainingTimeoutMilliseconds
+    }
+    $ownershipResult = Invoke-PandoraPlannerBoundedProcess @probeInvoke
+    if (-not (Test-PlannerMigrationProcessResult -Result $ownershipResult)) {
+        return $ownershipResult
+    }
+
+    $targetInvoke = @{
+        Name = "target-$Mode"
+        WorkingDirectory = $ProjectRoot
+    }
+    switch ($Mode) {
+        'mysql-planner-probe' {
+            if ([string]::IsNullOrEmpty($Password)) { throw "$Mode 缺少 child-only MYSQL_PWD。" }
+            $mysqlExe = Assert-PlannerMigrationTrustedLeaf -ProjectRoot $ProjectRoot -Path $MysqlClient `
+                -TrustedRoot (Join-Path $ProjectRoot 'run/localinfra/dist/mysql') -ExpectedLeaf 'mysql.exe'
+            $sql = @"
+SELECT CONCAT('__PANDORA_UUID__=', @@server_uuid);
+SELECT CONCAT('__PANDORA_DATADIR__=', @@datadir);
+SELECT CONCAT('__PANDORA_DB__=', SCHEMA_NAME) FROM INFORMATION_SCHEMA.SCHEMATA;
+SELECT CONCAT('__PANDORA_TABLE__=', TABLE_SCHEMA, '.', TABLE_NAME)
+FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE';
+"@
+            $targetInvoke.FilePath = $mysqlExe
+            $targetInvoke.ArgumentList = @('--protocol=TCP', '--host=127.0.0.1', "--port=$MysqlPort",
+                "--user=$MysqlUser", '--batch', '--skip-column-names', '-e', $sql)
+            $targetInvoke.Environment = @{ MYSQL_PWD = $Password }
+            break
+        }
+        'mysql-show-databases' {
+            if ([string]::IsNullOrEmpty($Password)) { throw "$Mode 缺少 child-only MYSQL_PWD。" }
+            $mysqlExe = Assert-PlannerMigrationTrustedLeaf -ProjectRoot $ProjectRoot -Path $MysqlClient `
+                -TrustedRoot (Join-Path $ProjectRoot 'run/localinfra/dist/mysql') -ExpectedLeaf 'mysql.exe'
+            $targetInvoke.FilePath = $mysqlExe
+            $targetInvoke.ArgumentList = @('--protocol=TCP', '--host=127.0.0.1', "--port=$MysqlPort",
+                "--user=$MysqlUser", '--batch', '--skip-column-names', '-e', 'SHOW DATABASES;')
+            $targetInvoke.Environment = @{ MYSQL_PWD = $Password }
+            break
+        }
+        'mysql-init-batch' {
+            if ([string]::IsNullOrEmpty($Password)) { throw "$Mode 缺少 child-only MYSQL_PWD。" }
+            if ([string]::IsNullOrWhiteSpace($StandardInput)) { throw 'mysql-init-batch stdin 为空。' }
+            $mysqlExe = Assert-PlannerMigrationTrustedLeaf -ProjectRoot $ProjectRoot -Path $MysqlClient `
+                -TrustedRoot (Join-Path $ProjectRoot 'run/localinfra/dist/mysql') -ExpectedLeaf 'mysql.exe'
+            $targetInvoke.FilePath = $mysqlExe
+            $targetInvoke.ArgumentList = @('--protocol=TCP', '--host=127.0.0.1', "--port=$MysqlPort",
+                '--user=root', '--default-character-set=utf8mb4')
+            $targetInvoke.Environment = @{ MYSQL_PWD = $Password }
+            $targetInvoke.StandardInput = $StandardInput
+            break
+        }
+        'pandora-migrate' {
+            if ([string]::IsNullOrEmpty($Password)) { throw 'pandora-migrate 缺少 DSN 校验密码。' }
+            $validatedTargets = Assert-PlannerMigrationTargetsFileForExecution -ProjectRoot $ProjectRoot `
+                -TargetsFile $TargetsFile -MysqlPort $MysqlPort -MysqlUser $MysqlUser -MysqlPassword $Password
+            if (-not [string]::Equals($ExpectedTargets, $validatedTargets.ExpectedTargets,
+                    [StringComparison]::Ordinal)) {
+                throw 'expected-targets 与已验证 manifest 不一致。'
+            }
+            $migrateExe = Assert-PlannerMigrationTrustedLeaf -ProjectRoot $ProjectRoot `
+                -Path (Join-Path $ProjectRoot 'run/artifacts/windows/bin/pandora-migrate.exe') `
+                -TrustedRoot (Join-Path $ProjectRoot 'run/artifacts/windows/bin') `
+                -ExpectedLeaf 'pandora-migrate.exe'
+            $targetInvoke.FilePath = $migrateExe
+            $targetInvoke.ArgumentList = @("-targets-file=$($validatedTargets.TargetsFile)",
+                "-expected-targets=$($validatedTargets.ExpectedTargets)", '-environment=dev')
+            $targetInvoke.Environment = @{ MYSQL_PWD = $null }
+            break
+        }
+    }
+    # 路径、manifest、DSN 复核也消耗同一墙钟预算。必须紧贴真正 CreateProcess 前现算，
+    # 不能在 validator 前缓存一个过期 remaining 值，让总墙钟突破 600 秒。
+    $targetInvoke.TimeoutMilliseconds = Get-PlannerMigrationRemainingTimeoutMilliseconds
+    return Invoke-PandoraPlannerBoundedProcess @targetInvoke
+}
+
+function Get-PlannerMigrationSessionRoot {
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+    return [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'run/localinfra/tmp/dev-migrate')).TrimEnd('\', '/')
+}
+
+function Assert-PlannerMigrationPathAncestorsSafe {
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$Path
+    )
+    $projectFull = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    $candidate = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    $projectPrefix = $projectFull + [IO.Path]::DirectorySeparatorChar
+    if (-not [string]::Equals($candidate, $projectFull, [StringComparison]::OrdinalIgnoreCase) -and
+        -not $candidate.StartsWith($projectPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "migration session 路径越界:$candidate"
+    }
+    # 从工作区根向目标逐级走。若反向从 leaf 开始，Test-Path leaf 可能先沿上层 junction
+    # 进入工作区外甚至断连 UNC，等走回 junction 才发现已经太晚。
+    $current = $projectFull
+    $relative = if ([string]::Equals($candidate, $projectFull, [StringComparison]::OrdinalIgnoreCase)) {
+        ''
+    } else {
+        $candidate.Substring($projectPrefix.Length)
+    }
+    $segments = @($relative -split '[\\/]' | Where-Object { $_ -ne '' })
+    if (Test-Path -LiteralPath $current) {
+        $rootItem = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+        if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "migration session 路径含 reparse ancestor:$current"
+        }
+    }
+    foreach ($segment in $segments) {
+        $current = [IO.Path]::Combine($current, $segment)
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "migration session 路径含 reparse ancestor:$current"
+            }
+        }
+    }
+}
+
+function Assert-PlannerMigrationSessionTreeSafe {
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$SessionPath
+    )
+    $projectFull = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    Assert-PandoraOrchestrationLockHeld -ProjectRoot $projectFull | Out-Null
+    $root = Get-PlannerMigrationSessionRoot -ProjectRoot $projectFull
+    Assert-PlannerMigrationPathAncestorsSafe -ProjectRoot $projectFull -Path $root
+    $projectPrefix = $projectFull + [IO.Path]::DirectorySeparatorChar
+    if (-not $root.StartsWith($projectPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "migration session root 越界:$root"
+    }
+    $session = [IO.Path]::GetFullPath($SessionPath).TrimEnd('\', '/')
+    Assert-PlannerMigrationPathAncestorsSafe -ProjectRoot $projectFull -Path $session
+    $parent = [IO.Path]::GetDirectoryName($session)
+    if (-not [string]::Equals($parent, $root, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($session) -cnotmatch '^\d+-[0-9a-f]{32}$') {
+        throw "拒绝清理非本工作区合法 migration session:$session"
+    }
+    if (-not (Test-Path -LiteralPath $root -PathType Container) -or
+        -not (Test-Path -LiteralPath $session -PathType Container)) {
+        throw "migration session 不存在或不是目录:$session"
+    }
+    $rootInfo = Get-Item -LiteralPath $root -Force -ErrorAction Stop
+    $sessionInfo = Get-Item -LiteralPath $session -Force -ErrorAction Stop
+    if (($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "migration session root 是 reparse point:$root"
+    }
+    if (($sessionInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "migration session 是 reparse point:$session"
+    }
+
+    # session 形状固定为扁平的 *.dsn + targets.json。拒绝任何子目录/其它文件后，删除时就
+    # 无需 -Recurse，不存在“检查后把目录换成 junction 再沿路径递归”的扩大删除面。
+    foreach ($entry in $sessionInfo.EnumerateFileSystemInfos()) {
+        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "migration session 内含 reparse point:$($entry.FullName)"
+        }
+        if (($entry.Attributes -band [IO.FileAttributes]::Directory) -ne 0 -or
+            $entry.Name -cnotmatch '^(?:targets\.json|[a-z][a-z0-9_]*\.dsn)$') {
+            throw "migration session 含未知条目:$($entry.FullName)"
+        }
+    }
+    return $session
+}
+
+function Assert-PlannerMigrationTrustedLeaf {
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$TrustedRoot,
+        [Parameter(Mandatory)][string]$ExpectedLeaf
+    )
+    $projectFull = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    Assert-PandoraOrchestrationLockHeld -ProjectRoot $projectFull | Out-Null
+    $trustedFull = [IO.Path]::GetFullPath($TrustedRoot).TrimEnd('\', '/')
+    $pathFull = [IO.Path]::GetFullPath($Path)
+    $projectPrefix = $projectFull + [IO.Path]::DirectorySeparatorChar
+    if (-not $trustedFull.StartsWith($projectPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "受信 executable root 越出工作区:$trustedFull"
+    }
+    $trustedPrefix = $trustedFull + [IO.Path]::DirectorySeparatorChar
+    if (-not $pathFull.StartsWith($trustedPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($pathFull) -ine $ExpectedLeaf) {
+        throw "拒绝非本工作区固定 executable:$pathFull"
+    }
+    # 必须从 ProjectRoot 开始逐级检查；只检查 mysql/artifact leaf root 会漏掉更高层 junction。
+    Assert-PlannerMigrationPathAncestorsSafe -ProjectRoot $projectFull -Path $trustedFull
+    Assert-PlannerMigrationPathAncestorsSafe -ProjectRoot $projectFull -Path $pathFull
+    if (-not (Test-Path -LiteralPath $pathFull -PathType Leaf)) {
+        throw "固定 executable 不存在:$pathFull"
+    }
+    $leafInfo = Get-Item -LiteralPath $pathFull -Force -ErrorAction Stop
+    if (($leafInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "固定 executable 是 reparse point:$pathFull"
+    }
+    return $pathFull
+}
+
+function Assert-PlannerMigrationTargetsFileForExecution {
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$TargetsFile,
+        [Parameter(Mandatory)][ValidateRange(1024, 49151)][int]$MysqlPort,
+        [Parameter(Mandatory)][string]$MysqlUser,
+        [Parameter(Mandatory)][string]$MysqlPassword
+    )
+    $projectFull = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    Assert-PandoraOrchestrationLockHeld -ProjectRoot $projectFull | Out-Null
+    $targetsFull = [IO.Path]::GetFullPath($TargetsFile)
+    $session = [IO.Path]::GetDirectoryName($targetsFull)
+    $validatedSession = Assert-PlannerMigrationSessionTreeSafe -ProjectRoot $projectFull -SessionPath $session
+    Assert-PlannerMigrationPathAncestorsSafe -ProjectRoot $projectFull -Path $targetsFull
+    if ([IO.Path]::GetFileName($targetsFull) -cne 'targets.json' -or
+        -not [string]::Equals([IO.Path]::GetDirectoryName($targetsFull), $validatedSession,
+            [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $targetsFull -PathType Leaf)) {
+        throw "拒绝当前 migration session 外的 targets.json:$targetsFull"
+    }
+
+    try {
+        $manifest = [IO.File]::ReadAllText($targetsFull) | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "targets.json 不是有效 JSON:$($_.Exception.Message)"
+    }
+    $targetsProperty = $manifest.PSObject.Properties['targets']
+    if ($null -eq $targetsProperty -or $null -eq $targetsProperty.Value) {
+        throw 'targets.json 缺少 targets 数组。'
+    }
+    $targets = @($targetsProperty.Value)
+    if ($targets.Count -eq 0) { throw 'targets.json 的 targets 不能为空。' }
+
+    $seenNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $seenDsn = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $expected = [Collections.Generic.List[string]]::new()
+    foreach ($target in $targets) {
+        if ($null -eq $target) { throw 'targets.json 含空 target。' }
+        $nameProperty = $target.PSObject.Properties['name']
+        $setProperty = $target.PSObject.Properties['migration_set']
+        $databaseProperty = $target.PSObject.Properties['database']
+        $dsnProperty = $target.PSObject.Properties['dsn_file']
+        if ($null -eq $nameProperty -or $nameProperty.Value -isnot [string] -or
+            "$($nameProperty.Value)" -cnotmatch '^[a-z][a-z0-9-]{0,62}$') {
+            throw 'target.name 不符合受管 migration target 格式。'
+        }
+        if ($null -eq $setProperty -or $setProperty.Value -isnot [string] -or
+            "$($setProperty.Value)" -cnotmatch '^[a-z][a-z0-9_]*$' -or
+            $null -eq $databaseProperty -or $databaseProperty.Value -isnot [string] -or
+            "$($databaseProperty.Value)" -cnotmatch '^[a-z][a-z0-9_]*$' -or
+            -not [string]::Equals("$($setProperty.Value)", "$($databaseProperty.Value)",
+                [StringComparison]::Ordinal)) {
+            throw 'target.database/migration_set 缺失、非法或不一致。'
+        }
+        if ($null -eq $dsnProperty -or $dsnProperty.Value -isnot [string]) {
+            throw 'target.dsn_file 必须是字符串。'
+        }
+
+        $name = [string]$nameProperty.Value
+        $database = [string]$databaseProperty.Value
+        $dsnLeaf = [string]$dsnProperty.Value
+        if ($dsnLeaf -cnotmatch '^[a-z][a-z0-9_]*\.dsn$' -or
+            [IO.Path]::IsPathRooted($dsnLeaf) -or
+            [IO.Path]::GetFileName($dsnLeaf) -cne $dsnLeaf) {
+            throw "dsn_file 必须是 session 内普通直接文件:$dsnLeaf"
+        }
+        if (-not $seenNames.Add($name)) { throw "targets.json 重复 target.name:$name" }
+        if (-not $seenDsn.Add($dsnLeaf)) { throw "targets.json 重复引用 dsn_file:$dsnLeaf" }
+
+        $dsnPath = [IO.Path]::GetFullPath((Join-Path $validatedSession $dsnLeaf))
+        Assert-PlannerMigrationPathAncestorsSafe -ProjectRoot $projectFull -Path $dsnPath
+        if (-not [string]::Equals([IO.Path]::GetDirectoryName($dsnPath), $validatedSession,
+                [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $dsnPath -PathType Leaf)) {
+            throw "dsn_file 不存在或不在当前 session:$dsnLeaf"
+        }
+        $dsnInfo = Get-Item -LiteralPath $dsnPath -Force -ErrorAction Stop
+        if (($dsnInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "DSN $dsnLeaf 是 reparse point。"
+        }
+
+        $dsnText = [IO.File]::ReadAllText($dsnPath)
+        $dsnMatch = [regex]::Match($dsnText,
+            '\A(?<user>[A-Za-z0-9_.-]+):(?<password>[^\r\n]*)@tcp\((?<host>[^():\s]+):(?<port>[0-9]{1,5})\)/(?<database>[a-z][a-z0-9_]*)\?(?<query>[^\r\n]+)\z')
+        $expectedQuery = 'parseTime=true&loc=UTC&multiStatements=true'
+        if (-not $dsnMatch.Success -or
+            -not [string]::Equals($dsnMatch.Groups['user'].Value, $MysqlUser, [StringComparison]::Ordinal) -or
+            -not [string]::Equals($dsnMatch.Groups['password'].Value, $MysqlPassword, [StringComparison]::Ordinal) -or
+            -not [string]::Equals($dsnMatch.Groups['host'].Value, '127.0.0.1', [StringComparison]::Ordinal) -or
+            [int]$dsnMatch.Groups['port'].Value -ne $MysqlPort -or
+            -not [string]::Equals($dsnMatch.Groups['database'].Value, $database, [StringComparison]::Ordinal) -or
+            -not [string]::Equals($dsnMatch.Groups['query'].Value, $expectedQuery, [StringComparison]::Ordinal)) {
+            # 诊断刻意不回显 DSN 或 password。
+            throw "DSN $dsnLeaf 未绑定本机已归属 MySQL、受管账号和 target database。"
+        }
+        $expected.Add("${name}:$($setProperty.Value):$database")
+    }
+
+    $unreferenced = @(Get-ChildItem -LiteralPath $validatedSession -File -Force -ErrorAction Stop |
+        Where-Object { $_.Name -cne 'targets.json' -and -not $seenDsn.Contains($_.Name) })
+    if ($unreferenced.Count -gt 0) {
+        throw "migration session 含未被 targets.json 引用的 DSN:$($unreferenced.Name -join ',')"
+    }
+    return [pscustomobject][ordered]@{
+        TargetsFile = $targetsFull
+        ExpectedTargets = $expected -join ','
+    }
+}
+
+function Clear-PlannerMigrationAbandonedSessions {
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+    $projectFull = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    Assert-PandoraOrchestrationLockHeld -ProjectRoot $projectFull | Out-Null
+    $root = Get-PlannerMigrationSessionRoot -ProjectRoot $projectFull
+    Assert-PlannerMigrationPathAncestorsSafe -ProjectRoot $projectFull -Path $root
+    if (-not (Test-Path -LiteralPath $root)) { return }
+    $rootInfo = Get-Item -LiteralPath $root -Force -ErrorAction Stop
+    if (-not $rootInfo.PSIsContainer -or
+        ($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "migration session root 不是普通目录:$root"
+    }
+    $children = @(Get-ChildItem -LiteralPath $root -Force -ErrorAction Stop)
+    $validated = [Collections.Generic.List[string]]::new()
+    foreach ($child in $children) {
+        if (-not $child.PSIsContainer) { throw "migration session root 含未知文件:$($child.FullName)" }
+        $validated.Add((Assert-PlannerMigrationSessionTreeSafe -ProjectRoot $projectFull -SessionPath $child.FullName))
+    }
+    $failures = [Collections.Generic.List[string]]::new()
+    foreach ($session in $validated) {
+        try {
+            foreach ($file in @(Get-ChildItem -LiteralPath $session -File -Force -ErrorAction Stop)) {
+                Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+            }
+            if (@(Get-ChildItem -LiteralPath $session -Force -ErrorAction Stop).Count -ne 0) {
+                throw "删除普通文件后 session 非空:$session"
+            }
+            Remove-Item -LiteralPath $session -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $session) { throw "删除后仍存在:$session" }
+        } catch { $failures.Add("$session：$($_.Exception.Message)") }
+    }
+    if ($failures.Count -gt 0) {
+        throw "历史明文 migration session 清理失败:$($failures -join ' | ')"
+    }
+}
+
+function New-PlannerMigrationSessionDirectory {
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+    $projectFull = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    Assert-PandoraOrchestrationLockHeld -ProjectRoot $projectFull | Out-Null
+    $root = Get-PlannerMigrationSessionRoot -ProjectRoot $projectFull
+    Assert-PlannerMigrationPathAncestorsSafe -ProjectRoot $projectFull -Path $root
+    New-Item -ItemType Directory -Path $root -Force -ErrorAction Stop | Out-Null
+    Assert-PlannerMigrationPathAncestorsSafe -ProjectRoot $projectFull -Path $root
+    $rootInfo = Get-Item -LiteralPath $root -Force -ErrorAction Stop
+    if (($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "migration session root 是 reparse point:$root"
+    }
+    $session = Join-Path $root ("{0}-{1}" -f $PID, [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $session -ErrorAction Stop | Out-Null
+    return (Assert-PlannerMigrationSessionTreeSafe -ProjectRoot $projectFull -SessionPath $session)
+}
+
+function Remove-PlannerMigrationSessionDirectory {
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$SessionPath
+    )
+    $session = Assert-PlannerMigrationSessionTreeSafe -ProjectRoot $ProjectRoot -SessionPath $SessionPath
+    foreach ($file in @(Get-ChildItem -LiteralPath $session -File -Force -ErrorAction Stop)) {
+        Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+    }
+    if (@(Get-ChildItem -LiteralPath $session -Force -ErrorAction Stop).Count -ne 0) {
+        throw "删除普通文件后本轮 migration session 非空:$session"
+    }
+    Remove-Item -LiteralPath $session -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $session) { throw "本轮 migration session 删除后仍存在:$session" }
+}
+
 function Invoke-DevMysqlQuery {
     <# 拿库列表。docker 模式走容器内 mysql,免 Docker 模式走本机 mysql.exe。#>
     param([string]$Sql)
     if ($UseLocalClient) {
         Assert-LocalMysqlOwned
+        if ($PlannerFastStart) {
+            $mode = if ($Sql -ceq 'SHOW DATABASES;') { 'mysql-show-databases' } elseif (
+                $Sql -match '__PANDORA_UUID__' -and $Sql -match '__PANDORA_DATADIR__' -and
+                $Sql -match '__PANDORA_DB__' -and $Sql -match '__PANDORA_TABLE__') {
+                'mysql-planner-probe'
+            } else { throw 'fast ownership worker 拒绝未登记的 MySQL query。' }
+            return Invoke-PlannerOwnedMigrationProcess -Mode $mode -Password $MysqlPassword
+        }
         $old = $env:MYSQL_PWD
         try {
             $env:MYSQL_PWD = $MysqlPassword
@@ -115,21 +594,16 @@ function Invoke-DevMysqlScriptsBatch {
     Assert-LocalMysqlOwned
     # 全部读成功后才启 mysql；中途文件损坏时不会先执行半批 DDL。
     $sql = Join-PandoraPlannerMysqlInitScripts -Files $Files
-    $old = $env:MYSQL_PWD
-    try {
-        $env:MYSQL_PWD = $MysqlRootPassword
-        $output = @($sql | & $MysqlClient '--protocol=TCP' "--host=$MysqlHost" "--port=$MysqlPort" '--user=root' `
-                '--default-character-set=utf8mb4' 2>&1)
-        $exitCode = $LASTEXITCODE
-        return [pscustomobject][ordered]@{ ExitCode = [int]$exitCode; Output = $output }
-    } finally {
-        $env:MYSQL_PWD = $old
-    }
+    return Invoke-PlannerOwnedMigrationProcess -Mode 'mysql-init-batch' -Password $MysqlRootPassword `
+        -StandardInput $sql
 }
 
 Enter-PandoraOrchestrationLock -ProjectRoot $ProjectRoot -Operation '数据库结构迁移'
 $orchestrationLockEntered = $true
 try {
+if ($PlannerFastStart) {
+    Clear-PlannerMigrationAbandonedSessions -ProjectRoot $ProjectRoot
+}
 # 先确认 MySQL 能连。策划 fast 同一次查询顺便取实例身份和库/表清单，
 # 供强收据 fail-closed 命中；普通模式仍只做原有 SHOW DATABASES。
 $plannerProbe = $null
@@ -142,12 +616,21 @@ SELECT CONCAT('__PANDORA_TABLE__=', TABLE_SCHEMA, '.', TABLE_NAME)
 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE';
 "@
 } else { 'SHOW DATABASES;' }
-$dbListRaw = Invoke-DevMysqlQuery $probeSql
-$probeExitCode = $LASTEXITCODE
+$probeResult = $null
+if ($PlannerFastStart) {
+    $probeResult = Invoke-DevMysqlQuery $probeSql
+    $dbListRaw = @(ConvertFrom-PlannerMigrationProcessText -Text $probeResult.StandardOutput)
+    $probeExitCode = [int]$probeResult.ExitCode
+    if (-not (Test-PlannerMigrationProcessResult -Result $probeResult)) { $probeExitCode = -1 }
+} else {
+    $dbListRaw = Invoke-DevMysqlQuery $probeSql
+    $probeExitCode = $LASTEXITCODE
+}
 if ($probeExitCode -ne 0) {
     $whoRaw = if ($UseLocalClient) { "本机 MySQL ${MysqlHost}:${MysqlPort}" } else { "dev MySQL 容器『$Container』" }
     Write-MigWarn "连不上 $whoRaw,跳过结构升级(基础设施可能还没起完)。"
-    Write-MigWarn "  详情:$($dbListRaw | Select-Object -First 3)"
+    $probeDetails = if ($PlannerFastStart) { @(Get-PlannerMigrationProcessOutput -Result $probeResult) } else { @($dbListRaw) }
+    Write-MigWarn "  详情:$($probeDetails | Select-Object -First 3)"
     if ($RequireMysql) { exit 1 }
     exit 0
 }
@@ -200,9 +683,10 @@ if ($initFiles.Count -gt 0) {
         Write-MigInfo "重放 mysql-init 建库建表脚本($($initFiles.Count) 个,全 IF NOT EXISTS,已存在则空跑)..."
         if ($PlannerFastStart) {
             $batchResult = Invoke-DevMysqlScriptsBatch -Files $initFiles
-            if ($batchResult.ExitCode -ne 0) {
+            if (-not (Test-PlannerMigrationProcessResult -Result $batchResult)) {
                 Write-Host '[ERR] 批量重放 mysql-init 失败:' -ForegroundColor Red
-                $batchResult.Output | ForEach-Object { Write-Host "      $_" -ForegroundColor Red }
+                Get-PlannerMigrationProcessOutput -Result $batchResult |
+                    ForEach-Object { Write-Host "      $_" -ForegroundColor Red }
                 exit 1
             }
         } else {
@@ -261,9 +745,21 @@ if ($sets.Count -eq 0) {
 if ($PlannerFastStart -and -not $initReplayExecuted) {
     $existingDbs = @($initialExistingDbs)
 } else {
-    $dbListRaw = Invoke-DevMysqlQuery 'SHOW DATABASES;'
-    if ($LASTEXITCODE -ne 0) {
+    if ($PlannerFastStart) {
+        $dbListResult = Invoke-DevMysqlQuery 'SHOW DATABASES;'
+        $dbListRaw = @(ConvertFrom-PlannerMigrationProcessText -Text $dbListResult.StandardOutput)
+        $dbListExitCode = [int]$dbListResult.ExitCode
+        if (-not (Test-PlannerMigrationProcessResult -Result $dbListResult)) { $dbListExitCode = -1 }
+    } else {
+        $dbListRaw = Invoke-DevMysqlQuery 'SHOW DATABASES;'
+        $dbListExitCode = $LASTEXITCODE
+    }
+    if ($dbListExitCode -ne 0) {
         Write-MigWarn "重放后重查库列表失败,跳过增量迁移。"
+        if ($PlannerFastStart) {
+            Get-PlannerMigrationProcessOutput -Result $dbListResult |
+                Select-Object -First 3 | ForEach-Object { Write-MigWarn "  详情:$_" }
+        }
         if ($RequireMysql) { exit 1 }
         exit 0
     }
@@ -299,8 +795,22 @@ if ($WhatIfOnly) { exit 0 }
 
 # 3) 选迁移器:优先预编译产物(策划机没 Go),否则现场 go run。
 $migrateExe = Join-Path $ProjectRoot 'run/artifacts/windows/bin/pandora-migrate.exe'
-$hasGo = [bool](Get-Command go -ErrorAction SilentlyContinue)
-if (-not (Test-Path -LiteralPath $migrateExe) -and -not $hasGo) {
+$hasGo = $false
+if ($PlannerFastStart) {
+    # fast 的全部外部动作都必须在 600s Job/deadline 内。不要在父层 Get-Command 扫可能断连的
+    # UNC PATH；策划发布包本就必须携带这个固定 artifact，缺失直接 fail closed。
+    try {
+        $migrateExe = Assert-PlannerMigrationTrustedLeaf -ProjectRoot $ProjectRoot -Path $migrateExe `
+            -TrustedRoot (Join-Path $ProjectRoot 'run/artifacts/windows/bin') `
+            -ExpectedLeaf 'pandora-migrate.exe'
+    } catch {
+        Write-MigWarn "策划 fast 发布包的预编译迁移器不受信或缺失:$($_.Exception.Message)"
+        exit 1
+    }
+} else {
+    $hasGo = [bool](Get-Command go -ErrorAction SilentlyContinue)
+}
+if (-not $PlannerFastStart -and -not (Test-Path -LiteralPath $migrateExe) -and -not $hasGo) {
     # 不阻断启动:结构可能本来就是最新的。但必须把话说清楚,不能让人再对着
     # "Unknown column" 猜半天 —— 这正是本脚本存在的理由。
     Write-MigWarn '本机既没有 Go,也没有预编译的迁移器,无法自动升级数据库结构。'
@@ -311,9 +821,15 @@ if (-not (Test-Path -LiteralPath $migrateExe) -and -not $hasGo) {
 }
 
 # 4) 生成迁移器要的 targets 清单 + DSN 文件(它只接受文件形式的 DSN,且必须在清单同目录下)。
-#    放临时目录,用完即删。
-$tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("pandora-dev-migrate-{0}-{1}" -f $PID, [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+#    fast 路径放进工作区锁保护的扁平 session，硬杀残留由下轮 sweep；普通/Docker 路径保持
+#    原有 %TEMP% 生命周期，不把策划安全策略扩散到人工调用。
+if ($PlannerFastStart) {
+    $tmpDir = New-PlannerMigrationSessionDirectory -ProjectRoot $ProjectRoot
+} else {
+    $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) `
+        ("pandora-dev-migrate-{0}-{1}" -f $PID, [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+}
 try {
     $targetEntries = @()
     $expected = @()
@@ -353,22 +869,37 @@ try {
     # 红色 NativeCommandError,看着像出错了其实一切正常 —— 2>&1 合并成普通输出行。
     # 真正的成败只看退出码。
     Assert-LocalMysqlOwned
-    if (Test-Path -LiteralPath $migrateExe) {
-        & $migrateExe @migArgs 2>&1 | ForEach-Object { "  $_" }
+    if ($PlannerFastStart) {
+        $expectedTargets = $expected -join ','
+        $plannerMigrateResult = Invoke-PlannerOwnedMigrationProcess -Mode 'pandora-migrate' `
+            -Password $MysqlPassword -TargetsFile $targetsFile -ExpectedTargets $expectedTargets
+        Get-PlannerMigrationProcessOutput -Result $plannerMigrateResult | ForEach-Object { "  $_" }
+        $migrationExitCode = [int]$plannerMigrateResult.ExitCode
+        if (-not (Test-PlannerMigrationProcessResult -Result $plannerMigrateResult)) { $migrationExitCode = -1 }
     } else {
-        Push-Location (Join-Path $ProjectRoot 'tools/migrate')
-        try { & go run . @migArgs 2>&1 | ForEach-Object { "  $_" } } finally { Pop-Location }
+        if (Test-Path -LiteralPath $migrateExe) {
+            & $migrateExe @migArgs 2>&1 | ForEach-Object { "  $_" }
+        } else {
+            Push-Location (Join-Path $ProjectRoot 'tools/migrate')
+            try { & go run . @migArgs 2>&1 | ForEach-Object { "  $_" } } finally { Pop-Location }
+        }
+        $migrationExitCode = $LASTEXITCODE
     }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERR] 数据库结构升级失败(exit=$LASTEXITCODE)。" -ForegroundColor Red
+    if ($migrationExitCode -ne 0) {
+        Write-Host "[ERR] 数据库结构升级失败(exit=$migrationExitCode)。" -ForegroundColor Red
         Write-Host "      业务服务连上旧结构只会启动即崩(如 Unknown column),故此处中止。" -ForegroundColor Red
         exit 1
     }
     Write-MigOk '数据库结构已是最新。'
 }
 finally {
-    Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($PlannerFastStart) {
+        Remove-PlannerMigrationSessionDirectory -ProjectRoot $ProjectRoot -SessionPath $tmpDir
+    } else {
+        Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 } finally {
     if ($orchestrationLockEntered) { Exit-PandoraOrchestrationLock }
 }
+exit 0

@@ -36,6 +36,8 @@ from pandorapy.services.auction import shard_topology as atopology
 from pandorapy.services.auction import submit as asub
 from pandorapy.services.auction.market_router import MarketRouter, hrw_score
 
+from tests.srcprobe import module_code_text
+
 GO_CONF = "services/economy/auction/internal/conf/conf.go"
 GO_MAIN = "services/economy/auction/cmd/auction/main.go"
 GO_ROUTER = "services/economy/auction/internal/biz/market_router.go"
@@ -192,7 +194,9 @@ def test_retention_mode_typo_is_rejected() -> None:
 def test_gate_event_names_exist_in_go_main(repo_root: pathlib.Path) -> None:
     """★ 事件名必须与 Go **逐字相同**:Loki 上按事件名建的告警对不上 = 静默失去覆盖。"""
     go_src = (repo_root / GO_MAIN).read_text(encoding="utf-8")
-    py_src = pathlib.Path(amain.__file__).read_text(encoding="utf-8")
+    # Python 侧只看代码：注释/docstring 里写着事件名不代表真的打了这条日志
+    # （理由见 tests/srcprobe.py）。Go 侧是另一门语言，仍按原文匹配。
+    py_src = module_code_text(amain)
 
     shared = [
         "config_load_failed",

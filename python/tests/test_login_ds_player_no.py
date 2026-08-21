@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import pathlib
 import time
 from types import SimpleNamespace
 
@@ -277,7 +276,11 @@ def test_main_wires_redis_ds_player_no_authority_before_serving() -> None:
     """未来解除 v2 signer 闸时，Redis 档不能漏掉 endpoint 的 active checker。"""
     from pandorapy.services.login import main as lmain
 
-    source = pathlib.Path(lmain.__file__).read_text(encoding="utf-8")
+    from tests.srcprobe import module_code_text
+
+    # 只看代码：注释里写着接线不算接线，而且下面是 index() 比顺序 ——
+    # 注释位置参与排序会直接得出错误结论（理由见 tests/srcprobe.py）。
+    source = module_code_text(lmain)
     wire = "svc.set_redis_ds_admission_authority("
 
     assert "ldsadmission.RedisDSAdmissionChecker(" in source

@@ -570,6 +570,9 @@ owner 用它**拒**带玩家 JWT 的调用。同一个符号，两种相反的�
 > 定义了但从未挂进 background」**自己就含这个名字**，把接线拆掉后检查照样打绿。
 > 改成数 AST 的 `ast.Name`(Load) 引用后立刻抓到。
 > **注释会抵消文本判据；能拿 AST 就别数文本。**
+>
+> 📌 当时以为这是一次孤立失误。**不是** —— 按同一形状复查后又找到两处（其中一处
+> 守着 §9.16 的排空在途），见 §5.2.10。
 
 **全仓对账**：把 Go 各 `cmd/*/main.go` 的 `go xxx(...)` 具名 goroutine 全部枚举
 （13 个 `runCapacityGuard` + leaderboard 双 sweep + mail / dialogue / owner / inventory
@@ -581,6 +584,142 @@ owner 用它**拒**带玩家 JWT 的调用。同一个符号，两种相反的�
 `_done_with_failures` / `_done`，与 Go 逐字相同、告警按名建）没有任何断言守着，
 可以被静默删掉。已补 `structlog.testing.capture_logs` 的事件名守护用例。
 **判据：凡"改了不会让任何断言变红"的东西，就是没被测。**
+
+### 5.2.10 机械检查数文本 → 被注释/docstring 抵消（同一缺陷已栽三次）
+
+§5.2.9 那条脚注（"注释会抵消文本判据"）当时被当成一次孤立失误记下。**它不是孤立的。**
+按同一形状全仓复查后，又找到两处，其中一处守着 §9.16 的排空在途。
+
+#### 实测证据
+
+`test_service_layer_contract.py::test_cancelled_error_is_re_raised_before_any_broad_except`
+第一版按行正则匹配 `except BaseException`，放行条件①是「往前 12 行的窗口里出现过
+`CancelledError` 这个字符串」。而本仓每一处真守卫上面都跟着一段
+「★ 取消必须穿透:CancelledError 是 BaseException…」的解释性注释。
+
+变异：把 `leaderboard/main.py:_retention_round` 里真的
+`except asyncio.CancelledError: raise` 删掉、**只留那句注释**：
+
+| 判据 | 结果 |
+|---|---|
+| 正则版（前 12 行窗口含该字符串） | **238 passed** —— 没抓到 |
+| AST 版（按 `try` 节点结构判 handler 声明顺序） | **1 failed**，精确报 `leaderboard/main.py` 第 435 行 |
+
+改 AST 顺带补上了正则版的三个**结构性**盲区：裸 `except:`（同样抓 `BaseException`，
+但匹配不到字面量所以整个漏掉）、`except (Foo, BaseException):` 元组形式、以及
+「前 12 行」这个拍脑袋的窗口（改后由 `try` 节点结构决定归属，不受行距与嵌套影响）。
+
+#### 另外两处现场
+
+- `test_login_main.py::test_cancelled_error_is_never_swallowed`：8 行窗口版，与上条
+  判据重复且更弱。已改为**委派**给 AST 版，只保留一条归属断言（确认 login 的
+  main / service / rest / passwd 确实落在那道门的扫描集合里）。两份判据必然漂移，
+  弱的那份还会给人虚假的安心。
+- `test_player_locator_service.py`：`assert event in lmain.__doc__ or event in <原始源码>`
+  —— **明文把模块 docstring 当成证据**。事件名只写在头注释里、压根没打这条日志，
+  照样绿，而 Loki 上按这个名字建的告警此刻已经失去覆盖。
+
+#### 治法
+
+1. **首选 AST**。判据能用语法结构表达就别落在文本上。
+2. 「某调用 / 某字面量还在不在」这类断言，用 AST 表达要为每种形状写一套匹配，按
+   `CLAUDE.md §15.2` 属于把简单问题复杂化。改用新增的
+   [`python/tests/srcprobe.py`](../../python/tests/srcprobe.py)：`code_text()` /
+   `module_code_text()` **把注释与 docstring 替换成等量空白、代码原样保留**，之后
+   仍旧子串匹配。
+   - 抹成空白而非删除，是为了保住行列结构 —— `src.index(a) < src.index(b)` 那类
+     比顺序的用例依赖它（`test_login_main.py::test_gate_order_matches_go`）。
+   - docstring 按**整行**抹：`ast` 的 `col_offset` 是 UTF-8 **字节**偏移，本仓
+     docstring 全是中文，字节偏移与字符下标对不上。注释按 token 列范围精确抹
+     （`tokenize` 给的是字符偏移），所以 `x = 1  # 说明` 里的 `x = 1` 完整保留。
+   - `test_login_main.py` 里原先手工写的 `.split('"""', 2)[2]`（只跳模块 docstring、
+     盖不住行内注释与函数 docstring）是同一个坑的就地补丁，已一并删除。
+3. `srcprobe` 自身有 `tests/test_srcprobe.py` 守着：正反用例 + 在 21 个真实
+   `services/*/main.py` 上做「抹前抹后 AST 等价」的无损校验。它要是哪天退化成
+   原样返回，依赖它的二十来条断言会**一起变成恒绿且零报错**。
+4. **每条新机械检查都要配一条金丝雀**，断言它不是空转（扫到的样本数下限 + 内联的
+   正例与反例源码）。否则"全绿"分不清"真的没有违规"和"判据根本没生效"。
+
+已迁移的调用点：team / login / player / chat / auction / battle_result / inventory /
+player_locator / dsauthfence / server_shell / application_display_auth_config。
+读 **Go** 源码提取期望值的那些断言不在此列 —— 那是跨语言对拍，Go 侧用不了 Python AST。
+
+### 5.2.11 跨栈对账扫尾（2026-08-21）：Kafka topic / Prometheus 指标 / conf 默认值
+
+按「凡是两栈共享的契约都要有机械闸」逐项过了一遍，三项结论各不相同。
+
+#### ① Kafka topic —— 无缺口，早就守住了
+
+Go 侧 18 个常量（`pkg/kafkax/topics.go`）+ 1 个服务内常量
+（`services/runtime/push/internal/biz/push.go` 的 `ResyncTopic`），Python 侧
+`pandorapy/kafka_topics.py` 18 个 + `services/push/biz.py` 的 `RESYNC_TOPIC`，取值逐字节相同。
+`tests/test_kafka_topics.py` 已有双向闸（Go 有 Python 必须有、Python 多出来的也要报），
+并且**重新解析 Go 源码**而不是信生成器。无需改动。
+
+#### ② Prometheus 指标 —— 找到真缺口：写入侧 payload 的两个指标 Python 完全没有
+
+全量比对 `services/**/*.go` + `pkg/**/*.go` 与 `python/pandorapy/**/*.py` 里的
+`pandora_*` 字面量后，只在 Go 侧的有两个：`pandora_db_payload_bytes`（histogram）与
+`pandora_db_payload_rejected_total`（counter），都出自 `pkg/dbguard/payload.go`。
+
+Python 的 `dbguard.check_payload` 此前**只打日志、不记指标**。这不是"少一块图"：
+
+- 日志进 Loki、指标进 Prometheus，而容量告警规则建在后者。于是"某张表的写入一直被
+  fail-closed 拒掉"在 Python 副本上是 **NoData 而不是告警**；
+- histogram 没有替代品。Go 的注释专门写了为什么必须看 p99 而不是 max：p99 正常 + max 爆
+  = 个别玩家数据畸形；p99 一起涨 = 设计性无界增长（`CLAUDE.md §9.24` 的"深度"方向）。
+  只有日志的话这个区分做不出来；
+- 讽刺的是 `pandorapy/dbguard.py` 指标区的头注释已经写明"Python 副本不写它们的后果是
+  同一块面板在灰度期只反映 Go 副本"，而 payload 这两个恰恰漏了。
+
+已补：`PAYLOAD_BYTES` / `PAYLOAD_REJECTED`，名字、label（`db/table/column`）、桶边界
+（Go `ExponentialBuckets(64, 2, 11)` = 64…65536）逐个对齐。两处顺序细节按 Go 复刻：
+**observe 在 `max<=0` 提前返回之前**（还没定阈值的列正是最需要看分布的，否则成了
+"没阈值所以不观测、不观测所以定不出阈值"），**被拒的那次也要进 histogram**（否则最胖的
+样本恰好被剔掉，p99 系统性低估）。
+
+配套修了调用点命名：Go 的 label 是三个独立字段，Python 收成了点分名字 `<db>.<table>.<column>`，
+而 mission 的三处只写了两段（缺 db），那三条曲线在 Grafana 上 db 标签为空、按 db 过滤直接看不到。
+新增 `test_every_check_payload_call_site_uses_a_three_segment_name`（AST 扫调用点）钉住这一点。
+`_payload_labels` 段数不足时向左补空而不是抛异常 —— 这函数在写路径上，为一个观测标签把玩家的
+写入打挂等于把可观测性问题升级成可用性事故。
+
+#### ③ conf 默认值 —— 找到真缺口：21 个服务里 4 个从来没有对账门禁
+
+有门禁的 17 个：auction / battle_result / chat / guild / friend / ds_allocator /
+hub_allocator / inventory / mail / leaderboard / mission / login / dialogue /
+player_locator / push / team / trade。
+**没有的 4 个：matchmaker / player / owner / data_service。**
+
+逐值核对下来**当前没有实际漂移**（matchmaker 的 5000/16/5/200/20/2000/3/1/`5v5_ranked`/
+`:20011`/`:21011`、player 的 1500/0/32、owner 的 500/90 都对得上）——
+所以这是"闸缺失"而不是"已经漂了"。但缺闸本身就是问题：两栈读同一份 yaml，默认值分叉的表现是
+**两边都不报错地跑出不同行为**（yaml 没写 `team_size` 时 Go 按 5 组队、Python 按 0 组队，
+need = side_count×0 = 0，撮合循环空转，没有任何日志会说这件事）。
+
+顺带一个值得记的实例：`pandorapy/services/matchmaker/conf.py` 顶上的注释白纸黑字写着
+「抽成常量……是为了让 `tests/test_matchmaker_conf.py` 能直接对着 Go 源码断言」，
+而 **`tests/test_matchmaker_conf.py` 从来没有存在过**。注释描述了一个不存在的门禁，
+读代码的人会以为这块已经守住了 —— 与 §5.2.10 是同一类病（把"说了"当成"做了"）。
+
+已补 [`python/tests/test_conf_defaults_parity.py`](../../python/tests/test_conf_defaults_parity.py)：
+整数 / 时长 / 字符串默认值 + 判据符号 + 端口，期望值全部从 `conf.go` 现场解析。三个细节：
+
+- `_camel_to_snake` 必须认识连写缩写。朴素实现把 `BaseMMR` 拆成 `base_m_m_r`，字段"在
+  Python 侧找不到"，断言静默跳过 —— 对账测试最怕这种"看着绿其实没查"。
+- 时长比对**解析后的 timedelta** 而不是字符串：Go 写 `60 * time.Second`、Python 写 `"60s"`
+  或 `"1m"`，字面量不同但语义相同；而 `"60"`（缺单位）这种真错误只有解析后才看得出来。
+- 被后续钳位覆盖的字段（matchmaker `TeamSize`：`== 0 → 5`，紧接着 `< 1 → 1` / `> 50 → 50`）
+  要跳过"负值原样保留"那一半，否则会把一个**正确的** Python 实现判成错。
+
+最后加了一条不准再漏的闸 `test_every_service_has_a_go_conf_gate`：枚举 21 个 Go
+`internal/conf/conf.go`，逐个确认有测试文件引用过。判据走 AST 取字符串字面量而不是数原文
+（注释里出现 `conf.go` 三个字不该被当成"这里有门禁"，见 §5.2.10）。历史缺口正是这么形成的 ——
+17 个服务各自顺手加了门禁，剩下 4 个谁也没管，**而且没有任何机制会报告这件事**。
+
+变异验证：matchmaker `team_size` 5→6、owner `sweep_batch` 500→400 均被抓（各 2 条红）。
+另有一个诚实的盲区：默认值恰好是 0 的字段（player `mmr_floor`）查不出符号漂移 ——
+`< 0` 与 `<= 0` 对任何输入结果都是 0，行为完全等价，没有可观测差异可断言。已写进 docstring。
 
 ### 5.3 环境与工具坑
 

@@ -1289,7 +1289,188 @@ function Start-Service($svc, $ListenerRecords = $null) {
     }
 }
 
-function Start-PlannerFastServices($Targets) {
+function Get-PandoraPlannerFastForeignPortCommandHint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Service,
+        [AllowNull()][string]$CommandLine
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return '' }
+    $serviceName = "$($Service.Name)"
+    if ($serviceName -notmatch '^[A-Za-z0-9_]+$') { return '' }
+
+    # 命令行可能含 token/password，默认一个字符都不回显。只有明确是当前服务的
+    # pandorapy module 且同时带 -conf 时，才重建固定 module 名并只保留 config leaf。
+    $escapedService = [regex]::Escape($serviceName)
+    $modulePattern = '(?i)(?:^|\s)-m\s+["'']?(?<module>pandorapy\.services\.' +
+        $escapedService + '\.main)["'']?(?=\s|$)'
+    $confPattern = '(?i)(?:^|\s)-conf(?:\s+|=)(?<conf>"[^"]*"|''[^'']*''|[^\s]+)'
+    $moduleMatch = [regex]::Match($CommandLine, $modulePattern)
+    $confMatch = [regex]::Match($CommandLine, $confPattern)
+    if (-not $moduleMatch.Success -or -not $confMatch.Success) { return '' }
+
+    $rawConf = $confMatch.Groups['conf'].Value.Trim().Trim('"').Trim("'")
+    $configLeaf = ''
+    try { $configLeaf = [IO.Path]::GetFileName($rawConf.Replace('/', '\')) } catch { return '' }
+    $configLeaf = [regex]::Replace("$configLeaf", '[^A-Za-z0-9_.-]', '_')
+    if ([string]::IsNullOrWhiteSpace($configLeaf)) { $configLeaf = '<redacted>' }
+    if ($configLeaf.Length -gt 128) { $configLeaf = $configLeaf.Substring(0, 128) }
+    return "；python_module=pandorapy.services.$serviceName.main；config=$configLeaf"
+}
+
+function Get-PandoraPlannerFastTcpListenerRecords {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Targets)
+
+    # 策划 fast 必须只执行一次系统快照。共享 parser 有意只返回正 PID；Windows netstat
+    # 偶尔会把尚无法解析 owner 的 LISTENING 行标成 PID 0，这里把目标端口上的 PID 0
+    # 补回记录，让后续归属闸 fail-closed，而不是误判端口空闲。
+    $snapshot = Invoke-PandoraNetstatTcpSnapshot
+    if (-not $snapshot -or [int]$snapshot.ExitCode -ne 0) {
+        $exitCode = if ($snapshot) { [int]$snapshot.ExitCode } else { -1 }
+        throw "netstat 查询 TCP listener 失败(exit=$exitCode)"
+    }
+    $lines = @($snapshot.Lines)
+    $records = [Collections.Generic.List[object]]::new()
+    foreach ($record in @(ConvertFrom-PandoraNetstatTcpListenerRecords -Lines $lines)) {
+        $records.Add($record)
+    }
+
+    $targetPorts = [Collections.Generic.HashSet[int]]::new()
+    foreach ($svc in $Targets) { [void]$targetPorts.Add([int]$svc.Port) }
+    foreach ($line in $lines) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $columns = @($line.Trim() -split '\s+')
+        # 严格格式校验已经由共享 parser 对同一份 lines 完成；这里只补它刻意过滤的 PID 0。
+        if ($columns.Count -ne 5 -or $columns[0] -ine 'TCP' -or $columns[3] -ine 'LISTENING') {
+            continue
+        }
+        $local = $columns[1]
+        $colon = $local.LastIndexOf(':')
+        $localPort = 0
+        $ownerPid = -1
+        if ($colon -lt 0 -or
+            -not [int]::TryParse($local.Substring($colon + 1), [ref]$localPort) -or
+            -not [int]::TryParse($columns[-1], [ref]$ownerPid) -or
+            $ownerPid -ne 0 -or -not $targetPorts.Contains($localPort)) {
+            continue
+        }
+        $records.Add([pscustomobject]@{
+                LocalAddress = $local.Substring(0, $colon).Trim('[', ']')
+                LocalPort = $localPort
+                OwningProcess = 0
+            })
+    }
+    return @($records | Sort-Object LocalPort, OwningProcess, LocalAddress)
+}
+
+function Assert-PandoraPlannerFastTargetPortsSafe {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Targets,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$ListenerRecords,
+        [Parameter(Mandatory)][string]$ExpectedBinDir,
+        [scriptblock]$GetProcess = {
+            param([int]$ProcessId)
+            return Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        },
+        [scriptblock]$GetProcessCommandLine = {
+            param([int]$ProcessId)
+            $identity = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ProcessId" `
+                -ErrorAction SilentlyContinue
+            if ($identity) { return "$($identity.CommandLine)" }
+            return ''
+        }
+    )
+
+    $binRoot = [IO.Path]::GetFullPath($ExpectedBinDir)
+    foreach ($svc in $Targets) {
+        $serviceName = "$($svc.Name)"
+        $servicePort = [int]$svc.Port
+        $expectedExe = [IO.Path]::GetFullPath((Join-Path $binRoot "$serviceName.exe"))
+        $ownerPids = @($ListenerRecords |
+                Where-Object { [int]$_.LocalPort -eq $servicePort } |
+                ForEach-Object { [int]$_.OwningProcess } |
+                Sort-Object -Unique)
+        foreach ($ownerPid in $ownerPids) {
+            $process = $null
+            if ($ownerPid -gt 0) {
+                try { $process = & $GetProcess $ownerPid } catch { $process = $null }
+            }
+
+            $processName = 'unknown'
+            $actualPath = ''
+            if ($process) {
+                try {
+                    if (-not [string]::IsNullOrWhiteSpace("$($process.ProcessName)")) {
+                        $processName = "$($process.ProcessName)"
+                    }
+                } catch { $processName = 'unknown' }
+                try { $actualPath = "$($process.Path)" } catch { $actualPath = '' }
+            }
+            $processName = [regex]::Replace($processName, '[^A-Za-z0-9_.-]', '_')
+            if ([string]::IsNullOrWhiteSpace($processName)) { $processName = 'unknown' }
+            if ($processName.Length -gt 96) { $processName = $processName.Substring(0, 96) }
+
+            $isExpectedExe = $false
+            if (-not [string]::IsNullOrWhiteSpace($actualPath)) {
+                try {
+                    $isExpectedExe = [IO.Path]::GetFullPath($actualPath).Equals(
+                        $expectedExe, [StringComparison]::OrdinalIgnoreCase)
+                } catch { $isExpectedExe = $false }
+            }
+            # exact run/dev/bin exe 同时覆盖 pidfile 管理中的进程和缺 pidfile 的 stale 实例；
+            # 后者继续交给既有 Clear-PortSquatter 做 exact-path 清理。
+            if ($ownerPid -gt 0 -and $isExpectedExe) { continue }
+
+            $reason = if ($ownerPid -le 0) {
+                'listener PID 非法，无法证明归属'
+            } elseif (-not $process -or [string]::IsNullOrWhiteSpace($actualPath)) {
+                '映像路径不可读，无法证明归属'
+            } else {
+                '映像不属于本工作区 run/dev/bin exact exe'
+            }
+            $commandHint = ''
+            if ($ownerPid -gt 0) {
+                $commandLine = ''
+                try { $commandLine = "$(& $GetProcessCommandLine $ownerPid)" } catch { $commandLine = '' }
+                $commandHint = Get-PandoraPlannerFastForeignPortCommandHint -Service $svc -CommandLine $commandLine
+            }
+            throw "策划 fast 启动阻断：service=$serviceName port=$servicePort PID=$ownerPid process=$processName；$reason$commandHint。不会停止该 foreign 进程；当前阶段已 fail-closed 中止。"
+        }
+    }
+}
+
+function Invoke-PandoraPlannerFastEntryPortPreflight {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Targets,
+        [Parameter(Mandatory)][string]$ExpectedBinDir
+    )
+
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $status = '失败'
+    try {
+        # 一次 netstat snapshot 覆盖全部 target；不得退化成每服务一条慢查询。
+        $listenerRecords = @(Get-PandoraPlannerFastTcpListenerRecords -Targets $Targets)
+        Assert-PandoraPlannerFastTargetPortsSafe -Targets $Targets -ListenerRecords $listenerRecords `
+            -ExpectedBinDir $ExpectedBinDir
+        $status = '完成'
+        return $listenerRecords
+    } finally {
+        $watch.Stop()
+        Add-PandoraPlannerTiming -Name '业务程序·端口归属预检' `
+            -ElapsedMilliseconds $watch.ElapsedMilliseconds -Status $status
+    }
+}
+
+function Start-PlannerFastServices {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Targets,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$InitialListenerRecords
+    )
     # 只给策划 cmd 的冷启动使用：第一波并发拉起 login 之外的服务，统一用
     # listener 快照验证 exact PID；第二波再启 login，保留原有“login 最后”的依赖边界。
     # 首次/源码变化时 Build-Service 仍逐项构建；日常命中收据后不再把
@@ -1323,13 +1504,9 @@ function Start-PlannerFastServices($Targets) {
     try {
     # 快速路径分成 prepare/stage 与 publish 两段。Go build 或 artifact copy 只写 staging；
     # 全批成功且第二次逐 target 强指纹仍一致后，才停止需要替换的 exact Process。
-    $prebuildListenerRecords = $null
-    try {
-        $prebuildListenerRecords = @(Get-PandoraTcpListenerRecords)
-        $perf.Snapshots++
-    } catch {
-        Write-Host "  [WARN] 预构建前 listener 快照失败，NoBuild 缺包兜底将逐端口 fail-closed 复核:$($_.Exception.Message)" -ForegroundColor Yellow
-    }
+    # 复用函数入口的全 target 快照；不要为每个 target/兜底 build 再跑一次 netstat。
+    $prebuildListenerRecords = $InitialListenerRecords
+    $perf.Snapshots++
     # 保留 -NoBuild 的历史语义：已有二进制绝不构建；只有二进制本来就缺失时才走普通兜底。
     # 策划默认路径不会进入这里，正常冷构建始终走后面的同盘 staging 事务。
     if ($NoBuild) {
@@ -1418,6 +1595,12 @@ function Start-PlannerFastServices($Targets) {
         }
 
         $serviceByName = @{}; foreach ($svc in $targetsArray) { $serviceByName[$svc.Name] = $svc }
+        # staging/build 可能持续数秒；activation 会停旧进程并发布正式 exe，进入前必须重取
+        # 一份全 target 快照，不能让构建窗口中新出现的 foreign listener 触发部分 stop/publish。
+        $activationListenerRecords = @(Get-PandoraPlannerFastTcpListenerRecords -Targets $targetsArray)
+        $perf.Snapshots++
+        Assert-PandoraPlannerFastTargetPortsSafe -Targets $targetsArray `
+            -ListenerRecords $activationListenerRecords -ExpectedBinDir $BinDir
         # activation 前冻结原 exact running 集合和旧正式 exe 身份。第二个 stop 或 publish
         # 任一步失败，事务 seam 都会在旧文件已恢复后把此前已停服务 exact-ready 拉回。
         $activationRunningRecords = @(Get-PlannerActivationRunningRecords `
@@ -1463,13 +1646,10 @@ function Start-PlannerFastServices($Targets) {
         $cleanupErrors = @()
         try {
             $launchServices = [Collections.Generic.List[object]]::new()
-            $waveListenerRecords = $null
-            try {
-                $waveListenerRecords = @(Get-PandoraTcpListenerRecords)
-                $perf.Snapshots++
-            } catch {
-                Write-Host "  [WARN] 本波启动前 listener 快照失败，每个端口将独立 fail-closed 复核:$($_.Exception.Message)" -ForegroundColor Yellow
-            }
+            $waveListenerRecords = @(Get-PandoraPlannerFastTcpListenerRecords -Targets @($wave))
+            $perf.Snapshots++
+            Assert-PandoraPlannerFastTargetPortsSafe -Targets @($wave) `
+                -ListenerRecords $waveListenerRecords -ExpectedBinDir $BinDir
             foreach ($svc in $wave) {
                 $existing = Get-RunningProcess $svc
                 if ($existing) {
@@ -1865,6 +2045,14 @@ switch ($Action) {
         $targetCount = if ($Service) { 1 } else { $targets.Count }
         if ($targetCount -eq 0) { Write-Host "[!] 排除后无服务可启动" -ForegroundColor Yellow; break }
 
+        $plannerFastEntryListenerRecords = @()
+        if ($FastExistingProbe) {
+            # 必须早于下面的 runtime-profile Stop-Service 分支：foreign listener 只负责阻断，
+            # 不能先停掉任何现有业务进程后才发现端口必撞。
+            $plannerFastEntryListenerRecords = @(Invoke-PandoraPlannerFastEntryPortPreflight `
+                    -Targets $targets -ExpectedBinDir $BinDir)
+        }
+
         if (-not $Service) {
             $appliedMysql = Get-PandoraServiceAppliedMysqlState $ProjectRoot
             if (-not (Test-ServiceRuntimeProfileMatches $appliedMysql)) {
@@ -1908,7 +2096,8 @@ switch ($Action) {
         Write-Host ""
 
         if ($FastExistingProbe) {
-            $startFailed = @(Start-PlannerFastServices $targets)
+            $startFailed = @(Start-PlannerFastServices -Targets $targets `
+                    -InitialListenerRecords $plannerFastEntryListenerRecords)
         } else {
             $startFailed = @()
             foreach ($svc in $targets) {

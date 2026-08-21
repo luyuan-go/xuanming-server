@@ -3949,7 +3949,13 @@ Python 迁移线(分支 `python-migration`)此前在 `PROGRESS.md` 零记录,补
   YAML/env、配置表和二进制，22 个 runtime 的 env 映射由实际 Go import 闭包契约防漂移，secret 不落收据；
   child 计时使用 exact ExitTime，取消与输出 drain 均有界；超过 timeout 后即使真实进程随后返回 0，
   公共结果仍 fail-closed。
-- **验证**：10 组策划 PowerShell 契约全部 PASS；`tools/configtable-gen` 的 `go test ./...`、生成文件并发/
+- **双击迁移回归**：首版并行链在父 PowerShell 持工作区编排锁时另起 migration pwsh，子进程再次取同一
+  独占文件锁而确定性自冲突。现改为 MySQL-ready callback 在同一 runspace 递归复用父锁；四个基础设施
+  进程已先 launch，迁移仍与 Redis/Kafka/Envoy 后台启动重叠。fast probe/init/migrator 共用 600 秒总截止，
+  原生进程创建时即进入 `KILL_ON_JOB_CLOSE` Job Object；超时、父进程硬退出、stdin/output 未完整收口或
+  诊断截断全部 fail-closed，`MYSQL_PWD` 只进入 child environment。未增加 `SkipLock` 或锁绕过入口。
+- **验证**：锁重入、Job Object 整树回收、父 pwsh 硬退出、大 stdin/输出边界及 9 组相关策划契约全部
+  PASS；`tools/configtable-gen` 的 `go test ./...`、生成文件并发/
   失败测试 `-count=10`、`go vet ./...` 全绿。验证未启停真实服务；尚未执行完整策划 CMD、冷启动计时或
   玩家登录 E2E，不能把原 35.63 秒样本或虚拟时钟数字冒充新现场成绩。详见
   `docs/ops/性能优化-策划一键启动-20260820.md` §9。

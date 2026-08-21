@@ -103,7 +103,7 @@ function Remove-PlannerPreparationOrphanStages($Handle) {
 
 $plannerTableHandle = $null
 $plannerBuildHandle = $null
-$plannerMigrationContext = [pscustomobject]@{ Handle = $null }
+$plannerMigrationContext = [pscustomobject]@{ Result = $null }
 $plannerPreparedBuildManifest = ''
 $plannerPreparedBuildConsumed = $false
 $plannerParallelPrepareStartedAt = 0L
@@ -186,28 +186,39 @@ if ($NoDocker) {
 
     $infraReadyCallback = $null
     if ($plannerParallelEnabled -and -not $centralManaged) {
-        # GetNewClosure 只捕获变量，不会捕获当前脚本作用域中 dot-source 进来的函数命令。
-        # local_infra.ps1 作为子脚本调用 callback 时看不到这个 helper；必须把 exact worker
-        # starter 的 ScriptBlock 显式装进 closure，不能依赖子脚本恰好加载同一个 helper。
-        $startPlannerPreparationProcess = ${function:Start-PandoraPlannerPreparationProcess}
         $infraReadyCallback = {
             param($State)
             if ("$($State.Name)" -cne 'mysql') { return }
-            if ($null -ne $plannerMigrationContext.Handle) {
-                throw 'MySQL ready callback 被重复调用；拒绝启动第二个 migration worker。'
+            if ($null -ne $plannerMigrationContext.Result) {
+                throw 'MySQL ready callback 被重复调用；拒绝执行第二次 migration。'
             }
             $migrationPort = Get-PandoraLocalMysqlPort $projectRoot -Required
             $mysqlClient = Get-ChildItem -Path (Join-Path $ScriptDir '../../run/localinfra/dist/mysql') `
                 -Recurse -File -Filter 'mysql.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $mysqlClient) { throw 'MySQL 已就绪，但找不到本机 mysql.exe，无法启动迁移。' }
-            $plannerMigrationContext.Handle = & $startPlannerPreparationProcess -Name migration `
-                -FilePath $pwshExe -WorkingDirectory $projectRoot -ArgumentList @(
-                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                    (Join-Path $ScriptDir 'dev_migrate.ps1'), '-MysqlClient', $mysqlClient.FullName,
-                    '-MysqlPort', "$migrationPort", '-RequireMysql'
-                )
-            Write-Host '  [parallel] MySQL 已通过协议探活；migration 与其余基础设施继续重叠。' `
+            # 四个基础设施进程已在统一轮询前全部 launch。这里留在父 runspace 同步迁移，
+            # Kafka/Redis/Envoy 仍由各自 OS 进程继续启动，同时 dev_migrate 可递归复用父进程
+            # 已持有的工作区编排锁；严禁另起 pwsh 后用“跳过锁”绕过并发保护。
+            Write-Host '  [parallel] MySQL 已通过协议探活；migration 在父编排锁内执行。' `
                 -ForegroundColor DarkCyan
+            $migrationWatch = [Diagnostics.Stopwatch]::StartNew()
+            $migrationExitCode = -1
+            $migrationErrorRecord = $null
+            try {
+                & "$ScriptDir/dev_migrate.ps1" -MysqlClient $mysqlClient.FullName `
+                    -MysqlPort $migrationPort -RequireMysql -TotalTimeoutSeconds 600 |
+                    ForEach-Object { Write-Host "$_" }
+                $migrationExitCode = [int]$LASTEXITCODE
+            } catch {
+                $migrationErrorRecord = $_
+            } finally {
+                $migrationWatch.Stop()
+                $plannerMigrationContext.Result = [pscustomobject][ordered]@{
+                    ExitCode = [int]$migrationExitCode
+                    ElapsedMilliseconds = [int64]$migrationWatch.ElapsedMilliseconds
+                    ErrorRecord = $migrationErrorRecord
+                }
+            }
         }.GetNewClosure()
     }
 
@@ -320,22 +331,23 @@ if ($NoDocker) {
         Write-Host '[ OK ] 中心 workspace 已 READY；跳过本机 MySQL 迁移。' -ForegroundColor Green
         Add-PandoraPlannerTiming -Name '数据库结构校验/迁移' -ElapsedMilliseconds 0 -Status '跳过'
     } elseif ($plannerParallelEnabled) {
-        $migrationHandle = $plannerMigrationContext.Handle
-        if ($null -eq $migrationHandle) {
+        $migrationResult = $plannerMigrationContext.Result
+        if ($null -eq $migrationResult) {
             Add-PandoraPlannerTiming -Name '数据库结构校验/迁移' -ElapsedMilliseconds 0 -Status '失败' `
-                -Detail 'MySQL ready 后没有建立 migration worker'
-            throw 'MySQL 已就绪，但 migration worker 未启动；拒绝带旧结构继续。'
+                -Detail 'MySQL ready 后没有完成 migration'
+            throw 'MySQL 已就绪，但 migration 没有执行；拒绝带旧结构继续。'
         }
-        $migrationResult = Complete-PandoraPlannerPreparationProcess -Handle $migrationHandle `
-            -TimeoutMilliseconds 600000 -WriteOutput
         Add-PandoraPlannerTiming -Name '数据库结构校验/迁移' `
             -ElapsedMilliseconds $migrationResult.ElapsedMilliseconds `
             -Status $(if ($migrationResult.ExitCode -eq 0) { '完成' } else { '失败' })
-        if ($migrationResult.ExitCode -ne 0 -or -not $migrationResult.DrainCompleted) {
+        if ($null -ne $migrationResult.ErrorRecord) {
+            Write-Host "[ERR] migration 执行异常:$($migrationResult.ErrorRecord.Exception.Message)" -ForegroundColor Red
+        }
+        if ($migrationResult.ExitCode -ne 0 -or $null -ne $migrationResult.ErrorRecord) {
             Write-Host '[ERR] 并行数据库结构升级失败；不会发布二进制或启动业务服务。' -ForegroundColor Red
             exit 1
         }
-        $plannerMigrationContext.Handle = $null
+        $plannerMigrationContext.Result = $null
     } else {
         $schemaWatch = [Diagnostics.Stopwatch]::StartNew()
         $schemaStatus = '失败'
@@ -441,7 +453,7 @@ Write-Host "===== [4/4] 业务服务 =====" -ForegroundColor Cyan
 exit $LASTEXITCODE
 } finally {
     $plannerCleanupErrors = [Collections.Generic.List[string]]::new()
-    foreach ($handle in @($plannerTableHandle, $plannerBuildHandle, $plannerMigrationContext.Handle)) {
+    foreach ($handle in @($plannerTableHandle, $plannerBuildHandle)) {
         if ($null -eq $handle) { continue }
         try {
             if (-not (Stop-PandoraPlannerPreparationProcess -Handle $handle -DrainTimeoutMilliseconds 5000)) {

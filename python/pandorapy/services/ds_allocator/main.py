@@ -245,7 +245,7 @@ def _load_pod_uid_preflight_redis_credentials() -> tuple[str, str]:
 
 
 async def _run_pod_uid_release_preflight(
-    rc: pconfig.RedisClientConf,
+    rc: pconfig.RedisConf,
     scan_count: int,
     run_id: str,
     phase: str,
@@ -395,6 +395,27 @@ def _local_map_source(loader_map: str, config_table_ready: bool) -> str:
     if config_table_ready:
         return "config_table(allocator 现查 g_关卡.xlsx)"
     return "none"
+
+
+class DSLifecyclePusher:
+    """把 `biz.DSLifecyclePusher` 适配到 `kafkax.KeyOrderedProducer`。
+
+    对应 Go `cmd/ds_allocator/main.go:dsLifecyclePusher`,同样定义在启动入口而不是
+    repo 层 —— 它只是 producer 的一层薄壳,没有独立的存储语义。
+
+    ★ key = match_id 的十进制字符串(§9 不变量 9:同一对局事件必须落同一分区保序),
+      与 Go 的 `strconv.FormatUint(evt.GetMatchId(), 10)` 逐字节一致。
+    ★ 序列化失败 / 投递失败一律**抛出**,由 `sweep_once` 把对局留在 active ZSET 下轮
+      重试(Go 那侧是 `return err`);这里吞异常会让 abandoned 事件静默丢失。
+    """
+
+    __slots__ = ("_producer",)
+
+    def __init__(self, producer: kafkax.KeyOrderedProducer) -> None:
+        self._producer = producer
+
+    async def publish_lifecycle(self, evt) -> None:  # noqa: ANN001
+        await self._producer.send_raw(str(evt.match_id), evt.SerializeToString())
 
 
 def _exit_process() -> None:
@@ -868,13 +889,13 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
 
         # no-show 记账 → 进入侧退避(anti-abuse):空场判弃 reason=no_show 时对 roster 记账并
         # 布退避窗,matchmaker StartMatch 读取执行。共享 rdb;fail-open。
-        uc.set_noshow_recorder(dsrepo.RedisNoShowRecorder(rdb))
+        uc.set_no_show_recorder(dsrepo.RedisNoShowRecorder(rdb))
         logger.info(
             "noshow_recorder_ready",
-            ledger_window=godur.duration_string(cfg.allocator.noshow_ledger_window_td()),
-            penalty_base=godur.duration_string(cfg.allocator.noshow_penalty_base_td()),
-            penalty_cap=godur.duration_string(cfg.allocator.noshow_penalty_cap_td()),
-            penalty_free=cfg.allocator.noshow_penalty_free,
+            ledger_window=godur.duration_string(cfg.allocator.no_show_ledger_window_td()),
+            penalty_base=godur.duration_string(cfg.allocator.no_show_penalty_base_td()),
+            penalty_cap=godur.duration_string(cfg.allocator.no_show_penalty_cap_td()),
+            penalty_free=cfg.allocator.no_show_penalty_free,
         )
 
         # ⑥.2 owner 权威实例租约双写(owner-authority.md migrate ⑥):owner_addr 空 = 不启用。
@@ -964,7 +985,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                         hint="abandoned push will be silently dropped until kafka is available",
                     )
             else:
-                uc.set_lifecycle_pusher(dsrepo.KafkaDSLifecyclePusher(producer))
+                uc.set_lifecycle_pusher(DSLifecyclePusher(producer))
                 logger.info(
                     "ds_lifecycle_producer_ready",
                     topic=kafka_topics.TOPIC_DS_LIFECYCLE,
@@ -1052,7 +1073,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         # ⑥.9 GmService(GM / 运维指令下发):与 ds_allocator 同进程复用 gRPC 端口。
         # 运维 GM 工具 SendCommand 入 Redis 队列 → 战斗 DS 轮询 PollCommands 拉取执行。
         # 内部接口,不经 Envoy 暴露给玩家客户端。
-        gm_svc = dsgm.Service(rdb)
+        gm_svc = dsgm.GmService(rdb)
         gm_svc.set_ds_callback_guard(ds_guard)  # DS 回调令牌校验(PollCommands/AckCommand);None=off
         if model_b:
             # 出队 / Ack 都要过 active 校验。★ 传的是 ⑥.4 那个**同一个** repo 实例:

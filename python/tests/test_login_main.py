@@ -41,6 +41,8 @@ from pandorapy.services.login import passwd as lpasswd
 from pandorapy.services.login import rest as lrest
 from pandorapy.services.login import service as lsvc
 
+from tests.srcprobe import module_code_text
+
 GO_CONF = "services/account/login/internal/conf/conf.go"
 GO_MAIN = "services/account/login/cmd/login/main.go"
 GO_SERVICE = "services/account/login/internal/service/login.go"
@@ -314,8 +316,8 @@ def test_model_b_config_is_valid_but_main_still_refuses(tmp_path: pathlib.Path) 
 
     # 而 main 侧必须有两道 fail-closed,且都排在 gRPC server 构造之前 ——
     # 排在之后的话进程会先开始监听,k8s 判 Ready、流量切过来,再退出。
-    # 同样去掉模块 docstring 再比(理由见 test_gate_order_matches_go)。
-    src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8").split('"""', 2)[2]
+    # 同样去掉 docstring 再比（理由见 test_gate_order_matches_go）。
+    src = module_code_text(lmain)
     for gate in ("model_b_requires_ds_ticket_v2_signer", "ds_admission_authority_incomplete"):
         assert src.index(f'"{gate}"') < src.index("build_grpc_server"), gate
     assert src.index('"login_ds_auth_fence_acquire_failed"') < src.index("pserver.run(")
@@ -354,7 +356,7 @@ def test_passwd_backend_gate_exists_and_refuses_to_degrade() -> None:
     所以本模块在缺包时**不提供任何可用路径**。这里直接验 require_backend 的方向。
     """
     assert lpasswd.AVAILABLE, "本环境应已装 bcrypt(pyproject 依赖)"
-    src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8")
+    src = module_code_text(lmain)
     assert "passwd_backend_required" in src
     assert "lpasswd.require_backend()" in src
 
@@ -401,7 +403,7 @@ def test_fail_fast_event_names_exist_in_go_main(repo_root: pathlib.Path) -> None
        运行期变量,任何基于源码正则的门都够不着它。别以为这条门是全覆盖。
     """
     go_src = (repo_root / GO_MAIN).read_text(encoding="utf-8")
-    py_src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8")
+    py_src = module_code_text(lmain)
     # 判据**只认 `.error("<小写事件名>")` 这个形状,不看接收者**:写死 `logger\.`
     # 会漏掉 `log.error(` / `plog.get().error(` 这些同样真实的写法(login/main.py
     # 第 189、219 行自己就是 `log = plog.get()`,995 行是 `plog.get().exception(...)`)。
@@ -448,10 +450,12 @@ def test_gate_order_matches_go() -> None:
     (main.go:70 config → :96 snowflake → :108/:113 auth → :120 mustBuildAccountRepo
     → :190 mustBuildRedisRepos → 四个客户端 → v2 → :243 session enforce → ds_auth)。
     """
-    # ★ 必须**去掉模块 docstring** 再比:头注释里也按同样顺序列了一遍闸,
-    # 连着 docstring 一起 index() 的话,命中的全是注释里的位置 ——
-    # 代码顺序改了、注释没改,这个用例照样绿(它验的是注释与注释一致)。
-    py_src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8").split('"""', 2)[2]
+    # ★ 必须**去掉注释与 docstring** 再比:头注释里也按同样顺序列了一遍闸,
+    # 连着它们一起 index() 的话，命中的全是注释里的位置 ——
+    # 代码顺序改了、注释没改，这个用例照样绿（它验的是注释与注释一致）。
+    # 原先只手工跳了模块 docstring，盖不住行内注释和函数 docstring；
+    # code_text 把两者都抹成等量空白，行列结构不变，index() 比较仍然成立。
+    py_src = module_code_text(lmain)
 
     ordered = [
         "config_load_failed",
@@ -481,7 +485,7 @@ def test_gate_order_matches_go() -> None:
 def test_background_loops_all_go_through_safego() -> None:
     """裸 create_task 的协程抛异常后异常只躺在 Task 里:进程照跑、health 照答
     SERVING、日志零行 —— 那条循环已经死了却没人知道。"""
-    src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8")
+    src = module_code_text(lmain)
     for name in ("login_device_sweep", "login_player_no_sweep", "db_capacity_guard"):
         assert f'safego.loop("{name}"' in src or f'safego.run_once("{name}"' in src, name
     assert "asyncio.create_task(" not in src
@@ -492,19 +496,32 @@ def test_cancelled_error_is_never_swallowed() -> None:
 
     吞掉取消的后果:该停的停不下来,§9.16 的「先摘流量 → 再排空在途」失效;
     启动路径上则是 Ctrl-C 被翻译成某道闸的失败,报出假的失败原因。
+
+    ⚠️ **2026-08-21 改为委派**。原先这里自己判:取 `except BaseException` 前 8 行
+    做窗口,看窗口文本里有没有 `except asyncio.CancelledError`。它有两个问题:
+
+      1. **数文本**。把真的守卫删掉、留一句
+         `# 上面那条 except asyncio.CancelledError 改由 ... 处理`,窗口照样命中。
+         同一形状在 `test_service_layer_contract.py` 上已实测被变异骗过
+         (删掉 leaderboard 的守卫,238 个用例全绿)。
+      2. **结构性盲区**。窗口 8 行是拍的;裸 `except:` 与
+         `except (Foo, BaseException):` 两种同样吞取消的写法完全匹配不到。
+
+    `test_service_layer_contract.py` 的 AST 版按 `try` 节点结构判定,且扫的是
+    `services/*/*.py` —— login 的 main / service / rest / passwd 全在覆盖内。
+    所以这里不再维护第二份判据(两份判据必然漂移,弱的那份还会给人虚假的安心),
+    只保留一条**归属断言**:确认这四个模块确实落在那道门的扫描集合里。
     """
+    from tests.test_service_layer_contract import _service_files
+
+    covered = {p.resolve() for p in _service_files()}
     for mod in (lmain, lsvc, lrest, lpasswd):
-        src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
-        lines = src.splitlines()
-        for i, line in enumerate(lines):
-            if "except BaseException" not in line:
-                continue
-            # 窗口取 8 行:惯用写法是 `except asyncio.CancelledError:` +
-            # 几行"为什么必须穿透"的注释 + `raise`,注释行数不固定。
-            window = "\n".join(lines[max(0, i - 8) : i])
-            assert "except asyncio.CancelledError" in window, (
-                f"{mod.__name__}:{i + 1} 的 except BaseException 前面没有取消穿透"
-            )
+        assert mod.__file__ is not None
+        path = pathlib.Path(mod.__file__).resolve()
+        assert path in covered, (
+            f"{mod.__name__} 不在 test_service_layer_contract 的扫描集合里 —— "
+            f"取消穿透这道门对它失效了,要么把它挪回 services/ 下,要么在那边补覆盖。"
+        )
 
 
 # ── REST:JSON 口径必须与 Kratos 逐字一致 ────────────────────────────────────
@@ -818,7 +835,7 @@ def test_login_response_double_writes_register_no_and_player_no(
 
     排空前收缩任一个,对应客户端上编号直接变 0(永远显示"生成中"),而服务端零错误。
     """
-    src = pathlib.Path(lsvc.__file__).read_text(encoding="utf-8")
+    src = module_code_text(lsvc)
     assert "register_no=res.player_no" in src and "player_no=res.player_no" in src
     go_src = (repo_root / GO_SERVICE).read_text(encoding="utf-8")
     assert "RegisterNo: res.PlayerNo" in go_src and "PlayerNo:   res.PlayerNo" in go_src

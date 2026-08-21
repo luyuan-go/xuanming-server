@@ -36,7 +36,7 @@ from pandorapy import mysqlx
 # ★ 名字与 label 必须与 Go 侧 pkg/dbguard **逐字相同**。Grafana 的容量面板与告警
 # 规则按这些名字建；Python 副本不写它们的后果不是"少一块图"，而是**同一块面板在
 # 灰度期只反映 Go 副本**，容量问题在 Python 这边完全不可见（NoData 而非告警）。
-from prometheus_client import Counter, Gauge  # noqa: E402
+from prometheus_client import Counter, Gauge, Histogram  # noqa: E402
 
 TABLE_ROWS = Gauge(
     "pandora_db_table_rows", "表行数(information_schema 估算)。", ["db", "table"]
@@ -74,6 +74,44 @@ RETENTION_DELETED = Counter(
     "保留期清理实际删除的行数(仅 delete 模式非零)。",
     ["db", "table"],
 )
+# ★ 写入侧 payload 的两个指标(对应 Go pkg/dbguard/payload.go 的 payloadBytes /
+# payloadRejects)。Python 侧此前**只打日志不记指标**:
+#   · 日志进 Loki,指标进 Prometheus —— 告警规则建在后者上,所以"某张表的写入
+#     一直被 fail-closed 拒掉"在 Python 副本上是 NoData 而不是告警;
+#   · histogram 更是完全没有替代品。Go 的注释专门写了为什么必须看 p99 而不是 max:
+#     p99 正常 + max 爆 = 个别玩家数据畸形;p99 一起涨 = 设计性无界增长(§9.24 的
+#     "深度"方向)。只有日志的话,这个区分做不出来。
+# 桶与 Go 的 prometheus.ExponentialBuckets(64, 2, 11) 逐个相同 —— 桶边界不一致时
+# 两栈的 histogram_quantile 结果不可比,灰度期同一块面板会自相矛盾。
+PAYLOAD_BUCKETS = tuple(float(64 * (2**i)) for i in range(11))
+PAYLOAD_BYTES = Histogram(
+    "pandora_db_payload_bytes",
+    "写入 payload 字节分布。看 p99 而非 max:p99 正常+max 爆=个别数据畸形;p99 一起涨=设计性无界增长。",
+    ["db", "table", "column"],
+    buckets=PAYLOAD_BUCKETS,
+)
+PAYLOAD_REJECTED = Counter(
+    "pandora_db_payload_rejected_total",
+    "因超过字节上限被拒绝的写入次数(fail-closed)。非零即需人工排查。",
+    ["db", "table", "column"],
+)
+
+
+def _payload_labels(name: str) -> tuple[str, str, str]:
+    """把 `"<db>.<table>.<column>"` 拆成 Go 侧那三个 label。
+
+    Go 的 `PayloadLimit` 是三个独立字段,Python 侧为了调用点简洁收成了一个点分名字。
+    这里做还原,好让两栈的时间序列**能落在同一条曲线上** —— label 少一个或名字
+    对不上,灰度期就是两条互不相干的线,面板上看着像流量掉了一半。
+
+    段数不足时**向左补空**而不是抛异常:这个函数在写路径上,为了一个观测标签
+    把玩家的写入打挂,方向就反了(把可观测性事故升级成可用性事故)。
+    """
+    parts = name.split(".")
+    if len(parts) >= 3:
+        # 多于 3 段时把多余的并进 column,避免 label 数量对不上导致 prometheus 抛错。
+        return parts[0], parts[1], ".".join(parts[2:])
+    return ("", *(["", *parts][-2:]))  # type: ignore[return-value]
 
 
 # 与 Go 侧 strictModeProbeTimeout 一致:够慢网络一次往返,又不会把启动挂死。
@@ -556,6 +594,11 @@ def check_payload(name: str, payload: bytes, max_bytes: int) -> None:
     attrs 条数(深度无闸);rewardclaim 管住单条位图大小却没管位图条目数(广度无闸)。
     """
     size = len(payload)
+    db, table, column = _payload_labels(name)
+    # ★ 无条件 observe,且在 `max_bytes <= 0` 提前返回**之前** —— 与 Go 同序
+    # (payload.go:78-81)。还没定阈值的列正是最需要看分布的:先有 histogram
+    # 才能拿 p99 把阈值定出来,反过来就成了"没阈值所以不观测,不观测所以定不出阈值"。
+    PAYLOAD_BYTES.labels(db, table, column).observe(size)
     # ★ 未设预算 = 不校验(与 Go 的 `if limit.Max <= 0 { return nil }` 一致)。
     # 少这一分支的话,任何还没定阈值的列都会因为 max_bytes=0 而**拒掉一切写入** ——
     # 一个容量守护把正常业务全挡了,方向反了。
@@ -570,6 +613,7 @@ def check_payload(name: str, payload: bytes, max_bytes: int) -> None:
         # (pkg/dbguard/payload.go:81-87),Python 侧原先只抛异常 ——
         # 异常会被调用方按业务错误处理掉,于是"某个玩家的数据一直写不进去"
         # 在运维视角上**完全不可见**:没有日志、没有指标,只有客服工单。
+        PAYLOAD_REJECTED.labels(db, table, column).inc()
         plog.get().error(
             "db_payload_too_large_rejected",
             name=name,

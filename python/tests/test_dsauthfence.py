@@ -34,6 +34,8 @@ import pytest
 from pandorapy import dsauthfence as fence
 from pandorapy import errcode
 
+from tests.srcprobe import module_code_text
+
 _GOOD_DIGEST = "sha256:" + "a" * 64
 
 
@@ -1572,7 +1574,9 @@ async def test_background_loops_go_through_safego_with_static_names() -> None:
     ★ 变异:`start()` 里把 `safego.spawn(...)` 换成 `asyncio.create_task(...)` → 本条红。
     ★ 变异:`_TASK_MONITOR_LEASE` 改成 f-string 拼 service → 第二段红。
     """
-    source = pathlib.Path(fence.__file__).read_text(encoding="utf-8")
+    # 只看代码：上面那句“禁止裸 create_task”的说明写进源码注释后会把本条变成误报
+    # （同理 docstring）。理由见 tests/srcprobe.py。
+    source = module_code_text(fence)
     assert "asyncio.create_task(" not in source, "后台协程一律走 safego.spawn"
     for name in (
         fence._TASK_LEASE_KEEPALIVE,

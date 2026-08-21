@@ -30,6 +30,8 @@ from pandorapy import killswitch
 from pandorapy import metrics
 from pandorapy import server as pserver
 
+from tests.srcprobe import module_code_text
+
 PLAYER_HEADER = pintercept.METADATA_KEY_PLAYER_ID
 _METHOD = "/pandora.dialogue.v1.DialogueService/StartDialogue"
 
@@ -467,9 +469,9 @@ def test_access_log_events_exist_in_go_source(repo_root: pathlib.Path) -> None:
     for event in ("rpc_ok", "rpc_slow", "rpc_failed", "rpc_inband_error"):
         assert f'"{event}"' in src, f"Go 侧没有事件 {event} —— 是不是名字对错了?"
 
-    py = (
-        pathlib.Path(pintercept.__file__).read_text(encoding="utf-8")
-    )
+    # 只看代码：注释/docstring 里写着事件名不代表真的产出了这条日志
+    # （理由见 tests/srcprobe.py）。
+    py = module_code_text(pintercept)
     for event in ("rpc_ok", "rpc_slow", "rpc_failed", "rpc_inband_error"):
         assert f'"{event}"' in py, f"Python 侧不产出 {event}"
 

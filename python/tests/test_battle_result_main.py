@@ -30,6 +30,8 @@ from structlog.testing import capture_logs
 from pandorapy import dsauth, errcode
 from pandorapy.services.battle_result import biz as bbiz
 from pandorapy.services.battle_result import main as bmain
+
+from tests.srcprobe import module_code_text
 from pandorapy.services.battle_result import repo as brepo
 from pandorapy.services.battle_result import service as bsvc
 
@@ -238,9 +240,9 @@ def test_gate_event_names_exist_in_go_main(repo_root: pathlib.Path) -> None:
     抄一份的话 Go 改了名这个测试照样绿(它验的是"我抄的等于我抄的")。
     """
     src = (repo_root / GO_MAIN).read_text(encoding="utf-8")
-    py = (
-        pathlib.Path(bmain.__file__).parent / "main.py"
-    ).read_text(encoding="utf-8")
+    # Python 侧只看代码：注释/docstring 里写着事件名不代表真的打了这条日志
+    # （理由见 tests/srcprobe.py）。Go 侧是另一门语言，仍按原文匹配。
+    py = module_code_text(bmain)
     shared = [
         "config_load_failed",
         "config_scan_failed",
@@ -290,7 +292,7 @@ def test_gate_event_names_exist_in_go_main(repo_root: pathlib.Path) -> None:
 def test_model_b_and_progress_are_implemented(repo_root: pathlib.Path) -> None:
     """Model-B 与实时进度通道已移植，旧的 Python 专有拒启闸不得回归。"""
     src = (repo_root / GO_MAIN).read_text(encoding="utf-8")
-    py = pathlib.Path(bmain.__file__).read_text(encoding="utf-8")
+    py = module_code_text(bmain)
     assert '"battle_authority_mode_unsupported"' not in src
     assert "battle_authority_mode_unsupported" not in py
     # 实时进度通道**已移植**:启动期不再有该判据,后台出箱循环必须在位。

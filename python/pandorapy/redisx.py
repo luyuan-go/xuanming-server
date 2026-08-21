@@ -472,6 +472,21 @@ def new_universal_client(conf, *, context_timeout: bool = False):  # noqa: ANN00
     )
 
 
+def new_universal_client_with_credentials(conf, username: str, password: str):  # noqa: ANN001
+    """拓扑同 `new_universal_client`,但**替换**(而非回落到)conf 里的凭据。
+
+    对应 Go 的 `pkg/redisx.NewUniversalClientWithCredentials`。
+
+    ★ "替换而非回落"是这个函数存在的全部理由:一次性安全工具(ds_allocator 的
+      pod_uid release preflight)拿的是**从写者服务配置裁出来的 endpoint-only 配置**,
+      必须用专用只读 ACL 身份连接。如果实现成"username 空时回落到 conf.password",
+      某天 conf 里混进写者口令就会以写权限跑审计 —— 而审计本身完全不会报错。
+    ★ 用 `model_copy(update=...)` 而不是给 `new_universal_client` 加分支:选型规则
+      (Sentinel / Cluster / 单实例)只有一份,不因凭据来源分叉。
+    """
+    return new_universal_client(conf.model_copy(update={"username": username, "password": password}))
+
+
 async def must_connect(conf, *, ping_timeout_sec: float = 3.0):  # noqa: ANN001
     """建客户端并做一次**启动期 Ping**,连不上就抛。
 

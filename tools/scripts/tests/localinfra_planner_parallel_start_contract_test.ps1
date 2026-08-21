@@ -308,6 +308,10 @@ $dependencyStates = @(Invoke-PandoraPlannerInfraBatch -Launchers $dependencyLaun
         $dependencyEvents.Add("ready:$($State.Name):$($dependencyClock.Milliseconds)")
         if ($State.Name -ceq 'mysql') {
             $dependencyEvents.Add("migration-start:$($dependencyClock.Milliseconds)")
+            # 同 runspace migration 会占用父 pipeline，但四组件早已全部 launch；用 400ms
+            # 虚拟耗时证明 Kafka 的 OS 启动墙钟仍前进，总计取关键路径而非 200+400+700。
+            $dependencyClock.Milliseconds += 400
+            $dependencyEvents.Add("migration-end:$($dependencyClock.Milliseconds)")
         }
     } -OnFailure { param($State, $Reason) throw "依赖边虚拟组件不应失败:$($State.Name)/$Reason" } `
     -Sleep { param($Milliseconds) $dependencyClock.Milliseconds += $Milliseconds } `
@@ -319,10 +323,36 @@ Assert-Equal 700 (@($dependencyStates | Where-Object Name -eq 'kafka')[0].ReadyA
     'Kafka 应在虚拟 700ms ready'
 Assert-Equal 1 @($dependencyEvents | Where-Object { $_ -ceq 'migration-start:200' }).Count `
     'MySQL ready callback 必须在 200ms 立即启动且只启动一次 migration'
+Assert-Equal 1 @($dependencyEvents | Where-Object { $_ -ceq 'migration-end:600' }).Count `
+    '同 runspace migration 应在虚拟 600ms 完成'
 $migrationStartIndex = $dependencyEvents.IndexOf('migration-start:200')
 $kafkaReadyIndex = $dependencyEvents.IndexOf('ready:kafka:700')
 Assert-True ($migrationStartIndex -ge 0 -and $kafkaReadyIndex -gt $migrationStartIndex) `
     'migration-start 必须发生在 Kafka 700ms ready 之前，不能退化为全基础设施 join 后迁移'
+Assert-Equal 700 $dependencyClock.Milliseconds `
+    '同步 callback 只暂停 readiness 轮询；四组件已先 launch，总墙钟仍为 max(600,700) 而非 1100ms'
+
+# 本次真实回归来自“本机 MySQL 已在运行”的复用分支。launcher 已完成 exact listener/
+# 账号验证并直接返回 Ready=true 时，也必须通知一次上层 callback，且不能再进入轮询。
+$reusedReadyEvents = [Collections.Generic.List[string]]::new()
+$reusedStates = @(Invoke-PandoraPlannerInfraBatch -Launchers @(
+    {
+        [pscustomobject]@{
+            Name = 'mysql'; Ready = $true; Reused = $true; Failure = ''
+            StartedAtMilliseconds = [int64]0; FinishedAtMilliseconds = [int64]37
+        }
+    }
+) -GetListenerRecords { throw '复用 ready 组件不应再抓 listener 快照' } `
+    -TestProcessExited { throw '复用 ready 组件不应再检查进程退出' } `
+    -TestStateReady { throw '复用 ready 组件不应再进入 readiness 轮询' } `
+    -OnReady { param($State) $reusedReadyEvents.Add("ready:$($State.Name):$($State.Reused)") } `
+    -OnFailure { param($State, $Reason) throw "复用 ready 组件不应失败:$($State.Name)/$Reason" } `
+    -Sleep { throw '复用 ready 组件不应 sleep' } `
+    -GetElapsedMilliseconds { return [int64]37 })
+Assert-Equal 1 $reusedStates.Count '复用 MySQL 必须保留唯一状态'
+Assert-Equal 1 $reusedReadyEvents.Count '复用 MySQL ready callback 必须且只能调用一次'
+Assert-Equal 'ready:mysql:True' $reusedReadyEvents[0] `
+    '复用 MySQL 必须带真实 Reused 标记通知上层启动 migration'
 
 # ready callback 自身失败属于根因；StopOnFirstFailure 必须封存尚未 ready 的 sibling，
 # 不能继续等 Kafka，也不能把 callback 异常误报成端口超时。

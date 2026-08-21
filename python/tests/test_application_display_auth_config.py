@@ -301,12 +301,11 @@ def test_dev_tidb_and_prod_examples_share_each_caller_credentials(
 
 
 def test_authority_mains_install_shared_multi_caller_verifier() -> None:
-    login_main = (REPO_ROOT / "python/pandorapy/services/login/main.py").read_text(
-        encoding="utf-8"
-    )
-    player_main = (REPO_ROOT / "python/pandorapy/services/player/main.py").read_text(
-        encoding="utf-8"
-    )
+    from tests.srcprobe import code_text
+
+    # 只看代码：注释/docstring 里提到这些接线不算数（理由见 tests/srcprobe.py）
+    login_main = code_text(REPO_ROOT / "python/pandorapy/services/login/main.py")
+    player_main = code_text(REPO_ROOT / "python/pandorapy/services/player/main.py")
     assert "internalrpcauth.MultiCallerVerifier(*verifiers)" in login_main
     assert "internalrpcauth.MultiCallerVerifier(" in player_main
     for caller in ("team", "friend", "guild"):

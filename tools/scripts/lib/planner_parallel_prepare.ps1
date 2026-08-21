@@ -1,7 +1,8 @@
 # 策划免 Docker 并行准备的 exact child Process 边界。
 #
 # 固定编排本身在 dev_all.ps1，基础设施在父 runspace 保留同一把工作区锁；本文件只负责
-# tables/build/migration 短任务的启动、真实耗时、有界输出 drain 与 exact PID 回收。
+# tables/build 短任务的启动、真实耗时、有界输出 drain 与 exact PID 回收。migration 在
+# MySQL-ready callback 中留在父 runspace，同锁执行并与已 launch 的其它基础设施进程重叠。
 
 function Get-PandoraPlannerSpeculativeBuildDisposition {
     [CmdletBinding()]

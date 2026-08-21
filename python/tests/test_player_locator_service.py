@@ -30,6 +30,8 @@ from pandorapy.services.player_locator import repo as lrepo
 from pandorapy.services.player_locator import service as lsvc
 from pandorapy.services.player_locator import usecase as lusecase
 
+from tests.srcprobe import module_code_text
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 GO_SERVICE_DIR = REPO_ROOT / "services" / "runtime" / "player_locator"
 GO_CONF = GO_SERVICE_DIR / "internal" / "conf" / "conf.go"
@@ -404,9 +406,11 @@ def test_gate_event_names_exist_in_go_main() -> None:
         "service_ready",
     ):
         assert f'"{event}"' in src, f"Go main.go 里找不到事件名 {event}"
-        assert event in lmain.__doc__ or event in pathlib.Path(
-            lmain.__file__
-        ).read_text(encoding="utf-8"), f"Python main.py 里没有事件名 {event}"
+        # ★ 只认**代码里的字符串字面量**。原先这里写的是
+        # `event in lmain.__doc__ or event in <原始源码>` —— 把模块 docstring
+        # 明文当成证据：事件名只写在头注释里、压根没打这条日志，照样绿，
+        # 而 Loki 上按这个名字建的告警已经失去覆盖（理由见 tests/srcprobe.py）。
+        assert f'"{event}"' in module_code_text(lmain), f"Python main.py 里没有事件名 {event}"
 
 
 # ── service 层:返回形态 ────────────────────────────────────────────────────

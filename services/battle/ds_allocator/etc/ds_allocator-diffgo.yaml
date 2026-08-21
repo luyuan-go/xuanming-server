@@ -1,0 +1,305 @@
+# Pandora ds_allocator 服务开发期配置(W4 ②,2026-06-06)。
+#
+# - gRPC :20020 / HTTP :21020(仅 /metrics)
+# - Redis 强依赖(DS 战斗实例镜像 + 心跳超时 ZSET 扫描)
+# - W4 ② 用 MockGameServerAllocator(返回假 pod/addr);W4 ⑫ 接真 Agones(agones.enabled=true 启用)
+# - duration 字段用 pkg/config.Duration,yaml 可直接写 "15s"
+# - dev: enable_reflection=true 便于 grpcurl 联调
+
+server:
+  grpc:
+    network: tcp
+    addr: ":20120"
+    timeout: "330s"             # 必须盖过 allocator.ready_wait_timeout(300s,editor 冷启动)+ 回收余量
+    enable_reflection: true     # dev 开;prod 关(零值=false)
+    max_conn_age: "15m"         # 达龄 GOAWAY 重拨,滚动更新时流量能滚到新副本(zero-downtime §6.2)
+    max_conn_age_grace: "360s"  # 必须盖过 330s 的 AllocateBattle 在途调用，避免 GOAWAY 提前砍断
+  http:
+    network: tcp
+    addr: ":21120"
+
+node:
+  node_id: 1
+  redis_client:
+    host: "127.0.0.1:16379"
+    db: 0
+    dial_timeout: "2s"
+    # 2026-08-04 由 1s 放宽到 5s(仅 dev):本客户端就是战斗记录仓(main.go NewRedisBattleRepo)。
+    # AllocateBattle 要等 editor 形态 DS 冷启动约 60s,期间持续轮询 Redis;本机同时跑
+    # UE 编辑器 + Hub DS + 战斗 DS + 游戏客户端 + 21 个 Go 服务时,**任意一次**读超过 1s
+    # 就抛原始错误(非 errcode 包装)→ 上层判 ErrUnknown(code=1) → 整局分配失败 →
+    # matchmaker 回滚 owner Begin → 玩家被弹回大厅(2026-08-04 实测:AllocateBattle
+    # 59.6s code=1、Heartbeat 1018ms code=1,重试则 allocate_idempotent_hit 成功)。
+    # 放宽只影响「多久判定 Redis 不可用」,不拖慢正常路径(命中即返回)。
+    # 生产 Redis 与服务同机房、无此争抢,prod 配置不动。
+    read_timeout: "5s"
+    write_timeout: "5s"
+
+# ── DS 启动后端模式(标准两模式开关)─────────────────────────────────────────
+# mode 单一开关决定战斗 DS 怎么起,与 hub_allocator.mode 对齐:
+#   "local"  → 本机直接 exec 打包好的 Windows DS 进程(Windows 单机自测,见下方 local_ds)
+#   "agones" → k8s Agones GameServerAllocation(Linux 线上,见下方 agones)
+#   "mock"   → 确定性假地址(无真实 DS,离线联调)
+# mode 为权威开关;留空时才回退按 agones.enabled / local_ds.enabled 推导(向后兼容旧配置)。
+# dev 默认 local:下载/打包好 Windows DS 后开客户端即可端到端自测(匹配成局→后端 exec 战斗 DS→连入)。
+# 上线切 "agones"。
+mode: "mock"
+
+# W4 ③:ds.lifecycle producer。心跳超时 abandoned → 发 DSLifecycleEvent 给
+# battle_result 做 match release + terminal placement 补偿。仅 local/off 开发可留空；
+# Redis authority 或 Agones+enforce 生产模式缺 broker/producer 会在启动前 fail-closed。
+kafka:
+  brokers: ["127.0.0.1:9093"]
+  group_id: "pandora-ds-allocator"
+  partition_cnt: 4
+
+# config_table: 策划配置表加载(不变量 §9.15;docs/design/config-table-hotreload.md)。
+#   本服只用其中的**关卡表**:mode=local 起战斗 DS 时按 map_id 现查 g_关卡.xlsx 得到关卡资源
+#   与 GameMode 类,拼成 DS 命令行地图参数 —— 关卡数据的唯一权威源就是这张表(§9.22)。
+#   dir 非空 = 启动强依赖:加载/校验失败直接退出(fail-closed),坏批次不会带着上线。
+#   热更:重导表后 `grpcurl -plaintext -d '{}' 127.0.0.1:20020
+#         pandora.config.v1.ConfigTableAdminService/ReloadConfigTable`,**无需重启本服务**,
+#         下一局即可进新加的副本(加载失败保留旧表)。
+#   mode=agones 可留空:那条路的关卡由 DS 侧 Loader GameMode 查同一张表决定,allocator 只传 map_id。
+#   dev 直接指仓库 dist(相对服务目录,进程 CWD = services/battle/ds_allocator)。
+config_table:
+  dir: "../../../configtable/dist"
+
+# player_locator gRPC 地址(短 TTL presence/监控续期,docs/design/battle-reconnect.md §2.2)。
+# 留空 → 不续期 presence(弱依赖,不影响权威 placement；不得据此把玩家降级路由到 Hub)。
+locator_addr: "127.0.0.1:20006"
+
+# ── DS 回调服务令牌(审核 P1 #1:DS→后端回调认证)─────────────────────────────
+# ds_allocator 双角色:①签发——AllocateBattle 时给战斗 DS 签 battle 令牌(绑 match_id),
+# 经 GameServer annotation pandora.dev/ds-token(agones)/ PANDORA_DS_TOKEN env(local)下发;
+# ②校验——Heartbeat / GmService Poll·Ack 按 mode 验证令牌 + 范围绑定。
+# mode: off(默认;UE DS 未带令牌前必须 off)→ permissive(灰度观察)→ enforce(强制)。
+# secret 配了就签发(无害,DS 拿不到签名密钥);dev 与 jwt.secret 同值,生产独立密钥。
+ds_auth:
+  # mode=local 的新 UE 使用机械隔离 local-off-v1：只接受 off+legacy，且 secret 仍必填用于
+  # 签发完整 Model-B tuple；permissive/enforce/redis 或缺 signer 会启动失败，不会退回 legacy JWT。
+  mode: "off"
+  authority_mode: "legacy"
+  active_heartbeat_max_age: "30s"
+  secret: "pandora-dev-jwt-secret-change-me-32!"
+  # authority_mode=redis 时 fence 必填；dev/legacy 不连接 etcd。
+  # fence:
+  #   etcd_endpoints: ["127.0.0.1:2380"]
+  #   etcd_prefix: "/pandora/ds-auth/"
+  #   etcd_lease_ttl_sec: 15
+  #   etcd_dial_timeout: "5s"
+  #   keyset_revision: "pandora-ds-auth-v2-r1"
+
+allocator:
+  # Matchmaker→allocator exact pre-admission abort service identity only.
+  allocation_abort_auth_secret: "pandora-dev-allocation-abort-auth-key-v1!"
+  allocation_abort_auth_audience: "ds-allocator:battle-allocation-abort"
+  # ready_wait_timeout: AllocateBattle 等 DS 心跳 ready 的最长时间(代码默认 10s)。
+  # k8s/minikube 真 Linux DS 冷启动 = Loader GameMode 等 Agones Allocated label → ServerTravel
+  # 加载目标地图(松林镇等大图可远超 10s)→ BattleGameMode BeginPlay 才发 ready 心跳,
+  # 10s 必超时；Artic01 在本地 minikube 冷加载实测超过 45s，因此开发环境放宽到 120s
+  # (取值待 Linux cooked 实测复核,INC-20260727-001 A3)。
+  # 配套三处一起改:上方 server.grpc.timeout=330s、matchmaker ds_allocate_timeout=330s。
+  # matchmaker 自身的 server.grpc.timeout **不在本链上**(分配是后台 worker 出站调用),不必动。
+  #
+  # 2026-08-04 调到 300s:本文件同时服务 packaged 与 editor 两种 launcher(由
+  # PANDORA_DS_LAUNCHER 切换),而代码里 editor 的自动放宽(300s/120s)**只在本项留空时**
+  # 生效(conf.go「显式配置永远优先」,有测试钉死)。原先写死的 120s/15s 是按 packaged 定的,
+  # 一切到 editor 就把放宽顶掉:editor DS 要加载编辑器模块 + 读未 cook 散装资产,本机三个
+  # UE 进程并存时启动超过 120s,AllocateBattle 判 ready 超时 → PVE 对局恒 FAILED(实测)。
+  # 放宽只影响「失败检测有多快」,不拖慢成功路径 —— DS 若 5s 就绪,分配 5s 即返回。
+  ready_wait_timeout: "300s"
+  # heartbeat_timeout: DS 心跳超时阈值(不变量 §4),超过没收到 Heartbeat → abandoned。
+  # 同上调到 120s(= 代码给 editor 的默认值):editor DS 首心跳可能被资产加载阻塞十几秒,
+  # 15s 会把还在加载的健康 DS 判弃(参见 DS 首心跳被加载阻塞撞判弃线的历史事故)。
+  heartbeat_timeout: "120s"
+  # orphan_gs_reclaim_after: 孤儿 Allocated GameServer(无任何权威分配记录引用)连续
+  # 观察超过该时长后由 sweep 对账清扫按 UID+resourceVersion precondition 回收
+  # (代码默认 10m,下限 5m;留空即默认)。根治「Allocated 泄漏占位 → 只能人肉删 →
+  # 误删载人 DS」:任何人任何脚本都不得再手工 delete Allocated GameServer(§9.21)。
+  # orphan_gs_reclaim_after: "10m"
+
+  # owner 迁移双写(owner-authority.md migrate ②③⑥):实例租约 + READY Begin(BATTLE) +
+  # census 代提交 Admit。dev 一键启动已含 owner 服务(:20017);弱依赖,owner 掉线仅告警。
+  # contract 阶段全链验证后才置 owner_lease_required: true(强依赖,续租失败心跳即失败)。
+  owner_addr: "127.0.0.1:20017"
+  # sweep_interval: 后台心跳超时扫描间隔
+  sweep_interval: "5s"
+  # writer_lease_mode: 心跳超时扫描的写者继任租约档位(enforce|warmup|off;留空=enforce)。
+  # 只有当选副本跑扫描,热备副本照常服务 Heartbeat/AllocateBattle —— 这是 ds-allocator 能
+  # 跑多副本 + RollingUpdate 的前提(INC-20260729-001:单副本重启会让全部在场对局被
+  # Battle DS 20s 授权租约判死踢人)。仅 Model B(agones + ds_auth enforce)下生效,
+  # dev 的 local/mock 模式不启动租约,此项为惰性。
+  #   · 首次从不含 writerlease 的旧镜像升级时改 warmup 走两跳;
+  #   · 回滚必须与 Deployment 同步改(off 必须配 replicas:1 + Recreate),否则启动期门禁
+  #     会 fail-closed 拒绝启动 —— 这是有意的,不要单改一边。
+  writer_lease_mode: "enforce"
+  # battle_ttl: 战斗 DS 镜像 Redis key TTL(防僵尸镜像)
+  battle_ttl: "2h"
+  # empty_battle_timeout: 空场超时兜底(默认 5m)。对局活跃(ready/running)但 DS 上报
+  # player_count==0 持续超过此时长 → 判 abandoned + 回收(全员掉线未归/客户端从未连入,
+  # DS 空转烧资源)。主路径是 DS 侧空场计时器自结算(agones-dev.md §2.4),此阈值应大于
+  # DS 侧计时器,且必须远大于战斗断线重连窗口(~30s)。设负值禁用。
+  empty_battle_timeout: "5m"
+  # roster_join_deadline: 花名册到齐期限(默认 45s,下限 30s;负值关闭整道闸)。INC-20260813-001。
+  # 上面那条只管「一个人都没有」,拦不住「来了但没来齐」——6 人 roster 只进来 5 个时
+  # player_count 恒为 5,空场计时器一次都不会起,一场 3v2 照常打完。
+  # 判据是 DS 心跳捎带的**在场名单**(census)与 roster 的差集;DS 不上报 census
+  # (legacy / local-off-v1)时整道跳过,绝不拿数量硬猜。
+  # 只在开局阶段生效,两道独立守卫:
+  #   ① roster_ever_complete —— 全员同时在场过一次即永久豁免(精确,但只有新版副本会写);
+  #   ② 武装窗 = ready_wait_timeout + 本值 + 30s —— 自 allocated_at 起算,过窗任何副本都不再武装。
+  # ② 是给滚动升级用的:旧副本手里已到齐过的局没有 ① 的记忆,被新副本接手时光看 ①
+  # 会把「局中掉线」误判成「开局没到齐」,45s 后判弃一场**正在打的对局**。武装窗无需配置,
+  # 自动推导;它也是为什么 ready_wait_timeout 配得越大、本闸的有效窗口越长。
+  # 判弃时只罚缺席者 —— 按时到场的人是受害者,不该再吃一次进入侧退避。
+  # ⚠️ 45s 是「让在场玩家少干等」的取舍,不是安全上界(严格安全上界 = DSTicket TTL 120s
+  # + 余量 = 150s,那之后缺席者物理上再也进不来)。上线前必须实测
+  # 「DS ready → 最后一个 Join succeeded」的 P99,超过 45s 就得调大,否则会误杀冷加载慢的玩家。
+  roster_join_deadline: "45s"
+  # roster_join_deadline_mode: 到齐期限激活档(observe → enforce,decision-revisit §5)。
+  #   observe(默认): 记录到齐事实,到点只打 roster_incomplete_would_abandon 采证 WARN,不判弃;
+  #   enforce:       到点真判弃 —— 但只对 roster_policy_generation == 本配置代的局;
+  #   off:           整道闸关死(连事实都不记)。
+  # 激活协议: ①observe + generation=0 全量 → ②确认采证合理后 generation 改 1 滚动 →
+  # ③确认全量后翻 enforce(只有 gen=1 的局会被执行,旧局自然排空)。
+  # 回滚只翻回 observe;再激活须 generation+1(旧代局连同已累计计时整体豁免)。
+  # enforce 且 generation=0 是自相矛盾配置,启动直接拒。
+  roster_join_deadline_mode: "observe"
+  roster_policy_generation: 0
+  # mock_ds_addr_host: W4 ② MockGameServerAllocator 返回的假 DS host
+  mock_ds_addr_host: "127.0.0.1"
+  # mock_ds_port_base: Mock 端口基址(每场 port = base + match_id % range)
+  mock_ds_port_base: 30000
+  # mock_ds_port_range: Mock 端口取模范围
+  mock_ds_port_range: 1000
+
+# W4 ⑫: 真 Agones GameServerAllocation 配置。
+# dev 默认 enabled=false 走 Mock(本机无 k8s/Agones 也能跑 ds_allocator)。
+# 上集群时置 enabled=true + fleet_name;in-cluster 下 api_server/token_path/ca_path 可留空用默认。
+#
+# ⚠️ 本机 minikube + Agones 联调时,api_server / token_path 是「每台机各异的临时值」
+#    (kubectl proxy 端口、临时 token 文件路径都随机),**不要提交进仓库**。
+#    本机联调请改本地 ignored 配置或临时覆盖,示例见 deploy/k8s/agones/README.md。
+agones:
+  enabled: false
+  api_server: "https://kubernetes.default.svc"  # in-cluster 默认;本机 minikube 外联临时改本地,勿提交
+  namespace: "default"
+  fleet_name: "pandora-battle"
+  token_path: "/var/run/secrets/kubernetes.io/serviceaccount/token"  # in-cluster 默认;本机临时值勿提交
+  ca_path: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"     # in-cluster 默认
+  insecure_skip_tls_verify: false  # in-cluster=false;minikube 外联自签时本地临时置 true,勿提交
+  allocate_timeout: "5s"
+  # 容量巡检(K8s 快到上限预警,2026-07-10):定期 GET 通用 Fleet + 各 map_fleets 专属 Fleet 的
+  # status(replicas/ready/allocated),暴露 pandora_ds_allocator_fleet_* 指标,并在接近上限时打
+  # 预警日志(ds_fleet_capacity_near_limit / ds_fleet_capacity_exhausted)。仅 mode=agones 生效。
+  # 告警出口走 Grafana Alerting(飞书/企微群 + ntfy),消费上述指标/日志,服务内不直连通知端点。
+  capacity_watch_interval: "30s"   # 巡检间隔;设负值禁用
+  capacity_warn_ratio: 0.8         # allocated/replicas ≥ 此比例 → 预警;ready==0 → exhausted 报错级
+  # map_fleets(可选,标准混合形态):按 map_id 路由到「专属预热 Fleet」——该 Fleet 的 env
+  # 烤死目标 umap + 战斗 GameMode,Pod 预热时已加载好图,分配即可玩(零 ServerTravel 延迟)。
+  # 分配请求生成有序 selectors:[专属 Fleet, 上面的 fleet_name],Agones 按序尝试:
+  # 专属池无空闲自动回落通用 Loader 池(同一次 allocation,无额外 RTT)。
+  # 适合热门图;长尾/新副本不配,走通用池填表即用。专属 Fleet 需另建(克隆 20-fleet-battle.yaml,
+  # 改 metadata.name + PANDORA_DS_MAP/PANDORA_DS_GAMEMODE 为目标图直启)。
+  # map_fleets:
+  #   - map_id: 7                       # SonglinTown(g_关卡.xlsx Id=7)
+  #     fleet_name: "pandora-battle-songlin"
+
+# 本机拉起 Windows Dedicated Server 调试模式(mode=local 时生效)。
+# 匹配成局后 ds_allocator 直接 exec 打包好的 UE Windows DS,分配本机端口返回真实地址。
+# 本机调试步骤:① UE 打包 Windows Server 版(产出 PandoraServer.exe)
+#              ② executable_path 指向该 PandoraServer.exe
+#              ③ 顶部 mode 置 "local"
+# 跨机器移植:下面写死的是本开发机路径;换机器/换盘符无需手改——只要把客户端 Client 仓库放到
+# 与本服务器仓库平级的目录,play.ps1 -Battle 会自动探测 Packages\Server_Win64_*\WindowsServer\
+# PandoraServer.exe 并经 PANDORA_DS_EXE / PANDORA_DS_DIR 注入;此处路径在本机不存在时自动回退到注入值。
+local_ds:
+  enabled: true
+  # launcher:本机 DS 的「进程形态」,两种模式并存,只改这一行即可切换,后端链路一字不改
+  # (两种形态都带 -server,NetMode 恒为 NM_DedicatedServer,登录/大厅/匹配/心跳/结算完全一致)。
+  #   packaged (默认) 跑打包好的 PandoraServer.exe。内容已 cook,性能接近线上,适合验收/压测;
+  #                   策划改 .uasset 必须重新出包才生效。
+  #   editor          跑引擎的 UnrealEditor.exe + 下面的 project_path,直接读工程里未 cook 的
+  #                   Content/。策划存盘后重开一局即生效,免出包;代价是启动慢(要加载一大批
+  #                   编辑器模块、读散装资产、首次进新图可能现场构 DDC),所以 editor 下
+  #                   ready_wait_timeout/heartbeat_timeout 会自动放宽到 300s/120s
+  #                   (仅当你没在 allocator 段显式配置时)。
+  #                   注:editor 形态**不编 shader** —— -server 下引擎跳过全局与材质着色器编译
+  #                   (要编的是 listen server / PIE 那类要出画面的形态)。
+  # 也可用环境变量 PANDORA_DS_LAUNCHER=editor 临时切换,免改本文件。
+  launcher: "packaged"
+  # 策划机可改用 ${PANDORA_DS_ROOT} 拼接(指向客户端仓库【同级】的出包根目录,如 F:/work):
+  #   executable_path: "${PANDORA_DS_ROOT}/Packages/Server_Win64_Shipping/WindowsServer/PandoraServer.exe"
+  # 路径分隔符正斜杠 / 反斜杠都行(go 侧 filepath.FromSlash 归一化);下面是本开发机绝对路径。
+  # launcher=editor 时这里要改成引擎的 UnrealEditor.exe,例如(策划机引擎目录各不相同,按本机实际填):
+  #   executable_path: "E:/Program Files/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe"
+  # 2026-08-04:出包输出根已从客户端 SVN 工作副本内移到与之【平级】(F:\work\Packages)。
+  executable_path: "F:\\work\\Packages\\Server_Win64_Development\\WindowsServer\\PandoraServer.exe"
+  # project_path:仅 launcher=editor 时必填(packaged 忽略)。UE 只把命令行第一个不以 '-' 开头的
+  # token 当工程,所以它会被排在关卡 URL 之前;填错/不存在会在启动时直接报错,不会静默秒退。
+  # 也可用环境变量 PANDORA_DS_UPROJECT 注入。
+  # project_path: "F:/work/Pandora-Client-SVN/Pandora/Pandora.uproject"
+  # ── 起哪张图?一律现查策划关卡表,本文件不再抄第二份 ──────────────────────────
+  # map_id 经客户端选择 → matchmaker 透传 → AllocateBattle;allocator 拿它查上面 config_table
+  # 指的关卡表(g_关卡.xlsx → configtable/dist/level.json),按 asset_path + game_mode_class
+  # 拼出 DS 命令行关卡 URL(规则与 UE 侧 PandoraDSLoaderGameMode::BuildTravelURL 逐字一致)。
+  # **策划新增一张副本 = 关卡表加一行 + 重导表,本文件一个字都不用改。**
+  #
+  # 2026-08-04 之前这里有一张 maps 手抄映射(map_id → 关卡 URL)和一个 map_name 兜底,已整块删除:
+  # 那是把关卡表两列抄了第二份(违反 §9.22),而且抄漏一行的后果不是「回退默认图」而是
+  # 「这张图永远进不去」—— 起了兜底图的 DS 会被 DS 侧关卡门判 Mismatch 后 fail-closed 自杀,
+  # 分配卡在 warming 直到超时,玩家侧只显示「一直排队中」(map_id=11 实测)。现在查不到表就
+  # 直接让本次分配失败并写明 map_id,不再有静默起错图这条路。
+  #
+  # loader_map:另一条同源路径(生产 Agones 走的就是它)——DS 统一启到加载/分发关卡,由 UE 侧
+  # Loader GameMode 读 PANDORA_MAP_ID(已注入)查**同一张** g_关卡.xlsx 后 ServerTravel。
+  # 填了它就不再由 allocator 拼 URL。Loader 复用包内已有的空入口图 Lvl_Server_Entry。
+  # 本机 local 至今未实测过这条路,默认留空。
+  # loader_map: "/Game/Entry/Level/Lvl_Server_Entry?game=/Script/Pandora.PandoraDSLoaderGameMode"
+
+  # advertise_host:返回给客户端 NetDriver 连接的 host。本机自测用 127.0.0.1;
+  # 内网测试服(play.ps1 -Battle -Intranet)会自动探测本机内网 IPv4 并经环境变量
+  # PANDORA_DS_ADVERTISE_HOST 覆盖此值(优先级高于这里的写死值,策划零操作,无需改本文件)。
+  advertise_host: "127.0.0.1"
+  port_base: 7800                              # 战斗 DS 端口池基址(与 hub 7777 错开)
+  port_range: 100                              # 端口池大小,实际端口在 [base, base+range) 取空闲
+  working_dir: "F:\\work\\Packages\\Server_Win64_Development\\WindowsServer" # DS 进程工作目录(staged 根目录)
+  log_dir: "run/dev/logs/ds"                   # 每个 DS 进程 stdout/stderr 落 <pod>.log
+  # extra_args:追加 UE DS 命令行参数(本地 DS 面明文)。例:["-PANDORA_BACKEND=http://127.0.0.1:8444"]
+  #
+  # -NoZenAutoLaunch=127.0.0.1:8558 (2026-08-05):本机 zenserver 监听 `::`:8558(双栈)且进程健康,
+  # 但 IPv6 回环连出被安全软件拦掉 —— 实测 TCP connect [::1]:8558 报 WSAEACCES(10013)、
+  # 同端口 127.0.0.1 正常。引擎默认走 Zen AutoLaunch 并按 http://[::1]:8558 探活,于是每个 DS
+  # 冷启动都白等满健康超时才降级到文件 DDC(实测 30.938s / 30.897s 两次,见 Pandora_2/_3.log)。
+  # 这段纯等待不影响正确性,但直接吃掉 AllocateBattle 的 ready 预算。
+  # 该参数走 ZenServerInterface.cpp FServiceSettings::TryApplyAutoLaunchOverride:把 AutoLaunch
+  # 换成 ConnectExisting 指向 IPv4,既跳过健康等待又保住 Zen DDC 命中(不是关掉 Zen)。
+  # 根治是放行本机 IPv6 回环;修好后删掉本行即可回到引擎默认。
+  #
+  # -AssetGatherSync=false (2026-08-05):与客户端 DefaultEngine.ini 的 EditorGameScansAR=Async 同义,
+  # 但作用在单个 DS 进程上(AssetDataGatherer.cpp FGatherSettings::Initialize,
+  # 门在 #if WITH_EDITOR || !UE_BUILD_SHIPPING)。ini 没被读到时这条仍然生效,两条互为兜底。
+  # 收益约 1 秒(本机实测 gather 0.54~1.08s),不是 PVE 进不去的原因;留着只为 -server 启动期
+  # 不把扫描压在游戏线程上。
+  #
+  # 本段只在 mode: "local" 下被读(main.go ModeLocal → NewLocalGameServerAllocator);
+  # 生产是 mode: agones + local_ds.enabled: false,这两个参数在线上不参与任何路径。
+  extra_args: ["-NoZenAutoLaunch=127.0.0.1:8558", "-AssetGatherSync=false"]
+  extra_env:                                   # 注入 DS 进程额外环境变量
+    PANDORA_DS_ALLOCATOR_ADDR: "127.0.0.1:8444"
+    PANDORA_DS_ADMISSION_ADDR: "127.0.0.1:8444"
+    PANDORA_PLAYER_LOCATOR_ADDR: "127.0.0.1:8444"
+    PANDORA_BATTLE_RESULT_ADDR: "127.0.0.1:8444"
+    # 进场路径三条只读反查:出战快照(专精 / 预设装备)与队伍 / 公会归属。
+    # 这三个 endpoint 在 UE 的 PandoraDSBackendSubsystem.h 里默认写的是业务 gRPC 端口
+    # (20002 / 20010 / 20008),注释还写着"DS 侧内网直连,不经 Envoy" —— 那个默认值是错的:
+    # DS 走 libcurl HTTP/1.1 grpc-web,打到 h2c 端口只会得到
+    # `Received HTTP/0.9 when not allowed`,每局必失败且只在 DS 日志里留 warn
+    # (装备 / 专精 / 队伍色 / 公会全部按空处理)。必须和其它 endpoint 一样指到 Envoy DS 面。
+    # 集群侧的等价注入见 deploy/k8s/agones/{20,21,30,31}-fleet-*.yaml;两处必须同增同减。
+    PANDORA_PLAYER_SERVICE_ADDR: "127.0.0.1:8444"
+    PANDORA_TEAM_SERVICE_ADDR: "127.0.0.1:8444"
+    PANDORA_GUILD_SERVICE_ADDR: "127.0.0.1:8444"
+    # 本地 dev 的 Envoy DS 面 :8444 是明文 grpc-web(见 deploy/envoy/envoy.yaml pandora_ds_listener)。
+    PANDORA_DS_ALLOCATOR_TLS: "0"

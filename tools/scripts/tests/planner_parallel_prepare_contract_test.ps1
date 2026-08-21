@@ -8,6 +8,7 @@ Set-StrictMode -Version Latest
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 $helper = Join-Path $projectRoot 'tools/scripts/lib/planner_parallel_prepare.ps1'
 $fastHelper = Join-Path $projectRoot 'tools/scripts/lib/planner_fast_start.ps1'
+$lockHelper = Join-Path $projectRoot 'tools/scripts/lib/local_infra_state.ps1'
 $devAllPath = Join-Path $projectRoot 'tools/scripts/dev_all.ps1'
 
 function Assert-True([bool]$Condition, [string]$Message) {
@@ -26,6 +27,9 @@ Assert-True (Test-Path -LiteralPath $helper -PathType Leaf) `
 Assert-True (Test-Path -LiteralPath $fastHelper -PathType Leaf) `
     '应提供配置表消费者权威集合 helper'
 . $fastHelper
+Assert-True (Test-Path -LiteralPath $lockHelper -PathType Leaf) `
+    '应提供工作区编排锁 helper'
+. $lockHelper
 
 # 只装载两个纯身份函数，不能 dot-source dev_all.ps1（后者会获取锁并启动环境）。
 $devAllTokens = $null
@@ -267,7 +271,7 @@ Assert-Equal -1 $blockedPipeResult.ExitCode `
 Assert-Equal 0 $blockedPipeResult.ProcessExitCode '合成失败码之外仍保留 exact child 原退出码'
 Assert-True ($blockedPipeResult.DrainError -match 'stdout 管道.*未关闭') '输出 drain 超时必须返回明确错误'
 
-Write-Host '[4] MySQL-ready 回调：GetNewClosure 后仍能调用父脚本的 worker starter' -ForegroundColor Cyan
+Write-Host '[4] 回调作用域：GetNewClosure 后只能调用显式捕获的父脚本函数' -ForegroundColor Cyan
 function Invoke-CallbackInChildScope([scriptblock]$Callback) {
     & {
         param([scriptblock]$InnerCallback)
@@ -297,7 +301,64 @@ $boundCommandResult = & {
 Assert-Equal 'bound-ok' $boundCommandResult `
     '显式捕获函数 ScriptBlock 后，回调进入子脚本作用域仍必须可调用'
 
-Write-Host '[5] 生产接线：只在策划 fast 路线并行，MySQL ready 后异步迁移' -ForegroundColor Cyan
+Write-Host '[5] migration 锁边界：独立 pwsh 必撞父锁，同一 runspace 才允许递归' -ForegroundColor Cyan
+$lockFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) (
+    'pandora-planner-migration-lock-' + [guid]::NewGuid().ToString('N'))
+$oldProbeHelper = $env:PANDORA_LOCK_PROBE_HELPER
+$oldProbeRoot = $env:PANDORA_LOCK_PROBE_ROOT
+$lockDepth = 0
+$migrationLockChild = $null
+try {
+    $null = New-Item -ItemType Directory -Force -Path $lockFixtureRoot
+    Enter-PandoraOrchestrationLock -ProjectRoot $lockFixtureRoot -Operation 'planner parent'
+    $lockDepth++
+
+    $enterPlannerLock = ${function:Enter-PandoraOrchestrationLock}
+    $assertPlannerLock = ${function:Assert-PandoraOrchestrationLockHeld}
+    $exitPlannerLock = ${function:Exit-PandoraOrchestrationLock}
+    $inlineMigrationCallback = {
+        & $enterPlannerLock -ProjectRoot $lockFixtureRoot -Operation 'inline migration'
+        try {
+            $null = & $assertPlannerLock -ProjectRoot $lockFixtureRoot
+            'inline-lock-ok'
+        } finally {
+            & $exitPlannerLock
+        }
+    }.GetNewClosure()
+    Assert-Equal 'inline-lock-ok' (Invoke-CallbackInChildScope $inlineMigrationCallback) `
+        '同一 runspace 的 GetNewClosure migration callback 必须递归复用父编排锁'
+
+    $env:PANDORA_LOCK_PROBE_HELPER = $lockHelper
+    $env:PANDORA_LOCK_PROBE_ROOT = $lockFixtureRoot
+    $migrationLockChild = Start-PandoraPlannerPreparationProcess -Name migration-lock-conflict `
+        -FilePath (Join-Path $PSHOME 'pwsh.exe') -WorkingDirectory $projectRoot -ArgumentList @(
+            '-NoProfile', '-Command',
+            '. $env:PANDORA_LOCK_PROBE_HELPER; Enter-PandoraOrchestrationLock -ProjectRoot $env:PANDORA_LOCK_PROBE_ROOT -Operation migration'
+        )
+    $migrationLockResult = Complete-PandoraPlannerPreparationProcess -Handle $migrationLockChild `
+        -TimeoutMilliseconds 10000
+    Assert-True ($migrationLockResult.ExitCode -ne 0 -and
+        $migrationLockResult.StandardError -match 'local_infra_state\.ps1:42') `
+        '独立 migration pwsh 必须被父进程活锁拒绝，精确复现双击现场'
+    $migrationLockChild.Process.Dispose()
+    $migrationLockChild = $null
+} finally {
+    if ($migrationLockChild) {
+        $null = Stop-PandoraPlannerPreparationProcess -Handle $migrationLockChild -DrainTimeoutMilliseconds 2000
+        $migrationLockChild.Process.Dispose()
+    }
+    while ($lockDepth -gt 0) {
+        Exit-PandoraOrchestrationLock
+        $lockDepth--
+    }
+    if ($null -eq $oldProbeHelper) { Remove-Item Env:PANDORA_LOCK_PROBE_HELPER -ErrorAction SilentlyContinue }
+    else { $env:PANDORA_LOCK_PROBE_HELPER = $oldProbeHelper }
+    if ($null -eq $oldProbeRoot) { Remove-Item Env:PANDORA_LOCK_PROBE_ROOT -ErrorAction SilentlyContinue }
+    else { $env:PANDORA_LOCK_PROBE_ROOT = $oldProbeRoot }
+    Remove-Item -LiteralPath $lockFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host '[6] 生产接线：只在策划 fast 路线并行，MySQL ready 后同锁迁移' -ForegroundColor Cyan
 $startText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/scripts/start.ps1'))
 $devAllText = [IO.File]::ReadAllText($devAllPath)
 Assert-True ($startText -match '\$deferPlannerTableGeneration\s*=\s*\$plannerTimingEnabled' -and
@@ -341,13 +402,20 @@ Assert-True ($devAllText -match '(?s)function Remove-PlannerPreparationOrphanSta
     $devAllText -match '(?s)Stop-PandoraPlannerPreparationProcess.*?Remove-PlannerPreparationOrphanStages \$handle') `
     'worker 在 manifest 落盘前被强停时，也只能按 exact worker PID 清孤儿 staging'
 
-$workerStarterCaptureIndex = $devAllText.IndexOf(
-    '$startPlannerPreparationProcess = ${function:Start-PandoraPlannerPreparationProcess}',
-    [StringComparison]::Ordinal)
 $infraCallbackIndex = $devAllText.IndexOf('$infraReadyCallback = {', [StringComparison]::Ordinal)
-Assert-True ($workerStarterCaptureIndex -ge 0 -and $workerStarterCaptureIndex -lt $infraCallbackIndex -and
-    $devAllText -match '(?s)\$infraReadyCallback\s*=\s*\{.*?Name\)"\s*-cne\s*''mysql''.*?&\s*\$startPlannerPreparationProcess\s+-Name migration') `
-    '本机 MySQL ready callback 必须显式捕获父脚本 worker starter，进入 local_infra 子作用域后再启动 migration child'
+$infraCallbackEnd = $devAllText.IndexOf('}.GetNewClosure()', $infraCallbackIndex,
+    [StringComparison]::Ordinal)
+Assert-True ($infraCallbackIndex -ge 0 -and $infraCallbackEnd -gt $infraCallbackIndex) `
+    '必须能定位 MySQL ready callback'
+$infraCallbackBody = $devAllText.Substring($infraCallbackIndex,
+    $infraCallbackEnd - $infraCallbackIndex)
+Assert-True ($infraCallbackBody -match '(?s)Name\)"\s*-cne\s*''mysql''.*?&\s*"\$ScriptDir/dev_migrate\.ps1".*?-RequireMysql' -and
+    $infraCallbackBody -match '\$plannerMigrationContext\.Result\s*=') `
+    'MySQL ready callback 必须在父 runspace/同一编排锁内执行 migration 并保存结果'
+Assert-True ($infraCallbackBody -notmatch 'Start-PandoraPlannerPreparationProcess\s+-Name migration') `
+    '父进程持锁时严禁另起 migration pwsh 再抢同一把独占锁'
+Assert-True ($devAllText -notmatch '\$plannerMigrationContext\.Handle') `
+    'migration 已改为同 runspace 完成结果，不得残留 child handle/取消假象'
 Assert-True ($devAllText -match '(?s)local_infra\.ps1"\s+-Action up\s+-OnPlannerComponentReady \$infraReadyCallback') `
     'planner fast 必须把 MySQL ready callback 传给 local_infra'
 
@@ -359,9 +427,10 @@ Assert-True ($parallelSchemaStart -gt $schemaIndex -and $ordinarySchemaStart -gt
     '必须能定位 planner fast 数据库结构分支'
 $parallelSchemaBody = $devAllText.Substring($parallelSchemaStart,
     $ordinarySchemaStart - $parallelSchemaStart)
-Assert-True ($parallelSchemaBody -match '(?s)\$migrationHandle\s*=\s*\$plannerMigrationContext\.Handle.*?Complete-PandoraPlannerPreparationProcess\s+-Handle \$migrationHandle') `
-    '数据库结构阶段必须 join MySQL ready callback 创建的 migration handle'
-Assert-True ($parallelSchemaBody -notmatch '&\s*"\$ScriptDir/dev_migrate\.ps1"') `
-    'planner fast 数据库结构阶段不得再次同步执行 dev_migrate'
+Assert-True ($parallelSchemaBody -match '(?s)\$migrationResult\s*=\s*\$plannerMigrationContext\.Result.*?\$migrationResult\.ExitCode') `
+    '数据库结构阶段必须消费 MySQL ready callback 已完成的同锁 migration 结果'
+Assert-True ($parallelSchemaBody -notmatch 'Complete-PandoraPlannerPreparationProcess\s+-Handle \$migrationHandle' -and
+    $parallelSchemaBody -notmatch '&\s*"\$ScriptDir/dev_migrate\.ps1"') `
+    'planner fast 数据库结构阶段不得再次等待 child 或重复执行 dev_migrate'
 
 Write-Host '[PASS] 策划并行准备 exact child/生产接线契约通过' -ForegroundColor Green

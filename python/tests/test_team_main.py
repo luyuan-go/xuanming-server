@@ -122,8 +122,14 @@ def test_gate_event_names_exist_in_go_source(repo_root: pathlib.Path) -> None:
 
 
 def test_python_main_mentions_every_gate_event() -> None:
-    """Python 侧也必须逐条出现同名事件。"""
-    src = pathlib.Path(tmain.__file__).read_text(encoding="utf-8")
+    """Python 侧也必须逐条出现同名事件。
+
+    只看代码：注释/docstring 里写着事件名不代表真的打了这条日志
+    （理由见 tests/srcprobe.py）。
+    """
+    from tests.srcprobe import module_code_text
+
+    src = module_code_text(tmain)
     for event in SHARED_GATE_EVENTS + PY_ONLY_GATE_EVENTS:
         assert f'"{event}"' in src, f"main.py 里找不到事件名 {event}"
 

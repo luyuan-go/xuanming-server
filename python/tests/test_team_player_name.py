@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import pathlib
 from types import SimpleNamespace
 
 import pytest
@@ -427,8 +426,11 @@ def test_python_mains_wire_signed_player_name_rpc_and_shared_replay() -> None:
     from pandorapy.services.player import main as pmain
     from pandorapy.services.team import main as tmain
 
-    team_source = pathlib.Path(tmain.__file__).read_text(encoding="utf-8")
-    player_source = pathlib.Path(pmain.__file__).read_text(encoding="utf-8")
+    from tests.srcprobe import module_code_text
+
+    # 只看代码：注释/docstring 里提到这些接线不算数（理由见 tests/srcprobe.py）
+    team_source = module_code_text(tmain)
+    player_source = module_code_text(pmain)
 
     assert "GrpcPlayerNameResolver(" in team_source
     assert "uc.set_player_name_resolver(player_name_resolver)" in team_source

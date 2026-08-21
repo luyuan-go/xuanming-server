@@ -28,6 +28,8 @@ from pandorapy.services.inventory import conf as iconf
 from pandorapy.services.inventory import fingerprint as ifp
 from pandorapy.services.inventory import main as imain
 from pandorapy.services.inventory import service as isvc
+
+from tests.srcprobe import module_code_text
 from pandorapy.services.inventory.models import (
     InstanceOwnershipQuery,
     ItemAttribute,
@@ -630,9 +632,8 @@ def test_gate_event_names_match_go_source(repo_root: pathlib.Path) -> None:
         "service_ready",
     ):
         assert f'"{event}"' in src, f"Go 侧没有事件名 {event}"
-        assert f'"{event}"' in (
-            pathlib.Path(imain.__file__).read_text(encoding="utf-8")
-        ), f"Python 侧没有事件名 {event}"
+        # 只看代码：注释/docstring 里写着事件名不算（理由见 tests/srcprobe.py）
+        assert f'"{event}"' in module_code_text(imain), f"Python 侧没有事件名 {event}"
 
 
 # ── biz:鉴定 roll / 形状校验 ─────────────────────────────────────────────

@@ -439,7 +439,10 @@ $initExecAt = $migrateText.IndexOf('Invoke-DevMysqlScript -Path')
 Assert-True ($whatIfAt -ge 0 -and $initExecAt -gt $whatIfAt -and
     $migrateText.Substring($whatIfAt, $initExecAt - $whatIfAt) -match '\}\s*else\s*\{') 'WhatIfOnly 在 mysql-init 写入前分支，确实不执行 SQL'
 Assert-True ($migrateText -match '这些库将先由 mysql-init 创建、再执行迁移') 'WhatIfOnly 把 init 将新建的库计入预计迁移目标'
-Assert-True ($migrateText -match 'pandora-dev-migrate-\{0\}-\{1\}' -and $migrateText -match '\[guid\]::NewGuid') '迁移临时目录含 GUID，不同工作区同 PID 不会互相覆盖 DSN'
+Assert-True ($migrateText -match 'run/localinfra/tmp/dev-migrate' -and
+    $migrateText -match '"\{0\}-\{1\}"\s+-f\s+\$PID,\s*\[guid\]::NewGuid' -and
+    $migrateText -match 'Assert-PandoraOrchestrationLockHeld') `
+    '迁移 session 绑定当前工作区编排锁且含 GUID，不同工作区/同 PID 不会互相覆盖 DSN'
 Assert-True (([regex]::Matches(([IO.File]::ReadAllText($infraPath)), 'Get-MysqlListenerRecordsForProcess')).Count -ge 3) '无状态 down/status 也能从池外已归属 mysqld 恢复 listener 端口'
 Assert-True ($startText -match 'local_infra\.ps1"\s+-Action status[\s\S]*?\$LASTEXITCODE\s+-ne\s+0[\s\S]*?ShowStatusExitCode\s*=\s*1' -and
     $startText -match 'if\s*\(\$Status\)\s*\{\s*Show-Status;\s*exit\s+\$script:ShowStatusExitCode' -and

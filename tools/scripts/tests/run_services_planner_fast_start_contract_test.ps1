@@ -38,9 +38,302 @@ $fastFunction = $runAst.FindAll({
             $node.Name -eq 'Start-PlannerFastServices'
     }, $true) | Select-Object -First 1
 $fastFunctionText = if ($fastFunction) { $fastFunction.Extent.Text } else { '' }
+$portGuardFunction = $runAst.FindAll({
+        param($node)
+        return $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-PandoraPlannerFastTargetPortsSafe'
+    }, $true) | Select-Object -First 1
+$portHintFunction = $runAst.FindAll({
+        param($node)
+        return $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-PandoraPlannerFastForeignPortCommandHint'
+    }, $true) | Select-Object -First 1
+$entryPortPreflightFunction = $runAst.FindAll({
+        param($node)
+        return $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Invoke-PandoraPlannerFastEntryPortPreflight'
+    }, $true) | Select-Object -First 1
+$plannerListenerSnapshotFunction = $runAst.FindAll({
+        param($node)
+        return $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-PandoraPlannerFastTcpListenerRecords'
+    }, $true) | Select-Object -First 1
+if (-not $portGuardFunction -or -not $portHintFunction -or -not $entryPortPreflightFunction -or
+    -not $plannerListenerSnapshotFunction) {
+    throw '[RED] 策划 fast 缺少全 target 外来端口 fail-closed seam。'
+}
+$portGuardText = $portGuardFunction.Extent.Text
+$portHintText = $portHintFunction.Extent.Text
+$entryPortPreflightText = $entryPortPreflightFunction.Extent.Text
+$plannerListenerSnapshotText = $plannerListenerSnapshotFunction.Extent.Text
+Invoke-Expression $portHintText
+Invoke-Expression $portGuardText
+Invoke-Expression $plannerListenerSnapshotText
+Invoke-Expression $entryPortPreflightText
+Invoke-Expression $fastFunctionText
+
+Write-Host '[1a] foreign listener 必须在任何 stop/publish/launch 前 fail-closed' -ForegroundColor Cyan
+$fixtureBinDir = 'C:\pandora-fixture\run\dev\bin'
+$fixtureTarget = [pscustomobject]@{ Name = 'ds_allocator'; Port = 20020 }
+
+$snapshotDependencyNames = @('Invoke-PandoraNetstatTcpSnapshot', 'ConvertFrom-PandoraNetstatTcpListenerRecords')
+$savedSnapshotDependencies = @{}
+foreach ($name in $snapshotDependencyNames) {
+    $existingDependency = Get-Item -LiteralPath "function:$name" -ErrorAction SilentlyContinue
+    if ($existingDependency) { $savedSnapshotDependencies[$name] = $existingDependency.ScriptBlock }
+}
+try {
+    $script:PlannerFastRawSnapshotCalls = 0
+    function Invoke-PandoraNetstatTcpSnapshot {
+        $script:PlannerFastRawSnapshotCalls++
+        return [pscustomobject]@{
+            ExitCode = 0
+            Lines = @(
+                '  TCP    0.0.0.0:20020    0.0.0.0:0    LISTENING    0',
+                '  TCP    [::]:20021       [::]:0       LISTENING    0'
+            )
+        }
+    }
+    function ConvertFrom-PandoraNetstatTcpListenerRecords {
+        param([string[]]$Lines)
+        # 共享 parser 的生产语义：正 PID 会返回，PID 0 被过滤。
+        return @([pscustomobject]@{ LocalAddress = '0.0.0.0'; LocalPort = 20020; OwningProcess = 101 })
+    }
+    $pidZeroSnapshot = @(Get-PandoraPlannerFastTcpListenerRecords -Targets @($fixtureTarget))
+    Assert-True ($script:PlannerFastRawSnapshotCalls -eq 1 -and
+        @($pidZeroSnapshot | Where-Object { $_.LocalPort -eq 20020 -and $_.OwningProcess -eq 0 }).Count -eq 1 -and
+        @($pidZeroSnapshot | Where-Object { $_.LocalPort -eq 20021 -and $_.OwningProcess -eq 0 }).Count -eq 0) `
+        'planner snapshot 只抓一次，并把 target 端口的 PID 0 owner 补回 fail-closed 记录'
+} finally {
+    foreach ($name in $snapshotDependencyNames) {
+        if ($savedSnapshotDependencies.ContainsKey($name)) {
+            Set-Item -LiteralPath "function:$name" -Value $savedSnapshotDependencies[$name]
+        } else {
+            Remove-Item -LiteralPath "function:$name" -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Remove-Variable -Name PlannerFastRawSnapshotCalls -Scope Script -Force -ErrorAction SilentlyContinue
+}
+
+$fixtureProcesses = @{
+    101 = [pscustomobject]@{ Id = 101; Path = "$fixtureBinDir\ds_allocator.exe"; ProcessName = 'ds_allocator' }
+    102 = [pscustomobject]@{ Id = 102; Path = "$fixtureBinDir\ds_allocator.exe"; ProcessName = 'ds_allocator' }
+    201 = [pscustomobject]@{ Id = 201; Path = 'C:\Program Files\Docker\com.docker.backend.exe'; ProcessName = 'com.docker.backend' }
+    202 = [pscustomobject]@{ Id = 202; Path = $null; ProcessName = 'mystery' }
+    27052 = [pscustomobject]@{ Id = 27052; Path = 'C:\uv\python.exe'; ProcessName = 'python' }
+}
+$fixtureCommandLines = @{
+    201 = '"C:\Program Files\Docker\com.docker.backend.exe" --token docker-must-stay-redacted'
+    202 = 'mystery.exe --password unknown-must-stay-redacted'
+    27052 = '"C:\uv\python.exe" -m pandorapy.services.ds_allocator.main -conf "C:\private\etc\ds_allocator-diffpy.yaml" --password python-must-stay-redacted'
+}
+$getFixtureProcess = { param([int]$ProcessId) return $fixtureProcesses[$ProcessId] }.GetNewClosure()
+$getFixtureCommandLine = { param([int]$ProcessId) return "$($fixtureCommandLines[$ProcessId])" }.GetNewClosure()
+
+$pythonForeignMessage = ''
+try {
+    Assert-PandoraPlannerFastTargetPortsSafe -Targets @($fixtureTarget) -ListenerRecords @(
+        [pscustomobject]@{ LocalPort = 20020; OwningProcess = 27052 }
+    ) -ExpectedBinDir $fixtureBinDir -GetProcess $getFixtureProcess -GetProcessCommandLine $getFixtureCommandLine
+} catch { $pythonForeignMessage = $_.Exception.Message }
+Assert-True ($pythonForeignMessage -match 'ds_allocator' -and $pythonForeignMessage -match '20020' -and
+    $pythonForeignMessage -match '27052' -and $pythonForeignMessage -match 'process=python' -and
+    $pythonForeignMessage -match 'pandorapy\.services\.ds_allocator\.main' -and
+    $pythonForeignMessage -match 'config=ds_allocator-diffpy\.yaml' -and
+    $pythonForeignMessage -notmatch 'C:\\private|python-must-stay-redacted') `
+    '当前 Python ds_allocator 冲突会打印 service/port/PID/process 与脱敏 module/config leaf'
+
+$exactOwnersAllowed = $true
+try {
+    Assert-PandoraPlannerFastTargetPortsSafe -Targets @($fixtureTarget) -ListenerRecords @(
+        [pscustomobject]@{ LocalPort = 20020; OwningProcess = 101 },
+        [pscustomobject]@{ LocalPort = 20020; OwningProcess = 102 }
+    ) -ExpectedBinDir $fixtureBinDir -GetProcess $getFixtureProcess -GetProcessCommandLine $getFixtureCommandLine
+} catch { $exactOwnersAllowed = $false }
+Assert-True $exactOwnersAllowed 'pidfile 管理中的 exact exe 与缺 pidfile 的 stale exact exe 都允许后续既有复用/清理'
+
+$dockerMessage = ''
+try {
+    Assert-PandoraPlannerFastTargetPortsSafe -Targets @($fixtureTarget) -ListenerRecords @(
+        [pscustomobject]@{ LocalPort = 20020; OwningProcess = 201 }
+    ) -ExpectedBinDir $fixtureBinDir -GetProcess $getFixtureProcess -GetProcessCommandLine $getFixtureCommandLine
+} catch { $dockerMessage = $_.Exception.Message }
+Assert-True ($dockerMessage -match 'PID=201' -and $dockerMessage -match 'process=com\.docker\.backend' -and
+    $dockerMessage -notmatch 'docker-must-stay-redacted|CommandLine|--token') `
+    'Docker/普通 foreign 只报身份，不泄露完整命令行'
+
+$unknownMessage = ''
+try {
+    Assert-PandoraPlannerFastTargetPortsSafe -Targets @($fixtureTarget) -ListenerRecords @(
+        [pscustomobject]@{ LocalPort = 20020; OwningProcess = 202 }
+    ) -ExpectedBinDir $fixtureBinDir -GetProcess $getFixtureProcess -GetProcessCommandLine $getFixtureCommandLine
+} catch { $unknownMessage = $_.Exception.Message }
+Assert-True ($unknownMessage -match 'PID=202' -and $unknownMessage -match 'process=mystery' -and
+    $unknownMessage -match '路径不可读|无法证明' -and $unknownMessage -notmatch 'unknown-must-stay-redacted|--password') `
+    '路径不可读 owner fail-closed 且不输出命令行'
+
+$pidZeroMessage = ''
+try {
+    Assert-PandoraPlannerFastTargetPortsSafe -Targets @($fixtureTarget) -ListenerRecords @(
+        [pscustomobject]@{ LocalPort = 20020; OwningProcess = 0 }
+    ) -ExpectedBinDir $fixtureBinDir -GetProcess $getFixtureProcess -GetProcessCommandLine $getFixtureCommandLine
+} catch { $pidZeroMessage = $_.Exception.Message }
+Assert-True ($pidZeroMessage -match 'PID=0' -and $pidZeroMessage -match 'process=unknown') `
+    'PID 0 owner 不能被 parser/lookup 空值冒充端口空闲'
+
+function Get-PlannerFastGuardOrderEvidence([string]$FunctionText) {
+    $initialReuse = $FunctionText.IndexOf('$prebuildListenerRecords = $InitialListenerRecords', [StringComparison]::Ordinal)
+    $mutationIndexes = @(
+        $FunctionText.IndexOf('Clear-PortSquatter', [StringComparison]::Ordinal),
+        $FunctionText.IndexOf('Stop-PlannerServiceForReplacement', [StringComparison]::Ordinal),
+        $FunctionText.IndexOf('Publish-PandoraPlannerStagedFiles', [StringComparison]::Ordinal),
+        $FunctionText.IndexOf('Start-Process', [StringComparison]::Ordinal)
+    ) | Where-Object { $_ -ge 0 }
+    $firstMutation = if ($mutationIndexes.Count -gt 0) {
+        ($mutationIndexes | Measure-Object -Minimum).Minimum
+    } else { -1 }
+    $activationSnapshot = $FunctionText.IndexOf('$activationListenerRecords = @(Get-PandoraPlannerFastTcpListenerRecords', [StringComparison]::Ordinal)
+    $activation = $FunctionText.IndexOf('$activationRunningRecords = @(Get-PlannerActivationRunningRecords', [StringComparison]::Ordinal)
+    $activationSlice = if ($activationSnapshot -ge 0 -and $activation -gt $activationSnapshot) {
+        $FunctionText.Substring($activationSnapshot, $activation - $activationSnapshot)
+    } else { '' }
+    $waveSnapshot = $FunctionText.IndexOf('$waveListenerRecords = @(Get-PandoraPlannerFastTcpListenerRecords', [StringComparison]::Ordinal)
+    $waveClear = $FunctionText.IndexOf('Clear-PortSquatter $svc $waveListenerRecords', [StringComparison]::Ordinal)
+    $waveSlice = if ($waveSnapshot -ge 0 -and $waveClear -gt $waveSnapshot) {
+        $FunctionText.Substring($waveSnapshot, $waveClear - $waveSnapshot)
+    } else { '' }
+    return [pscustomobject]@{
+        InitialReuse = ($initialReuse -ge 0 -and $firstMutation -gt $initialReuse)
+        Activation = ($activationSnapshot -gt $initialReuse -and $activation -gt $activationSnapshot -and
+            $activationSlice -match 'Assert-PandoraPlannerFastTargetPortsSafe')
+        Wave = ($waveSnapshot -gt $activation -and $waveClear -gt $waveSnapshot -and
+            $waveSlice -match 'Assert-PandoraPlannerFastTargetPortsSafe')
+    }
+}
+$guardEvidence = Get-PlannerFastGuardOrderEvidence $fastFunctionText
+Assert-True $guardEvidence.InitialReuse `
+    'Start-PlannerFastServices 在任何 stale cleanup 前复用 top-level 已验证 snapshot'
+Assert-True $guardEvidence.Activation `
+    'staging 后、activation stop/publish 前再次用 fresh snapshot 封住构建窗口'
+Assert-True $guardEvidence.Wave `
+    '每一波在 stale cleanup / launch 前再次检查本波全部端口'
+$entrySnapshotIndex = $entryPortPreflightText.IndexOf('$listenerRecords = @(Get-PandoraPlannerFastTcpListenerRecords', [StringComparison]::Ordinal)
+$entryGuardIndex = $entryPortPreflightText.IndexOf('Assert-PandoraPlannerFastTargetPortsSafe', [StringComparison]::Ordinal)
+$entryFinallyIndex = $entryPortPreflightText.IndexOf('finally', [StringComparison]::Ordinal)
+$entryTimingIndex = $entryPortPreflightText.IndexOf("Add-PandoraPlannerTiming -Name '业务程序·端口归属预检'", [StringComparison]::Ordinal)
+Assert-True ($entrySnapshotIndex -ge 0 -and $entryGuardIndex -gt $entrySnapshotIndex -and
+    $entryFinallyIndex -gt $entryGuardIndex -and $entryTimingIndex -gt $entryFinallyIndex -and
+    $entryPortPreflightText -match '\$status\s*=\s*''失败''' -and
+    $entryPortPreflightText -match '\$status\s*=\s*''完成''') `
+    'top-level preflight 单次抓全 target snapshot，成功/失败都在 finally 落独立 timing'
+$topLevelPreflightIndex = $runText.IndexOf('$plannerFastEntryListenerRecords = @(Invoke-PandoraPlannerFastEntryPortPreflight', [StringComparison]::Ordinal)
+$profileStopIndex = if ($topLevelPreflightIndex -ge 0) {
+    $runText.IndexOf('if (-not (Stop-Service $svc))', $topLevelPreflightIndex, [StringComparison]::Ordinal)
+} else { -1 }
+$fastCallIndex = if ($topLevelPreflightIndex -ge 0) {
+    $runText.IndexOf('$startFailed = @(Start-PlannerFastServices', $topLevelPreflightIndex, [StringComparison]::Ordinal)
+} else { -1 }
+Assert-True ($topLevelPreflightIndex -ge 0 -and $profileStopIndex -gt $topLevelPreflightIndex -and
+    $fastCallIndex -gt $profileStopIndex -and
+    $runText.Substring($fastCallIndex, [Math]::Min(400, $runText.Length - $fastCallIndex)) -match
+        '-InitialListenerRecords \$plannerFastEntryListenerRecords') `
+    'fast-only top-level guard 早于 runtime-profile Stop-Service，并把同一 snapshot 传入 fast seam'
+Assert-True ($portGuardText -notmatch '未进入业务服务|zero mutation' -and
+    $portGuardText -match '不会停止该 foreign 进程；当前阶段已 fail-closed 中止') `
+    '共享 helper 使用阶段中性文案，wave 二次 guard 不谎称 activation 尚未发生'
+
+$entryGuardlessMutant = $entryPortPreflightText -replace '(?m)^\s*Assert-PandoraPlannerFastTargetPortsSafe[^\r\n]*(?:`\s*\r?\n\s*-ExpectedBinDir[^\r\n]*)?', ''
+$fastGuardlessMutant = $fastFunctionText -replace '(?m)^\s*Assert-PandoraPlannerFastTargetPortsSafe[^\r\n]*(?:`\s*\r?\n\s*-ListenerRecords[^\r\n]*)?', ''
+$guardlessEvidence = Get-PlannerFastGuardOrderEvidence $fastGuardlessMutant
+Assert-True ($entryGuardlessMutant.IndexOf('Assert-PandoraPlannerFastTargetPortsSafe', [StringComparison]::Ordinal) -lt 0 -and
+    -not $guardlessEvidence.Activation -and -not $guardlessEvidence.Wave) `
+    '纯 mutant 删除 entry/activation/wave guards 后三道归属契约全部真红'
+
+$overrideNames = @('Get-PandoraPlannerFastTcpListenerRecords', 'Get-Process', 'Get-CimInstance',
+    'Stop-PlannerServiceForReplacement', 'Clear-PortSquatter', 'Publish-PandoraPlannerStagedFiles',
+    'Start-Process', 'Add-PandoraPlannerTiming')
+$savedOverrides = @{}
+foreach ($name in $overrideNames) {
+    $existingOverride = Get-Item -LiteralPath "function:$name" -ErrorAction SilentlyContinue
+    if ($existingOverride) { $savedOverrides[$name] = $existingOverride.ScriptBlock }
+}
+try {
+    $script:ForeignGuardMutationCounts = @{
+        Stop = 0; Clear = 0; Publish = 0; Start = 0
+        Timings = [Collections.Generic.List[object]]::new()
+    }
+    function Get-PandoraPlannerFastTcpListenerRecords {
+        param([object[]]$Targets)
+        return @([pscustomobject]@{ LocalPort = 20020; OwningProcess = 27052 })
+    }
+    function Get-Process {
+        [CmdletBinding()]
+        param([int]$Id)
+        return [pscustomobject]@{ Id = $Id; Path = 'C:\uv\python.exe'; ProcessName = 'python' }
+    }
+    function Get-CimInstance {
+        [CmdletBinding()]
+        param([string]$ClassName, [string]$Filter)
+        return [pscustomobject]@{
+            CommandLine = 'python.exe -m pandorapy.services.ds_allocator.main -conf C:\private\etc\ds_allocator-diffpy.yaml --password never-print'
+        }
+    }
+    function Stop-PlannerServiceForReplacement { $script:ForeignGuardMutationCounts.Stop++ }
+    function Clear-PortSquatter { $script:ForeignGuardMutationCounts.Clear++ }
+    function Publish-PandoraPlannerStagedFiles { $script:ForeignGuardMutationCounts.Publish++ }
+    function Start-Process { $script:ForeignGuardMutationCounts.Start++ }
+    function Add-PandoraPlannerTiming {
+        param([string]$Name, [int64]$ElapsedMilliseconds, [string]$Status, [string]$Detail = '')
+        $script:ForeignGuardMutationCounts.Timings.Add([pscustomobject]@{
+                Name = $Name; ElapsedMilliseconds = $ElapsedMilliseconds; Status = $Status; Detail = $Detail
+            })
+    }
+
+    $callerMessage = ''
+    try {
+        $null = Invoke-PandoraPlannerFastEntryPortPreflight -Targets @($fixtureTarget) `
+            -ExpectedBinDir $fixtureBinDir
+    }
+    catch { $callerMessage = $_.Exception.Message }
+    $preflightTiming = @($script:ForeignGuardMutationCounts.Timings | Where-Object {
+            $_.Name -ceq '业务程序·端口归属预检'
+        })
+    Assert-True ($callerMessage -match 'PID=27052' -and
+        $script:ForeignGuardMutationCounts.Stop -eq 0 -and
+        $script:ForeignGuardMutationCounts.Clear -eq 0 -and
+        $script:ForeignGuardMutationCounts.Publish -eq 0 -and
+        $script:ForeignGuardMutationCounts.Start -eq 0 -and
+        $preflightTiming.Count -eq 1 -and $preflightTiming[0].Status -ceq '失败') `
+        'public entry seam 遇 foreign 时 zero Stop/Clear/Publish/Start，并留下失败 timing'
+
+    function Get-Process {
+        [CmdletBinding()]
+        param([int]$Id)
+        return [pscustomobject]@{
+            Id = $Id; Path = "$fixtureBinDir\ds_allocator.exe"; ProcessName = 'ds_allocator'
+        }
+    }
+    $timingCountBeforeSuccess = $script:ForeignGuardMutationCounts.Timings.Count
+    $successRecords = @(Invoke-PandoraPlannerFastEntryPortPreflight -Targets @($fixtureTarget) `
+            -ExpectedBinDir $fixtureBinDir)
+    $successTiming = @($script:ForeignGuardMutationCounts.Timings | Select-Object -Skip $timingCountBeforeSuccess)
+    Assert-True ($successRecords.Count -eq 1 -and [int]$successRecords[0].OwningProcess -eq 27052 -and
+        $successTiming.Count -eq 1 -and $successTiming[0].Name -ceq '业务程序·端口归属预检' -and
+        $successTiming[0].Status -ceq '完成') `
+        'exact owner preflight 返回同一 snapshot，并留下成功 timing 供 Start-PlannerFastServices 复用'
+} finally {
+    foreach ($name in $overrideNames) {
+        if ($savedOverrides.ContainsKey($name)) {
+            Set-Item -LiteralPath "function:$name" -Value $savedOverrides[$name]
+        } else {
+            Remove-Item -LiteralPath "function:$name" -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Remove-Variable -Name ForeignGuardMutationCounts -Scope Script -Force -ErrorAction SilentlyContinue
+}
 Assert-True ($fastFunctionText -match '(?s)\$beforeLogin\s*=.*?Name -ne ''login''.*?\$login\s*=.*?Name -eq ''login''.*?\$waves\.Add\(\$beforeLogin\).*?\$waves\.Add\(\$login\)') `
     'fast 启动先等非 login 波就绪，再启 login'
-Assert-True ($fastFunctionText -match '(?s)foreach \(\$wave in \$waves\).*?\$waveListenerRecords\s*=\s*@\(Get-PandoraTcpListenerRecords\).*?Test-ServiceListenerOwned \$svc \$existing \$waveListenerRecords') `
+Assert-True ($fastFunctionText -match '(?s)foreach \(\$wave in \$waves\).*?\$waveListenerRecords\s*=\s*@\(Get-PandoraPlannerFastTcpListenerRecords.*?Test-ServiceListenerOwned \$svc \$existing \$waveListenerRecords') `
     '每一波都用 fresh listener 快照复核已存活进程'
 Assert-True ($fastFunctionText -match '(?s)if \(Test-ServiceListenerOwned \$svc \$existing \$waveListenerRecords\).*?else\s*\{.*?\$waveStates\.Add\(\$state\).*?\$states\.Add\(\$state\)') `
     '已有 exact PID 在 snapshot 后才 bind 时纳入统一 deadline 轮询，不立即假失败'
