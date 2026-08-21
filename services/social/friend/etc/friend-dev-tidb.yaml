@@ -44,6 +44,8 @@ kafka:
 
 friend:
   max_friends: 200
+  # 与 friend-dev.yaml 保持一致 —— 本文件只换 MySQL→TiDB 后端,业务旋钮不得分叉。
+  rate_quota_per_min: 60
   locator_addr: "127.0.0.1:20006"
   player_name_resolver_addr: "127.0.0.1:20002"
   player_name_resolver_auth_secret: "pandora-dev-friend-player-name-auth-key-v1!"
