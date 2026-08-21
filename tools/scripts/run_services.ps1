@@ -24,7 +24,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('up', 'down', 'status', 'logs', 'restart', 'build')]
+    [ValidateSet('up', 'down', 'status', 'logs', 'restart', 'build', 'prepare', 'discard')]
     [string]$Action = 'up',
 
     # 全起时排除的服务(留给 IDE 调试);也可配合 restart/logs/foreground 指定单个服务
@@ -53,6 +53,10 @@ param(
     # 上游强哈希确认本轮配置表发生语义变化。仅策划 fast 路径消费，用于精确重启
     # 真正加载配置表的运行实例；未变化时不制造额外 stop/start。
     [switch]$ConfigTableChanged,
+
+    # 策划启动并行编排的两阶段构建交接文件：prepare 只把过期 target 构建到 staging，
+    # up 在重新计算强指纹后才停止旧进程并事务发布。路径必须位于 run/localinfra 下。
+    [string]$PreparedBuildManifestPath = '',
 
     # 配合 -Action build:把产物编到 run/artifacts/windows/bin(而不是 run/dev/bin),
     # 供打包分发给没装 Go 的机器。
@@ -100,6 +104,7 @@ $stateHelper = Join-Path $PSScriptRoot 'lib/local_infra_state.ps1'
 . (Join-Path $PSScriptRoot 'lib/mysql_service_runtime_config.ps1')
 . (Join-Path $PSScriptRoot 'lib/planner_mysql_preflight.ps1')
 . (Join-Path $PSScriptRoot 'lib/planner_fast_start.ps1')
+. (Join-Path $PSScriptRoot 'lib/planner_start_timing.ps1')
 $mustUseMysql = $Action -in @('up', 'restart')
 $plannerMysqlMode = if ($NoDocker) { Get-PandoraPlannerMysqlStartupMode -ProjectRoot $ProjectRoot } else { 'docker' }
 $centralMysqlProfile = $null
@@ -183,9 +188,14 @@ $PlannerAppliedReceiptDir = Join-Path $ProjectRoot 'run/localinfra/cfg/service-a
 $script:PlannerBuildFingerprint = ''
 $script:PlannerArtifactManifestByName = @{}
 $script:PlannerBuildPublished = $false
+$script:PlannerDesiredFingerprintByRuntime = @{}
+$script:PlannerConfigTableFingerprint = ''
 
 function Get-PlannerBuildFingerprint($svc) {
     if (-not $FastExistingProbe -or $PublishArtifacts) { return '' }
+    if ($script:PlannerDesiredFingerprintByRuntime.ContainsKey("$($svc.Name)")) {
+        return "$($script:PlannerDesiredFingerprintByRuntime["$($svc.Name)"])"
+    }
     $artifactMode = ($UseArtifacts -or -not $script:HasGo)
     if (-not $script:PlannerBuildFingerprint) {
         if ($artifactMode) {
@@ -276,7 +286,9 @@ if ($SocialOnMysql) {
 }
 
 function Get-ServiceConfigPath($svc) {
-    Assert-NoDockerMysqlOwned
+    # MySQL exact PID/exe/my.ini/listener 归属已在脚本入口检查一次，完整启动又会在
+    # Test-InfraReady 紧邻批量配置/拉起前复核一次。这里不能按 22 个服务重复跑 CIM，
+    # 否则冷启动仅“配置生成”就会白耗约 7 秒；单服务动作仍受入口检查保护。
     $svcDir = Join-Path $ProjectRoot $svc.Dir
     $source = Join-Path $svcDir $svc.Conf
     if (-not $NoDocker -or $MysqlPort -eq 3307) { return $svc.Conf }
@@ -643,6 +655,481 @@ function Test-InfraReady {
     return $false
 }
 
+function Get-PlannerAppliedReceiptPath($svc) {
+    return (Join-Path $PlannerAppliedReceiptDir "$($svc.Name).json")
+}
+
+function Get-PlannerRuntimeAppliedFingerprint($svc, $TargetPlan) {
+    $consumers = [Collections.Generic.HashSet[string]]::new(
+        [string[]](Get-PandoraPlannerConfigTableConsumerNames), [StringComparer]::Ordinal)
+    $sourceConfig = Join-Path (Join-Path $ProjectRoot "$($svc.Dir)") "$($svc.Conf)"
+    if (-not (Test-Path -LiteralPath $sourceConfig -PathType Leaf)) {
+        throw "服务 $($svc.Name) 的非 secret 源配置不存在:$sourceConfig"
+    }
+    $additionalInputs = [Collections.Generic.List[string]]::new()
+    if ($consumers.Contains("$($svc.Name)")) {
+        $manifestPath = Join-Path $ProjectRoot 'configtable/dist/manifest.json'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "配置表消费者 $($svc.Name) 启动前缺少 manifest:$manifestPath"
+        }
+        $additionalInputs.Add($manifestPath)
+    }
+    $environmentNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($name in @(Get-PandoraPlannerRuntimeEnvironmentNames -RuntimeName "$($svc.Name)")) {
+        $null = $environmentNames.Add($name)
+    }
+    # Kratos YAML 支持 ${ENV}；只绑定源 YAML 真正引用的非 secret 环境变量。
+    $sourceText = [IO.File]::ReadAllText($sourceConfig)
+    foreach ($match in [regex]::Matches($sourceText, '\$\{(?<name>[A-Z][A-Z0-9_]*)')) {
+        $name = "$($match.Groups['name'].Value)"
+        if ($name -notmatch '(?i)(PASSWORD|PASSWD|TOKEN|SECRET|CREDENTIAL|PRIVATE|API[_-]?KEY|DSN|USERNAME|(?:^|_)USER(?:_|$)|(?:^|_)KEY(?:_|$))') {
+            $null = $environmentNames.Add($name)
+        }
+    }
+    # central 模式始终只 hash 仓库内非 secret 源 YAML；派生的临时 secret YAML 路径/内容
+    # 不传入此函数，也绝不写入 applied receipt。
+    return Get-PandoraPlannerRuntimeInputFingerprint -TargetFingerprint "$($TargetPlan.Fingerprint)" `
+        -SourceConfigPath $sourceConfig -AdditionalInputPaths $additionalInputs.ToArray() `
+        -EnvironmentNames @($environmentNames)
+}
+
+function Get-PlannerCombinedDesiredFingerprint([object[]]$Plans) {
+    $descriptors = @($Plans | ForEach-Object { "$($_.Name)=$($_.Fingerprint)" } | Sort-Object)
+    $bytes = [Text.Encoding]::UTF8.GetBytes("pandora-planner-target-set-v1`0$($descriptors -join "`n")")
+    return "target-set-v1:$([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)))"
+}
+
+function Get-PlannerDesiredTargetPlan([object[]]$TargetServices) {
+    # $Services 历史上是 Hashtable；先显式投影 BuildTarget，避免 Hashtable 的 key 不会出现在
+    # PSObject.Properties 中，进而把 matchmaker_pve 误判成另一个 build target。
+    $normalizedServices = @($TargetServices | ForEach-Object {
+            $service = $_
+            $declaredTarget = if ($service -is [Collections.IDictionary] -and $service.Contains('BuildTarget')) {
+                "$($service['BuildTarget'])"
+            } elseif ($service.PSObject.Properties['BuildTarget']) { "$($service.BuildTarget)" } else { "$($service.Name)" }
+            [pscustomobject][ordered]@{
+                Name = "$($service.Name)"; Dir = "$($service.Dir)"; Cmd = "$($service.Cmd)"
+                BuildTarget = $declaredTarget; Conf = "$($service.Conf)"; Port = [int]$service.Port
+                OriginalService = $service
+            }
+        })
+    $buildTargets = @(Get-PandoraPlannerBuildTargets -Services $normalizedServices)
+    if ($buildTargets.Count -eq 0) { return @() }
+    $artifactMode = ($UseArtifacts -or -not $script:HasGo)
+    $rawPlans = @()
+
+    if ($artifactMode) {
+        $manifestPath = Join-Path $ProjectRoot 'run/artifacts/windows/manifest.json'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "策划 fast 启动要求预编译 manifest，但不存在:$manifestPath"
+        }
+        $manifest = [IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
+        $rawPlans = @(Get-PandoraPlannerArtifactTargetPlan -BuildTargets $buildTargets -Manifest $manifest)
+    } else {
+        Push-Location $ProjectRoot
+        try {
+            $goVersion = (& go version 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $goVersion) { throw '无法读取 go version，拒绝计算 build target。' }
+            $goEnvironment = (& go env GOROOT GOOS GOARCH GOAMD64 GO386 GOARM GOARM64 GOMIPS GOMIPS64 GOPPC64 `
+                    GORISCV64 GOWASM CGO_ENABLED CC CXX CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_LDFLAGS `
+                    GOFLAGS GOEXPERIMENT GOFIPS140 GOWORK GOTOOLCHAIN 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $goEnvironment) { throw '无法读取 go build 环境，拒绝计算 build target。' }
+            $workspaceJson = (& go work edit -json 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $workspaceJson) { throw '无法读取 go.work 模块清单，拒绝计算 build target。' }
+            $workspace = $workspaceJson | ConvertFrom-Json
+            $workspaceRoots = @($workspace.Use | ForEach-Object { "$($_.DiskPath)" } | Where-Object { $_ })
+            if ($workspaceRoots.Count -eq 0) { throw 'go.work 没有 use 模块，拒绝生成不完整的逐 target 指纹。' }
+
+            # 一次列出全部 main 及其依赖闭包。字段用 TAB 分隔，文件数组用 Windows 文件名
+            # 不允许出现的 US(0x1f)分隔，避免 21 个 target 重复执行 go list。
+            $packageTemplate = '{{.ImportPath}}{{"\t"}}{{.Dir}}{{"\t"}}{{join .Deps "\x1f"}}{{"\t"}}{{.Standard}}{{"\t"}}{{.Goroot}}{{"\t"}}{{if .Module}}{{.Module.Main}}{{end}}{{"\t"}}{{if .Module}}{{.Module.Path}}{{end}}{{"\t"}}{{if .Module}}{{.Module.Version}}{{end}}{{"\t"}}{{if .Module}}{{.Module.Sum}}{{end}}{{"\t"}}{{if .Module}}{{if .Module.Replace}}{{.Module.Replace.Path}}{{end}}{{end}}{{"\t"}}{{if .Module}}{{if .Module.Replace}}{{.Module.Replace.Version}}{{end}}{{end}}{{"\t"}}{{if .Module}}{{if .Module.Replace}}{{.Module.Replace.Sum}}{{end}}{{end}}{{"\t"}}{{if .Module}}{{if .Module.Replace}}{{.Module.Replace.Dir}}{{end}}{{end}}{{"\t"}}{{join .GoFiles "\x1f"}}{{"\t"}}{{join .CgoFiles "\x1f"}}{{"\t"}}{{join .CFiles "\x1f"}}{{"\t"}}{{join .CXXFiles "\x1f"}}{{"\t"}}{{join .MFiles "\x1f"}}{{"\t"}}{{join .HFiles "\x1f"}}{{"\t"}}{{join .FFiles "\x1f"}}{{"\t"}}{{join .SFiles "\x1f"}}{{"\t"}}{{join .SwigFiles "\x1f"}}{{"\t"}}{{join .SwigCXXFiles "\x1f"}}{{"\t"}}{{join .SysoFiles "\x1f"}}{{"\t"}}{{join .EmbedFiles "\x1f"}}'
+            $mainPackages = @($buildTargets | ForEach-Object {
+                    './' + ((Join-Path $_.Dir "cmd/$($_.Cmd)").Replace('\', '/').TrimStart('/'))
+                })
+            $goListOutput = @(& go list -mod=readonly -deps -f $packageTemplate @mainPackages 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                throw "go list build target 依赖失败:`n$($goListOutput -join "`n")"
+            }
+        } finally {
+            Pop-Location
+        }
+
+        $arrayFields = @('GoFiles', 'CgoFiles', 'CFiles', 'CXXFiles', 'MFiles', 'HFiles', 'FFiles',
+            'SFiles', 'SwigFiles', 'SwigCXXFiles', 'SysoFiles', 'EmbedFiles')
+        $packageRecords = [Collections.Generic.List[object]]::new()
+        foreach ($outputLine in $goListOutput) {
+            $fields = [regex]::Split("$outputLine", "`t")
+            if ($fields.Count -ne 25) { throw "go list 紧凑输出字段数异常($($fields.Count)):$outputLine" }
+            $replace = if ($fields[9] -or $fields[10] -or $fields[11] -or $fields[12]) {
+                [pscustomobject]@{ Path = $fields[9]; Version = $fields[10]; Sum = $fields[11]; Dir = $fields[12] }
+            } else { $null }
+            $module = if ($fields[6] -or $replace) {
+                [pscustomobject]@{
+                    Main = ($fields[5] -ceq 'true'); Path = $fields[6]; Version = $fields[7]
+                    Sum = $fields[8]; Replace = $replace
+                }
+            } else { $null }
+            $record = [ordered]@{
+                ImportPath = $fields[0]; Dir = $fields[1]
+                Deps = $(if ($fields[2]) { @($fields[2].Split([char]0x1f)) } else { @() })
+                Standard = ($fields[3] -ceq 'true'); Goroot = ($fields[4] -ceq 'true'); Module = $module
+            }
+            for ($fieldIndex = 0; $fieldIndex -lt $arrayFields.Count; $fieldIndex++) {
+                $value = $fields[13 + $fieldIndex]
+                $record[$arrayFields[$fieldIndex]] = $(if ($value) { @($value.Split([char]0x1f)) } else { @() })
+            }
+            $packageRecords.Add([pscustomobject]$record)
+        }
+
+        $globalInputs = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($name in @('go.work', 'go.work.sum', 'go.mod', 'go.sum')) {
+            $candidate = Join-Path $ProjectRoot $name
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $null = $globalInputs.Add($candidate) }
+        }
+        foreach ($workspaceRoot in $workspaceRoots) {
+            $moduleRoot = if ([IO.Path]::IsPathRooted($workspaceRoot)) {
+                [IO.Path]::GetFullPath($workspaceRoot)
+            } else { [IO.Path]::GetFullPath((Join-Path $ProjectRoot $workspaceRoot)) }
+            foreach ($name in @('go.mod', 'go.sum')) {
+                $candidate = Join-Path $moduleRoot $name
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { $null = $globalInputs.Add($candidate) }
+            }
+        }
+        $rawPlans = @(Get-PandoraPlannerGoTargetPlan -ProjectRoot $ProjectRoot -BuildTargets $buildTargets `
+                -PackageRecords $packageRecords.ToArray() -ToolchainSignature "$goVersion`n$goEnvironment" `
+                -GlobalInputPaths @($globalInputs))
+    }
+
+    $result = [Collections.Generic.List[object]]::new()
+    $script:PlannerDesiredFingerprintByRuntime = @{}
+    foreach ($rawPlan in $rawPlans) {
+        $binaryPaths = @($rawPlan.Target.Services | ForEach-Object { Join-Path $BinDir "$($_.Name).exe" })
+        $fingerprint = "$($rawPlan.Fingerprint)"
+        if ($NoBuild -and @($binaryPaths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -eq 0) {
+            $binaryDescriptors = @($binaryPaths | Sort-Object | ForEach-Object {
+                    $item = Get-Item -LiteralPath $_ -ErrorAction Stop
+                    "$($item.Name):$($item.Length):$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)"
+                })
+            $bytes = [Text.Encoding]::UTF8.GetBytes("planner-no-build-v1`0$($binaryDescriptors -join "`n")")
+            $fingerprint = "no-build-v1:$([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)))"
+        }
+        $receiptPath = Join-Path $PlannerBuildReceiptDir "$($rawPlan.Name).json"
+        $buildCurrent = if ($NoBuild) {
+            @($binaryPaths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -eq 0
+        } else {
+            Test-PandoraPlannerBuildReceipt -ReceiptPath $receiptPath -Fingerprint $fingerprint -BinaryPaths $binaryPaths
+        }
+        $plan = [pscustomobject][ordered]@{
+            Name = "$($rawPlan.Name)"; Target = $rawPlan.Target; Fingerprint = $fingerprint
+            BuildCurrent = [bool]$buildCurrent; BinaryPaths = $binaryPaths; ReceiptPath = $receiptPath
+            Mode = $(if ($artifactMode) { 'artifact' } else { 'go' })
+            ArtifactName = $(if ($artifactMode) { "$($rawPlan.ArtifactName)" } else { '' })
+            Sha256 = $(if ($artifactMode) { "$($rawPlan.Sha256)" } else { '' })
+            Size = $(if ($artifactMode) { [int64]$rawPlan.Size } else { 0L })
+        }
+        foreach ($service in @($rawPlan.Target.Services)) {
+            $script:PlannerDesiredFingerprintByRuntime["$($service.Name)"] = $fingerprint
+        }
+        $result.Add($plan)
+    }
+    $plans = $result.ToArray()
+    $script:PlannerBuildFingerprint = Get-PlannerCombinedDesiredFingerprint $plans
+    return $plans
+}
+
+function New-PlannerStagedTarget([object[]]$TargetPlans) {
+    if ($TargetPlans.Count -eq 0) { return @() }
+    $modes = @($TargetPlans | Select-Object -ExpandProperty Mode -Unique)
+    if ($modes.Count -ne 1) { throw '同一批 staging 混入了 Go 与 artifact target。' }
+    $records = [Collections.Generic.List[object]]::new()
+    $succeeded = $false
+    $primaryStage = ''
+    try {
+        if ($modes[0] -ceq 'go') {
+            $cmdCollisions = @($TargetPlans | Group-Object { "$($_.Target.Cmd)".ToLowerInvariant() } | Where-Object Count -gt 1)
+            if ($cmdCollisions.Count -gt 0) {
+                throw "多 package go build 输出名冲突:$($cmdCollisions.Name -join ', ')"
+            }
+            $buildRoot = Join-Path $ProjectRoot 'run/localinfra/tmp/planner-go-build'
+            New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
+            $primaryStage = Join-Path $buildRoot ("batch-$PID-$([guid]::NewGuid().ToString('N'))")
+            New-Item -ItemType Directory -Force -Path $primaryStage | Out-Null
+            $mainPackages = @($TargetPlans | ForEach-Object {
+                    './' + ((Join-Path $_.Target.Dir "cmd/$($_.Target.Cmd)").Replace('\', '/').TrimStart('/'))
+                })
+            Push-Location $ProjectRoot
+            try {
+                $buildOutput = @(& go build -mod=readonly -buildvcs=false -p 4 -o $primaryStage @mainPackages 2>&1)
+                if ($LASTEXITCODE -ne 0) { throw "批量 go build 失败:`n$($buildOutput -join "`n")" }
+            } finally {
+                Pop-Location
+            }
+        }
+
+        foreach ($plan in $TargetPlans) {
+            $source = if ($modes[0] -ceq 'go') {
+                Join-Path $primaryStage "$($plan.Target.Cmd).exe"
+            } else {
+                Join-Path $ArtifactBinDir "$($plan.ArtifactName).exe"
+            }
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "staging 源二进制不存在:$source" }
+            foreach ($service in @($plan.Target.Services)) {
+                $destination = Join-Path $BinDir "$($service.Name).exe"
+                $stage = Join-Path $BinDir (".{0}.planner-stage-{1}-{2}.exe" -f `
+                        $service.Name, $PID, [guid]::NewGuid().ToString('N'))
+                Copy-Item -LiteralPath $source -Destination $stage -Force
+                $item = Get-Item -LiteralPath $stage -ErrorAction Stop
+                $hash = (Get-FileHash -LiteralPath $stage -Algorithm SHA256).Hash
+                if ($modes[0] -ceq 'artifact' -and
+                    ([int64]$item.Length -ne [int64]$plan.Size -or
+                        -not [string]::Equals($hash, "$($plan.Sha256)", [StringComparison]::OrdinalIgnoreCase))) {
+                    throw "artifact staging 字节与 manifest 不一致:$($service.Name)"
+                }
+                $records.Add([pscustomobject][ordered]@{
+                        TargetName = "$($plan.Name)"; RuntimeName = "$($service.Name)"
+                        Fingerprint = "$($plan.Fingerprint)"; StagePath = $stage; DestinationPath = $destination
+                        Length = [int64]$item.Length; Sha256 = $hash
+                    })
+            }
+        }
+        $succeeded = $true
+        return $records.ToArray()
+    } finally {
+        if ($primaryStage -and (Test-Path -LiteralPath $primaryStage -PathType Container)) {
+            Remove-Item -LiteralPath $primaryStage -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (-not $succeeded) {
+            foreach ($record in $records) { Remove-Item -LiteralPath $record.StagePath -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
+
+function Remove-PlannerStagedRecords([object[]]$Records) {
+    foreach ($record in @($Records)) {
+        $stage = "$($record.StagePath)"
+        if ($stage) { Remove-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Assert-PlannerPreparedManifestPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw '-PreparedBuildManifestPath 不能为空。' }
+    if (-not [IO.Path]::IsPathRooted($Path)) { throw '-PreparedBuildManifestPath 必须是绝对路径。' }
+    $full = [IO.Path]::GetFullPath($Path)
+    $allowedRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'run/localinfra')).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    if (-not $full.StartsWith($allowedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Prepared build manifest 必须位于 $allowedRoot 下:$full"
+    }
+    return $full
+}
+
+function Write-PlannerPreparedBuildManifest([string]$Path, [object[]]$DesiredPlans, [object[]]$StageRecords) {
+    $full = Assert-PlannerPreparedManifestPath $Path
+    if (Test-Path -LiteralPath $full) {
+        throw "prepared build manifest 已存在，拒绝覆盖并遗留上一批 staging；请先 discard:$full"
+    }
+    $directory = Split-Path -Parent $full
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $payload = [ordered]@{
+        schema = 1; project_root = [IO.Path]::GetFullPath($ProjectRoot); created_utc = [DateTime]::UtcNow.ToString('O')
+        desired = @($DesiredPlans | ForEach-Object { [ordered]@{ name = $_.Name; fingerprint = $_.Fingerprint } })
+        stages = @($StageRecords | ForEach-Object {
+                [ordered]@{
+                    target_name = $_.TargetName; runtime_name = $_.RuntimeName; fingerprint = $_.Fingerprint
+                    stage_path = $_.StagePath; destination_path = $_.DestinationPath
+                    length = [int64]$_.Length; sha256 = $_.Sha256
+                }
+            })
+    } | ConvertTo-Json -Depth 6
+    $temporary = "$full.$PID.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [IO.File]::WriteAllText($temporary, "$payload`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::Move($temporary, $full, $true)
+    } finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
+    return $full
+}
+
+function Read-PlannerPreparedBuildManifest([string]$Path, [object[]]$DesiredPlans, [string[]]$ExpectedTargetNames) {
+    $full = Assert-PlannerPreparedManifestPath $Path
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "prepared build manifest 不存在:$full" }
+    $manifest = [IO.File]::ReadAllText($full) | ConvertFrom-Json
+    if ([int]$manifest.schema -ne 1 -or
+        -not [string]::Equals("$($manifest.project_root)", [IO.Path]::GetFullPath($ProjectRoot), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "prepared build manifest schema/工作区不匹配:$full"
+    }
+    $desiredByName = @{}
+    foreach ($plan in $DesiredPlans) {
+        $name = "$($plan.Name)"
+        if ($desiredByName.ContainsKey($name)) { throw "当前 desired build target 重复:$name" }
+        $desiredByName[$name] = $plan
+    }
+    $manifestDesired = @($manifest.desired)
+    if ($manifestDesired.Count -ne $DesiredPlans.Count) { throw 'prepared build target 集合与当前计划不一致。' }
+    $manifestDesiredNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($entry in $manifestDesired) {
+        $name = "$($entry.name)"
+        if (-not $manifestDesiredNames.Add($name)) { throw "prepared build desired target 重复:$name" }
+        if (-not $desiredByName.ContainsKey($name) -or
+            -not [string]::Equals("$($entry.fingerprint)", "$($desiredByName[$name].Fingerprint)", [StringComparison]::Ordinal)) {
+            throw "prepared build 输入已变化:$name"
+        }
+    }
+    if (-not $manifestDesiredNames.SetEquals([string[]]@($desiredByName.Keys))) {
+        throw 'prepared build desired target 集合与当前计划不一致。'
+    }
+    # 必须按 (build target,runtime) 一一对应；只核 target 名会放过共享 target 少一个
+    # runtime（例如 matchmaker 缺 matchmaker_pve），随后就可能先停两个实例却只发布一个。
+    $null = Assert-PandoraPlannerPreparedStagePairs -DesiredPlans $DesiredPlans `
+        -ExpectedTargetNames $ExpectedTargetNames -StageEntries @($manifest.stages)
+    $runtimeByName = @{}
+    foreach ($plan in $DesiredPlans) { foreach ($service in @($plan.Target.Services)) { $runtimeByName["$($service.Name)"] = $service } }
+    $records = [Collections.Generic.List[object]]::new()
+    foreach ($entry in @($manifest.stages)) {
+        $runtimeName = "$($entry.runtime_name)"; $targetName = "$($entry.target_name)"
+        if (-not $runtimeByName.ContainsKey($runtimeName) -or -not $desiredByName.ContainsKey($targetName)) {
+            throw "prepared build 含未知 runtime/target:$runtimeName/$targetName"
+        }
+        $plan = $desiredByName[$targetName]
+        if (-not @($plan.Target.Services | Where-Object { $_.Name -ceq $runtimeName }) -or
+            -not [string]::Equals("$($entry.fingerprint)", "$($plan.Fingerprint)", [StringComparison]::Ordinal)) {
+            throw "prepared build runtime 不属于 target 或指纹不匹配:$runtimeName/$targetName"
+        }
+        $stage = [IO.Path]::GetFullPath("$($entry.stage_path)")
+        $destination = [IO.Path]::GetFullPath("$($entry.destination_path)")
+        $expectedDestination = [IO.Path]::GetFullPath((Join-Path $BinDir "$runtimeName.exe"))
+        if (-not [string]::Equals((Split-Path -Parent $stage), [IO.Path]::GetFullPath($BinDir), [StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals($destination, $expectedDestination, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $stage -PathType Leaf)) {
+            throw "prepared build staging 路径非法或已丢失:$runtimeName"
+        }
+        $item = Get-Item -LiteralPath $stage -ErrorAction Stop
+        $hash = (Get-FileHash -LiteralPath $stage -Algorithm SHA256).Hash
+        if ([int64]$item.Length -ne [int64]$entry.length -or
+            -not [string]::Equals($hash, "$($entry.sha256)", [StringComparison]::OrdinalIgnoreCase)) {
+            throw "prepared build staging 字节已变化:$runtimeName"
+        }
+        $records.Add([pscustomobject][ordered]@{
+                TargetName = $targetName; RuntimeName = $runtimeName; Fingerprint = "$($entry.fingerprint)"
+                StagePath = $stage; DestinationPath = $destination; Length = [int64]$item.Length; Sha256 = $hash
+            })
+    }
+    return $records.ToArray()
+}
+
+function Stop-PlannerServiceForReplacement($svc, $ExactProcess = $null) {
+    $proc = if ($ExactProcess) { $ExactProcess } else { Get-RunningProcess $svc }
+    if (-not $proc) { return }
+    if ($ExactProcess) {
+        $current = Get-RunningProcess $svc
+        $sameGeneration = $current -and [int]$current.Id -eq [int]$ExactProcess.Id
+        if ($sameGeneration) {
+            try {
+                $sameGeneration = [int64]$current.StartTime.ToUniversalTime().Ticks -eq
+                    [int64]$ExactProcess.StartTime.ToUniversalTime().Ticks
+            } catch { $sameGeneration = $false }
+        }
+        if (-not $sameGeneration) {
+            throw "替换 $($svc.Name) 前 exact Process 代次已变化，拒绝按可复用 PID 停止。"
+        }
+    }
+    if ($LocalDsSpawners -contains $svc.Name) { Clear-LocalDsProcesses $svc $proc }
+    $result = Stop-PandoraPlannerExactProcess -Process $proc -TimeoutMilliseconds 10000
+    if (-not $result.ExitConfirmed) {
+        throw "替换 $($svc.Name) 前无法确认 exact PID $($proc.Id) 已退出:$($result.Error)"
+    }
+    try {
+        Remove-PandoraPlannerExactPidFile -PidFile (Get-PidFile $svc) -ExpectedProcessId ([int]$proc.Id)
+    } catch {
+        # exact Process 已确认退出；PID 元数据清理失败不能把它从 activation 的“已停集合”
+        # 中抹掉，否则后续 stop/publish 失败时无法恢复这个真实已停服务。
+        Write-Host "  [WARN] $($svc.Name) 已确认退出但 PID 登记清理失败，将由恢复/下轮自愈:$($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    Remove-Item -LiteralPath (Get-PlannerAppliedReceiptPath $svc) -Force -ErrorAction SilentlyContinue
+    Write-Host "  [stop] $($svc.Name) (PID $($proc.Id)，待发布新版本)" -ForegroundColor DarkGray
+}
+
+function Get-PlannerActivationRunningRecords([string[]]$RuntimeNames, $ServiceByName) {
+    $records = [Collections.Generic.List[object]]::new()
+    foreach ($runtimeName in $RuntimeNames) {
+        $svc = $ServiceByName["$runtimeName"]
+        $proc = Get-RunningProcess $svc
+        if (-not $proc) { continue }
+        $binaryPath = Join-Path $BinDir "$($svc.Name).exe"
+        $binary = Get-Item -LiteralPath $binaryPath -ErrorAction Stop
+        $records.Add([pscustomobject][ordered]@{
+                Name = "$($svc.Name)"; Service = $svc; Process = $proc
+                ProcessId = [int]$proc.Id; ProcessStartUtcTicks = [int64]$proc.StartTime.ToUniversalTime().Ticks
+                BinaryPath = $binary.FullName; BinaryLength = [int64]$binary.Length
+                BinarySha256 = (Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash
+            })
+    }
+    return $records.ToArray()
+}
+
+function Restore-PlannerStoppedRuntimeSet([object[]]$Records) {
+    $errors = [Collections.Generic.List[string]]::new()
+    $savedNoBuild = $NoBuild
+    try {
+        $NoBuild = $true
+        foreach ($record in $Records) {
+            try {
+                $binary = Get-Item -LiteralPath $record.BinaryPath -ErrorAction Stop
+                $hash = (Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash
+                if ([int64]$binary.Length -ne [int64]$record.BinaryLength -or
+                    -not [string]::Equals($hash, "$($record.BinarySha256)", [StringComparison]::OrdinalIgnoreCase)) {
+                    throw '旧正式 exe 未被完整恢复'
+                }
+                # Start-Service 在 -NoBuild 下只执行配置生成、exact Process 拉起和 12s 有界
+                # exact-PID listener ready；失败仍继续尝试恢复其余已停服务。
+                if (-not (Start-Service $record.Service)) { throw '未在期限内 exact-ready' }
+            } catch {
+                $errors.Add("$($record.Name):$($_.Exception.Message)")
+            }
+        }
+    } finally {
+        $NoBuild = $savedNoBuild
+    }
+    if ($errors.Count -gt 0) { throw "旧服务恢复失败:$($errors -join ' | ')" }
+}
+
+function Prepare-PlannerFastBuild([object[]]$TargetServices, [string]$ManifestPath) {
+    $desiredPlan = @(Get-PlannerDesiredTargetPlan $TargetServices)
+    $stalePlans = @($desiredPlan | Where-Object { -not $_.BuildCurrent })
+    $staged = @()
+    try {
+        $staged = @(New-PlannerStagedTarget $stalePlans)
+        $written = Write-PlannerPreparedBuildManifest -Path $ManifestPath -DesiredPlans $desiredPlan -StageRecords $staged
+        Write-Host "[prepared] build targets=$($stalePlans.Count) staging=$($staged.Count) manifest=$written" -ForegroundColor Green
+    } catch {
+        Remove-PlannerStagedRecords $staged
+        throw
+    }
+}
+
+function Discard-PlannerPreparedBuild([string]$ManifestPath) {
+    $full = Assert-PlannerPreparedManifestPath $ManifestPath
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return }
+    $manifest = [IO.File]::ReadAllText($full) | ConvertFrom-Json
+    if ([int]$manifest.schema -ne 1 -or
+        -not [string]::Equals("$($manifest.project_root)", [IO.Path]::GetFullPath($ProjectRoot), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "拒绝清理 schema/工作区不匹配的 prepared build manifest:$full"
+    }
+    $binFull = [IO.Path]::GetFullPath($BinDir)
+    foreach ($entry in @($manifest.stages)) {
+        $runtimeName = "$($entry.runtime_name)"
+        $stage = [IO.Path]::GetFullPath("$($entry.stage_path)")
+        $expectedName = '^\.' + [regex]::Escape($runtimeName) + '\.planner-stage-[0-9]+-[0-9a-fA-F]{32}\.exe$'
+        if (-not [string]::Equals((Split-Path -Parent $stage), $binFull, [StringComparison]::OrdinalIgnoreCase) -or
+            [IO.Path]::GetFileName($stage) -cnotmatch $expectedName) {
+            throw "prepared build manifest 含非 staging 路径，拒绝清理:$stage"
+        }
+        Remove-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $full -Force -ErrorAction Stop
+    Write-Host "[discard] 已清理 prepared build staging:$full" -ForegroundColor DarkGray
+}
+
 # Build-Service:产出可执行文件路径。
 #
 # 两条路,按「本机有没有 Go」自动选,不需要调用方关心:
@@ -802,7 +1289,188 @@ function Start-Service($svc, $ListenerRecords = $null) {
     }
 }
 
-function Start-PlannerFastServices($Targets) {
+function Get-PandoraPlannerFastForeignPortCommandHint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Service,
+        [AllowNull()][string]$CommandLine
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return '' }
+    $serviceName = "$($Service.Name)"
+    if ($serviceName -notmatch '^[A-Za-z0-9_]+$') { return '' }
+
+    # 命令行可能含 token/password，默认一个字符都不回显。只有明确是当前服务的
+    # pandorapy module 且同时带 -conf 时，才重建固定 module 名并只保留 config leaf。
+    $escapedService = [regex]::Escape($serviceName)
+    $modulePattern = '(?i)(?:^|\s)-m\s+["'']?(?<module>pandorapy\.services\.' +
+        $escapedService + '\.main)["'']?(?=\s|$)'
+    $confPattern = '(?i)(?:^|\s)-conf(?:\s+|=)(?<conf>"[^"]*"|''[^'']*''|[^\s]+)'
+    $moduleMatch = [regex]::Match($CommandLine, $modulePattern)
+    $confMatch = [regex]::Match($CommandLine, $confPattern)
+    if (-not $moduleMatch.Success -or -not $confMatch.Success) { return '' }
+
+    $rawConf = $confMatch.Groups['conf'].Value.Trim().Trim('"').Trim("'")
+    $configLeaf = ''
+    try { $configLeaf = [IO.Path]::GetFileName($rawConf.Replace('/', '\')) } catch { return '' }
+    $configLeaf = [regex]::Replace("$configLeaf", '[^A-Za-z0-9_.-]', '_')
+    if ([string]::IsNullOrWhiteSpace($configLeaf)) { $configLeaf = '<redacted>' }
+    if ($configLeaf.Length -gt 128) { $configLeaf = $configLeaf.Substring(0, 128) }
+    return "；python_module=pandorapy.services.$serviceName.main；config=$configLeaf"
+}
+
+function Get-PandoraPlannerFastTcpListenerRecords {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Targets)
+
+    # 策划 fast 必须只执行一次系统快照。共享 parser 有意只返回正 PID；Windows netstat
+    # 偶尔会把尚无法解析 owner 的 LISTENING 行标成 PID 0，这里把目标端口上的 PID 0
+    # 补回记录，让后续归属闸 fail-closed，而不是误判端口空闲。
+    $snapshot = Invoke-PandoraNetstatTcpSnapshot
+    if (-not $snapshot -or [int]$snapshot.ExitCode -ne 0) {
+        $exitCode = if ($snapshot) { [int]$snapshot.ExitCode } else { -1 }
+        throw "netstat 查询 TCP listener 失败(exit=$exitCode)"
+    }
+    $lines = @($snapshot.Lines)
+    $records = [Collections.Generic.List[object]]::new()
+    foreach ($record in @(ConvertFrom-PandoraNetstatTcpListenerRecords -Lines $lines)) {
+        $records.Add($record)
+    }
+
+    $targetPorts = [Collections.Generic.HashSet[int]]::new()
+    foreach ($svc in $Targets) { [void]$targetPorts.Add([int]$svc.Port) }
+    foreach ($line in $lines) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $columns = @($line.Trim() -split '\s+')
+        # 严格格式校验已经由共享 parser 对同一份 lines 完成；这里只补它刻意过滤的 PID 0。
+        if ($columns.Count -ne 5 -or $columns[0] -ine 'TCP' -or $columns[3] -ine 'LISTENING') {
+            continue
+        }
+        $local = $columns[1]
+        $colon = $local.LastIndexOf(':')
+        $localPort = 0
+        $ownerPid = -1
+        if ($colon -lt 0 -or
+            -not [int]::TryParse($local.Substring($colon + 1), [ref]$localPort) -or
+            -not [int]::TryParse($columns[-1], [ref]$ownerPid) -or
+            $ownerPid -ne 0 -or -not $targetPorts.Contains($localPort)) {
+            continue
+        }
+        $records.Add([pscustomobject]@{
+                LocalAddress = $local.Substring(0, $colon).Trim('[', ']')
+                LocalPort = $localPort
+                OwningProcess = 0
+            })
+    }
+    return @($records | Sort-Object LocalPort, OwningProcess, LocalAddress)
+}
+
+function Assert-PandoraPlannerFastTargetPortsSafe {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Targets,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$ListenerRecords,
+        [Parameter(Mandatory)][string]$ExpectedBinDir,
+        [scriptblock]$GetProcess = {
+            param([int]$ProcessId)
+            return Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        },
+        [scriptblock]$GetProcessCommandLine = {
+            param([int]$ProcessId)
+            $identity = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ProcessId" `
+                -ErrorAction SilentlyContinue
+            if ($identity) { return "$($identity.CommandLine)" }
+            return ''
+        }
+    )
+
+    $binRoot = [IO.Path]::GetFullPath($ExpectedBinDir)
+    foreach ($svc in $Targets) {
+        $serviceName = "$($svc.Name)"
+        $servicePort = [int]$svc.Port
+        $expectedExe = [IO.Path]::GetFullPath((Join-Path $binRoot "$serviceName.exe"))
+        $ownerPids = @($ListenerRecords |
+                Where-Object { [int]$_.LocalPort -eq $servicePort } |
+                ForEach-Object { [int]$_.OwningProcess } |
+                Sort-Object -Unique)
+        foreach ($ownerPid in $ownerPids) {
+            $process = $null
+            if ($ownerPid -gt 0) {
+                try { $process = & $GetProcess $ownerPid } catch { $process = $null }
+            }
+
+            $processName = 'unknown'
+            $actualPath = ''
+            if ($process) {
+                try {
+                    if (-not [string]::IsNullOrWhiteSpace("$($process.ProcessName)")) {
+                        $processName = "$($process.ProcessName)"
+                    }
+                } catch { $processName = 'unknown' }
+                try { $actualPath = "$($process.Path)" } catch { $actualPath = '' }
+            }
+            $processName = [regex]::Replace($processName, '[^A-Za-z0-9_.-]', '_')
+            if ([string]::IsNullOrWhiteSpace($processName)) { $processName = 'unknown' }
+            if ($processName.Length -gt 96) { $processName = $processName.Substring(0, 96) }
+
+            $isExpectedExe = $false
+            if (-not [string]::IsNullOrWhiteSpace($actualPath)) {
+                try {
+                    $isExpectedExe = [IO.Path]::GetFullPath($actualPath).Equals(
+                        $expectedExe, [StringComparison]::OrdinalIgnoreCase)
+                } catch { $isExpectedExe = $false }
+            }
+            # exact run/dev/bin exe 同时覆盖 pidfile 管理中的进程和缺 pidfile 的 stale 实例；
+            # 后者继续交给既有 Clear-PortSquatter 做 exact-path 清理。
+            if ($ownerPid -gt 0 -and $isExpectedExe) { continue }
+
+            $reason = if ($ownerPid -le 0) {
+                'listener PID 非法，无法证明归属'
+            } elseif (-not $process -or [string]::IsNullOrWhiteSpace($actualPath)) {
+                '映像路径不可读，无法证明归属'
+            } else {
+                '映像不属于本工作区 run/dev/bin exact exe'
+            }
+            $commandHint = ''
+            if ($ownerPid -gt 0) {
+                $commandLine = ''
+                try { $commandLine = "$(& $GetProcessCommandLine $ownerPid)" } catch { $commandLine = '' }
+                $commandHint = Get-PandoraPlannerFastForeignPortCommandHint -Service $svc -CommandLine $commandLine
+            }
+            throw "策划 fast 启动阻断：service=$serviceName port=$servicePort PID=$ownerPid process=$processName；$reason$commandHint。不会停止该 foreign 进程；当前阶段已 fail-closed 中止。"
+        }
+    }
+}
+
+function Invoke-PandoraPlannerFastEntryPortPreflight {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Targets,
+        [Parameter(Mandatory)][string]$ExpectedBinDir
+    )
+
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $status = '失败'
+    try {
+        # 一次 netstat snapshot 覆盖全部 target；不得退化成每服务一条慢查询。
+        $listenerRecords = @(Get-PandoraPlannerFastTcpListenerRecords -Targets $Targets)
+        Assert-PandoraPlannerFastTargetPortsSafe -Targets $Targets -ListenerRecords $listenerRecords `
+            -ExpectedBinDir $ExpectedBinDir
+        $status = '完成'
+        return $listenerRecords
+    } finally {
+        $watch.Stop()
+        Add-PandoraPlannerTiming -Name '业务程序·端口归属预检' `
+            -ElapsedMilliseconds $watch.ElapsedMilliseconds -Status $status
+    }
+}
+
+function Start-PlannerFastServices {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Targets,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$InitialListenerRecords
+    )
     # 只给策划 cmd 的冷启动使用：第一波并发拉起 login 之外的服务，统一用
     # listener 快照验证 exact PID；第二波再启 login，保留原有“login 最后”的依赖边界。
     # 首次/源码变化时 Build-Service 仍逐项构建；日常命中收据后不再把
@@ -818,47 +1486,156 @@ function Start-PlannerFastServices($Targets) {
 
     $totalWatch = [Diagnostics.Stopwatch]::StartNew()
     $buildWatch = [Diagnostics.Stopwatch]::StartNew()
+    $configWatch = [Diagnostics.Stopwatch]::new()
     $launchWatch = [Diagnostics.Stopwatch]::new()
     $readyWatch = [Diagnostics.Stopwatch]::new()
     $perf = @{ Snapshots = 0; Existing = 0; Launched = 0; Waves = 0 }
     $preparedExecutables = @{}
     $script:PlannerBuildPublished = $false
+    $plannerBuildStatus = '失败'
+    # 下游阶段默认是“跳过”；只有完成前置检查后才能判定为完成/复用。
+    # 否则 build 抛错时会误报“业务进程均已在运行”。
+    $plannerConfigStatus = '跳过'
+    $plannerLaunchStatus = '跳过'
+    $plannerReadyStatus = '跳过'
+    $pendingBuildReceiptPlans = @()
+    $pendingPreparedManifestPath = ''
 
-    # 先完成全部缺失二进制的构建/拷贝，再生成带密码的临时配置并启动。
-    # 这样冷 build 即使中途失败，也不会留下明文 DSN 或半批新进程。
-    $prebuildListenerRecords = $null
     try {
-        $prebuildListenerRecords = @(Get-PandoraTcpListenerRecords)
-        $perf.Snapshots++
-    } catch {
-        Write-Host "  [WARN] 预构建前 listener 快照失败，缺少 pidfile 的残留实例将逐端口 fail-closed 复核:$($_.Exception.Message)" -ForegroundColor Yellow
+    # 快速路径分成 prepare/stage 与 publish 两段。Go build 或 artifact copy 只写 staging；
+    # 全批成功且第二次逐 target 强指纹仍一致后，才停止需要替换的 exact Process。
+    # 复用函数入口的全 target 快照；不要为每个 target/兜底 build 再跑一次 netstat。
+    $prebuildListenerRecords = $InitialListenerRecords
+    $perf.Snapshots++
+    # 保留 -NoBuild 的历史语义：已有二进制绝不构建；只有二进制本来就缺失时才走普通兜底。
+    # 策划默认路径不会进入这里，正常冷构建始终走后面的同盘 staging 事务。
+    if ($NoBuild) {
+        foreach ($svc in $targetsArray) {
+            $exe = Join-Path $BinDir "$($svc.Name).exe"
+            if (Test-Path -LiteralPath $exe -PathType Leaf) { continue }
+            Clear-PortSquatter $svc $prebuildListenerRecords
+            $exe = Build-Service $svc
+        }
     }
-    foreach ($svc in $targetsArray) {
-        $existing = Get-RunningProcess $svc
-        # 这里只决定是否需要预构建；绝不用构建前的旧 listener 快照下就绪结论。
-        if ($existing) { continue }
-        # pidfile 可能丢失，但旧的 exact exe 仍在占端口并被 Windows 锁定。必须先精确清它，
-        # 否则 go build/Copy-Item 还没进入启动波就会 Access denied。
-        Clear-PortSquatter $svc $prebuildListenerRecords
-        $exe = Join-Path $BinDir "$($svc.Name).exe"
-        if (-not $NoBuild -or -not (Test-Path -LiteralPath $exe)) { $exe = Build-Service $svc }
-        $preparedExecutables[$svc.Name] = $exe
-    }
-    $buildWatch.Stop()
-    if ($script:PlannerBuildPublished -and $targetsArray.Count -gt 0) {
+
+    $firstDesiredPlan = @(Get-PlannerDesiredTargetPlan $targetsArray)
+    $firstTargetStates = @($firstDesiredPlan | ForEach-Object {
+            [pscustomobject]@{ Name = $_.Name; BuildCurrent = [bool]$_.BuildCurrent }
+        })
+    $firstPlanByTarget = @{}; foreach ($plan in $firstDesiredPlan) { $firstPlanByTarget[$plan.Name] = $plan }
+    $firstRuntimeStates = @($firstDesiredPlan | ForEach-Object {
+            $plan = $_
+            @($plan.Target.Services | ForEach-Object {
+                    $svc = $_; $proc = Get-RunningProcess $svc; $binary = Join-Path $BinDir "$($svc.Name).exe"
+                    $appliedFingerprint = Get-PlannerRuntimeAppliedFingerprint $svc $plan
+                    [pscustomobject]@{
+                        Name = "$($svc.Name)"; TargetName = "$($plan.Name)"; IsRunning = ($null -ne $proc)
+                        AppliedCurrent = ($null -ne $proc) -and
+                            (Test-PandoraPlannerAppliedReceipt -ReceiptPath (Get-PlannerAppliedReceiptPath $svc) `
+                                -Fingerprint $appliedFingerprint -BinaryPath $binary -Process $proc)
+                    }
+                })
+        })
+    $firstActionPlan = Get-PandoraPlannerRuntimeActionPlan -BuildTargets @($firstDesiredPlan | ForEach-Object { $_.Target }) `
+        -TargetStates $firstTargetStates -RuntimeStates $firstRuntimeStates -ConfigTableChanged:$ConfigTableChanged
+    $plansToStage = @($firstActionPlan.BuildTargetNames | ForEach-Object { $firstPlanByTarget["$_"] })
+    $stageRecords = @()
+    $publishAttempted = $false
+    try {
+        if ($PreparedBuildManifestPath) {
+            $stageRecords = @(Read-PlannerPreparedBuildManifest -Path $PreparedBuildManifestPath `
+                    -DesiredPlans $firstDesiredPlan -ExpectedTargetNames $firstActionPlan.BuildTargetNames)
+        } else {
+            $stageRecords = @(New-PlannerStagedTarget $plansToStage)
+        }
+
         # 强指纹在批量 build/copy 前取得；同步工具若在这期间改了 Go 输入或
         # artifact manifest，不能给一批混合字节留下可命中收据，更不能立即启动。
         $beforeBuildFingerprint = $script:PlannerBuildFingerprint
         $script:PlannerBuildFingerprint = ''
         $script:PlannerArtifactManifestByName = @{}
+        $secondDesiredPlan = @(Get-PlannerDesiredTargetPlan $targetsArray)
         $null = Get-PlannerBuildFingerprint $targetsArray[0]
         if (-not [string]::Equals($script:PlannerBuildFingerprint, $beforeBuildFingerprint, [StringComparison]::Ordinal)) {
-            foreach ($svc in $targetsArray) {
-                Remove-Item -LiteralPath (Get-PlannerBuildReceiptPath $svc) -Force -ErrorAction SilentlyContinue
+            throw '业务构建输入在批量 build/copy 期间发生变化；已作废本轮 staging，请等代码同步完成后重试。'
+        }
+        $secondByTarget = @{}; foreach ($plan in $secondDesiredPlan) { $secondByTarget[$plan.Name] = $plan }
+        foreach ($firstPlan in $firstDesiredPlan) {
+            if (-not $secondByTarget.ContainsKey($firstPlan.Name) -or
+                -not [string]::Equals("$($firstPlan.Fingerprint)", "$($secondByTarget[$firstPlan.Name].Fingerprint)", [StringComparison]::Ordinal)) {
+                throw "业务构建输入在批量 build/copy 期间发生变化:$($firstPlan.Name)"
             }
-            throw '业务构建输入在批量 build/copy 期间发生变化；已作废本轮收据，请等代码同步完成后重试。'
+        }
+
+        # staging 期间进程可能自行退出；在停止/发布前重取 exact Process 与 applied receipt，
+        # 由第二份动作计划决定最终 stop/start 集合。
+        $secondTargetStates = @($secondDesiredPlan | ForEach-Object {
+                [pscustomobject]@{ Name = $_.Name; BuildCurrent = [bool]$_.BuildCurrent }
+            })
+        $plannedAppliedFingerprintByRuntime = @{}
+        $secondRuntimeStates = @($secondDesiredPlan | ForEach-Object {
+                $plan = $_
+                @($plan.Target.Services | ForEach-Object {
+                        $svc = $_; $proc = Get-RunningProcess $svc; $binary = Join-Path $BinDir "$($svc.Name).exe"
+                        $appliedFingerprint = Get-PlannerRuntimeAppliedFingerprint $svc $plan
+                        $plannedAppliedFingerprintByRuntime[$svc.Name] = $appliedFingerprint
+                        [pscustomobject]@{
+                            Name = "$($svc.Name)"; TargetName = "$($plan.Name)"; IsRunning = ($null -ne $proc)
+                            AppliedCurrent = ($null -ne $proc) -and
+                                (Test-PandoraPlannerAppliedReceipt -ReceiptPath (Get-PlannerAppliedReceiptPath $svc) `
+                                    -Fingerprint $appliedFingerprint -BinaryPath $binary -Process $proc)
+                        }
+                    })
+            })
+        $actionPlan = Get-PandoraPlannerRuntimeActionPlan -BuildTargets @($secondDesiredPlan | ForEach-Object { $_.Target }) `
+            -TargetStates $secondTargetStates -RuntimeStates $secondRuntimeStates -ConfigTableChanged:$ConfigTableChanged
+        if ((@($actionPlan.BuildTargetNames | Sort-Object) -join "`0") -cne
+            (@($firstActionPlan.BuildTargetNames | Sort-Object) -join "`0")) {
+            throw '二次动作计划的 build target 集合发生变化，拒绝发布本轮 staging。'
+        }
+
+        $serviceByName = @{}; foreach ($svc in $targetsArray) { $serviceByName[$svc.Name] = $svc }
+        # staging/build 可能持续数秒；activation 会停旧进程并发布正式 exe，进入前必须重取
+        # 一份全 target 快照，不能让构建窗口中新出现的 foreign listener 触发部分 stop/publish。
+        $activationListenerRecords = @(Get-PandoraPlannerFastTcpListenerRecords -Targets $targetsArray)
+        $perf.Snapshots++
+        Assert-PandoraPlannerFastTargetPortsSafe -Targets $targetsArray `
+            -ListenerRecords $activationListenerRecords -ExpectedBinDir $BinDir
+        # activation 前冻结原 exact running 集合和旧正式 exe 身份。第二个 stop 或 publish
+        # 任一步失败，事务 seam 都会在旧文件已恢复后把此前已停服务 exact-ready 拉回。
+        $activationRunningRecords = @(Get-PlannerActivationRunningRecords `
+                -RuntimeNames $actionPlan.StopRuntimeNames -ServiceByName $serviceByName)
+        $activationState = @{ PublishAttempted = $false }
+        $stopReplacement = {
+            param($record)
+            Stop-PlannerServiceForReplacement -svc $record.Service -ExactProcess $record.Process
+        }
+        $publishReplacement = {
+            $activationState.PublishAttempted = $true
+            if ($stageRecords.Count -gt 0) { Publish-PandoraPlannerStagedFiles -Records $stageRecords }
+        }
+        $restartOld = { param([object[]]$records) Restore-PlannerStoppedRuntimeSet $records }
+        $null = Invoke-PandoraPlannerActivationReplacement -RunningRecords $activationRunningRecords `
+            -Stop $stopReplacement -Publish $publishReplacement -Restart $restartOld
+        $publishAttempted = [bool]$activationState.PublishAttempted
+        if ($stageRecords.Count -gt 0) { $script:PlannerBuildPublished = $true }
+        # build/applied receipt 与 prepared manifest 都是优化元数据；等全部服务最终 exact-ready
+        # 后再提交，绝不让元数据写失败把 activation 留在“部分 down”。
+        $pendingBuildReceiptPlans = @($actionPlan.BuildTargetNames | ForEach-Object { $secondByTarget["$_"] })
+        $pendingPreparedManifestPath = $PreparedBuildManifestPath
+        $desiredPlan = $secondDesiredPlan
+    } catch {
+        # Publish helper 自己负责回滚/清 stage；发布前失败则由这里清理本轮 staging。
+        if (-not $publishAttempted) { Remove-PlannerStagedRecords $stageRecords }
+        throw
+    }
+    foreach ($plan in $desiredPlan) {
+        foreach ($svc in @($plan.Target.Services)) {
+            $preparedExecutables[$svc.Name] = Join-Path $BinDir "$($svc.Name).exe"
         }
     }
+    $buildWatch.Stop()
+    $plannerBuildStatus = if ($actionPlan.BuildTargetNames.Count -eq 0) { '复用' } else { '完成' }
 
     foreach ($wave in $waves) {
         if ($failed.Count -gt 0) { break }
@@ -869,13 +1646,10 @@ function Start-PlannerFastServices($Targets) {
         $cleanupErrors = @()
         try {
             $launchServices = [Collections.Generic.List[object]]::new()
-            $waveListenerRecords = $null
-            try {
-                $waveListenerRecords = @(Get-PandoraTcpListenerRecords)
-                $perf.Snapshots++
-            } catch {
-                Write-Host "  [WARN] 本波启动前 listener 快照失败，每个端口将独立 fail-closed 复核:$($_.Exception.Message)" -ForegroundColor Yellow
-            }
+            $waveListenerRecords = @(Get-PandoraPlannerFastTcpListenerRecords -Targets @($wave))
+            $perf.Snapshots++
+            Assert-PandoraPlannerFastTargetPortsSafe -Targets @($wave) `
+                -ListenerRecords $waveListenerRecords -ExpectedBinDir $BinDir
             foreach ($svc in $wave) {
                 $existing = Get-RunningProcess $svc
                 if ($existing) {
@@ -916,7 +1690,14 @@ function Start-PlannerFastServices($Targets) {
                 if ($LocalDsSpawners -contains $svc.Name) { Clear-LocalDsProcesses $svc $null -OrphansOnly }
 
                 $svcDir = Join-Path $ProjectRoot $svc.Dir
-                $runtimeConfig = Get-ServiceRuntimeConfig $svc
+                try {
+                    $plannerConfigStatus = '失败'
+                    $configWatch.Start()
+                    $runtimeConfig = Get-ServiceRuntimeConfig $svc
+                    $plannerConfigStatus = '完成'
+                } finally {
+                    if ($configWatch.IsRunning) { $configWatch.Stop() }
+                }
                 $proc = $null
                 $runtimeRecord = [pscustomobject]@{
                     Service = $svc; RuntimeConfig = $runtimeConfig; Process = $null
@@ -924,6 +1705,7 @@ function Start-PlannerFastServices($Targets) {
                 }
                 $runtimeRecords.Add($runtimeRecord)
                 try {
+                    $plannerLaunchStatus = '失败'
                     $launchWatch.Start()
                     $proc = Start-Process -FilePath $exe `
                         -ArgumentList '-conf', "`"$($runtimeConfig.Path)`"" `
@@ -948,6 +1730,7 @@ function Start-PlannerFastServices($Targets) {
                     $waveStates.Add($state)
                     $states.Add($state)
                     $perf.Launched++
+                    $plannerLaunchStatus = '完成'
                 } catch {
                     $launchWatch.Stop()
                     $runtimeRecord.AlwaysRollback = $true
@@ -957,6 +1740,7 @@ function Start-PlannerFastServices($Targets) {
             }
 
             if ($waveStates.Count -gt 0) {
+                $plannerReadyStatus = '失败'
                 $readyWatch.Start()
                 $getListeners = { $perf.Snapshots++; @(Get-PandoraTcpListenerRecords) }
                 $isExited = { param($state) return [bool]$state.Process.HasExited }
@@ -971,10 +1755,12 @@ function Start-PlannerFastServices($Targets) {
                     -TestProcessExited $isExited -TestListenerOwned $isOwned -Sleep $sleep `
                     -GetElapsedMilliseconds $elapsed -PollMilliseconds 100 -TimeoutMilliseconds 12000
                 $readyWatch.Stop()
+                $plannerReadyStatus = '完成'
             }
         } catch {
             $waveFailure = $_
         } finally {
+            if ($configWatch.IsRunning) { $configWatch.Stop() }
             if ($launchWatch.IsRunning) { $launchWatch.Stop() }
             if ($readyWatch.IsRunning) { $readyWatch.Stop() }
             # 哪怕后续服务 build/launch 抛异常，也不留下带明文 DSN 的临时 YAML。
@@ -1010,6 +1796,8 @@ function Start-PlannerFastServices($Targets) {
     # 批量 wait 只能证明某一刻 ready；在登记全局 MySQL 应用状态前，再用一份
     # fresh 快照复核全部目标的 exact PID，封住“检查后立即退出/端口被抢”的假绿窗口。
     if ($failed.Count -eq 0) {
+        $plannerReadyStatus = '失败'
+        $readyWatch.Start()
         $finalListenerRecords = $null
         try {
             $finalListenerRecords = @(Get-PandoraTcpListenerRecords)
@@ -1027,13 +1815,70 @@ function Start-PlannerFastServices($Targets) {
                 }
             }
         }
+        if ($failed.Count -eq 0) {
+            # applied receipt 是“最终二进制 + exact Process 代次”证明，只能在 fresh listener
+            # 全量复核之后登记；表变更消费者也已通过统一 action plan 完成了精确重启。
+            foreach ($plan in $pendingBuildReceiptPlans) {
+                Write-PandoraPlannerBuildReceipt -ReceiptPath $plan.ReceiptPath `
+                    -Fingerprint "$($plan.Fingerprint)" -BinaryPaths $plan.BinaryPaths
+            }
+            $desiredByRuntime = @{}
+            foreach ($plan in $desiredPlan) {
+                foreach ($runtime in @($plan.Target.Services)) { $desiredByRuntime[$runtime.Name] = $plan }
+            }
+            foreach ($svc in $targetsArray) {
+                $proc = Get-RunningProcess $svc
+                $plan = $desiredByRuntime[$svc.Name]
+                $plannedFingerprint = "$($plannedAppliedFingerprintByRuntime[$svc.Name])"
+                $finalFingerprint = Get-PlannerRuntimeAppliedFingerprint $svc $plan
+                if (-not [string]::Equals($finalFingerprint, $plannedFingerprint, [StringComparison]::Ordinal)) {
+                    throw "服务 $($svc.Name) 的 YAML/env/配置表输入在 activation 期间发生变化；拒绝写 applied receipt。"
+                }
+                Write-PandoraPlannerAppliedReceipt -ReceiptPath (Get-PlannerAppliedReceiptPath $svc) `
+                    -Fingerprint $plannedFingerprint `
+                    -BinaryPath (Join-Path $BinDir "$($svc.Name).exe") -Process $proc
+            }
+            if ($pendingPreparedManifestPath) {
+                Remove-Item -LiteralPath (Assert-PlannerPreparedManifestPath $pendingPreparedManifestPath) -Force -ErrorAction Stop
+            }
+            $plannerReadyStatus = if ($perf.Launched -eq 0) { '复用' } else { '完成' }
+        }
+        $readyWatch.Stop()
     }
 
-    $totalWatch.Stop()
-    Write-Host ("[perf] planner-services targets={0} existing={1} launched={2} waves={3} snapshots={4} build_ms={5} launch_ms={6} ready_ms={7} total_ms={8}" -f `
-            $targetsArray.Count, $perf.Existing, $perf.Launched, $perf.Waves, $perf.Snapshots, $buildWatch.ElapsedMilliseconds,
-            $launchWatch.ElapsedMilliseconds, $readyWatch.ElapsedMilliseconds, $totalWatch.ElapsedMilliseconds) -ForegroundColor DarkGray
+    if ($failed.Count -gt 0) { $plannerReadyStatus = '失败' }
+    if ($plannerConfigStatus -eq '跳过' -and $plannerBuildStatus -ne '失败') {
+        $plannerConfigStatus = '复用'
+    }
+    if ($plannerLaunchStatus -eq '跳过' -and $plannerBuildStatus -ne '失败') {
+        $plannerLaunchStatus = '复用'
+    }
     return $failed.ToArray()
+    } finally {
+        if ($buildWatch.IsRunning) { $buildWatch.Stop() }
+        if ($configWatch.IsRunning) { $configWatch.Stop() }
+        if ($launchWatch.IsRunning) { $launchWatch.Stop() }
+        if ($readyWatch.IsRunning) { $readyWatch.Stop() }
+        if ($totalWatch.IsRunning) { $totalWatch.Stop() }
+        $reuseDetail = '业务进程均已在运行'
+        $skippedDetail = '前置阶段失败，未执行'
+        Add-PandoraPlannerTiming -Name '业务程序·构建/复用' `
+            -ElapsedMilliseconds $buildWatch.ElapsedMilliseconds -Status $plannerBuildStatus `
+            -Detail $(if ($plannerBuildStatus -eq '复用') { $reuseDetail } else { '' })
+        Add-PandoraPlannerTiming -Name '业务程序·配置生成' `
+            -ElapsedMilliseconds $configWatch.ElapsedMilliseconds -Status $plannerConfigStatus `
+            -Detail $(if ($plannerConfigStatus -eq '复用') { $reuseDetail } elseif ($plannerConfigStatus -eq '跳过') { $skippedDetail } else { '' })
+        Add-PandoraPlannerTiming -Name '业务程序·进程拉起' `
+            -ElapsedMilliseconds $launchWatch.ElapsedMilliseconds -Status $plannerLaunchStatus `
+            -Detail $(if ($plannerLaunchStatus -eq '复用') { $reuseDetail } elseif ($plannerLaunchStatus -eq '跳过') { $skippedDetail } else { '' })
+        Add-PandoraPlannerTiming -Name '业务程序·端口就绪' `
+            -ElapsedMilliseconds $readyWatch.ElapsedMilliseconds -Status $plannerReadyStatus `
+            -Detail $(if ($plannerReadyStatus -eq '复用') { $reuseDetail } elseif ($plannerReadyStatus -eq '跳过') { $skippedDetail } else { '' })
+        Write-Host ("[perf] planner-services targets={0} existing={1} launched={2} waves={3} snapshots={4} build_ms={5} config_ms={6} launch_ms={7} ready_ms={8} total_ms={9}" -f `
+                $targetsArray.Count, $perf.Existing, $perf.Launched, $perf.Waves, $perf.Snapshots, $buildWatch.ElapsedMilliseconds,
+                $configWatch.ElapsedMilliseconds, $launchWatch.ElapsedMilliseconds, $readyWatch.ElapsedMilliseconds,
+                $totalWatch.ElapsedMilliseconds) -ForegroundColor DarkGray
+    }
 }
 
 function Stop-Service($svc) {
@@ -1083,10 +1928,29 @@ if ($Action -in @('up', 'down', 'restart')) {
 }
 if ($mustUseMysql -and $plannerMysqlMode -ceq 'central-managed') {
     Invoke-PandoraPlannerSecretSessionSweep -ProjectRoot $ProjectRoot
-    Invoke-PandoraPlannerMysqlPreflight -ProjectRoot $ProjectRoot -Profile $centralMysqlProfile `
-        -Credential $centralMysqlCredential | Out-Null
+    Invoke-PandoraPlannerTimedStep -Name '远端数据库·权限/TLS/Schema 预检' -Action {
+        Invoke-PandoraPlannerMysqlPreflight -ProjectRoot $ProjectRoot -Profile $centralMysqlProfile `
+            -Credential $centralMysqlCredential | Out-Null
+    }
 }
 switch ($Action) {
+
+    'prepare' {
+        if (-not $FastExistingProbe) { throw '-Action prepare 仅供策划 fast 启动编排使用，必须同时传 -FastExistingProbe。' }
+        if ($Service -or $Exclude.Count -gt 0 -or $Only.Count -gt 0) {
+            throw '-Action prepare 只接受完整服务集合，拒绝生成无法证明全局一致的部分 staging。'
+        }
+        $targets = @(Get-TargetServices)
+        Prepare-PlannerFastBuild -TargetServices $targets -ManifestPath $PreparedBuildManifestPath
+        exit 0
+        break
+    }
+
+    'discard' {
+        Discard-PlannerPreparedBuild -ManifestPath $PreparedBuildManifestPath
+        exit 0
+        break
+    }
 
     'status' { Show-Status; break }
 
@@ -1181,6 +2045,14 @@ switch ($Action) {
         $targetCount = if ($Service) { 1 } else { $targets.Count }
         if ($targetCount -eq 0) { Write-Host "[!] 排除后无服务可启动" -ForegroundColor Yellow; break }
 
+        $plannerFastEntryListenerRecords = @()
+        if ($FastExistingProbe) {
+            # 必须早于下面的 runtime-profile Stop-Service 分支：foreign listener 只负责阻断，
+            # 不能先停掉任何现有业务进程后才发现端口必撞。
+            $plannerFastEntryListenerRecords = @(Invoke-PandoraPlannerFastEntryPortPreflight `
+                    -Targets $targets -ExpectedBinDir $BinDir)
+        }
+
         if (-not $Service) {
             $appliedMysql = Get-PandoraServiceAppliedMysqlState $ProjectRoot
             if (-not (Test-ServiceRuntimeProfileMatches $appliedMysql)) {
@@ -1205,8 +2077,18 @@ switch ($Action) {
 
         # 全起前先探基础设施(Redis/MySQL/Kafka/etcd);不通就拦下,别让服务空转 crash-loop。
         # 单起某个服务(-Service)时不强拦(可能就是要单独调该服务),仅靠日志暴露。
-        if (-not $Service -and -not (Test-InfraReady)) {
-            exit 1
+        if (-not $Service) {
+            $infraProbeWatch = [Diagnostics.Stopwatch]::StartNew()
+            $infraProbeStatus = '失败'
+            try {
+                $infraReady = Test-InfraReady
+                if ($infraReady) { $infraProbeStatus = '完成' }
+            } finally {
+                $infraProbeWatch.Stop()
+                Add-PandoraPlannerTiming -Name '业务程序·依赖探活' `
+                    -ElapsedMilliseconds $infraProbeWatch.ElapsedMilliseconds -Status $infraProbeStatus
+            }
+            if (-not $infraReady) { exit 1 }
         }
 
         Write-Host "===== 启动业务服务 ($targetCount 个) =====" -ForegroundColor Cyan
@@ -1214,7 +2096,8 @@ switch ($Action) {
         Write-Host ""
 
         if ($FastExistingProbe) {
-            $startFailed = @(Start-PlannerFastServices $targets)
+            $startFailed = @(Start-PlannerFastServices -Targets $targets `
+                    -InitialListenerRecords $plannerFastEntryListenerRecords)
         } else {
             $startFailed = @()
             foreach ($svc in $targets) {

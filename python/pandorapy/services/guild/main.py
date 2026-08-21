@@ -65,11 +65,22 @@ import asyncmy
 from pandora.group.v1 import group_pb2_grpc
 from pandora.guild.v1 import guild_pb2, guild_pb2_grpc
 
-from pandorapy import dbguard, godur, kafka_topics, kafkax, mysqlx, redisx, safego, sessiongate
+from pandorapy import (
+    dbguard,
+    godur,
+    internalrpcauth,
+    kafka_topics,
+    kafkax,
+    mysqlx,
+    redisx,
+    safego,
+    sessiongate,
+)
 from pandorapy import log as plog
 from pandorapy import server as pserver
 from pandorapy import snowflake as psnowflake
 from pandorapy import snowflake_etcd as psnowflake_etcd
+from pandorapy.services import player_display
 from pandorapy.services.guild import biz as gbiz
 from pandorapy.services.guild import budgets as gbudgets
 from pandorapy.services.guild import cache as gcache
@@ -205,6 +216,11 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             hint='guild.retention_mode 只接受 "report_only"(默认,不删) 或 "delete"',
         )
         return 1
+    try:
+        cfg.validate_player_display_resolvers()
+    except ValueError as exc:
+        logger.error("player_display_resolver_config_invalid", err=str(exc))
+        return 1
 
     # ── ⑤ MySQL 强依赖(pandora_social)──────────────────────────────────
     raw_dsn = cfg.node.mysql_client.dsn
@@ -244,6 +260,8 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
     session_rdb = None
     producer: kafkax.KeyOrderedProducer | None = None
     node_holder = None
+    player_name_resolver = None
+    player_no_resolver = None
     try:
         # ── ⑦ 严格模式断言(§9.24)────────────────────────────────────────
         # 非严格 sql_mode 下超长写入会被 MySQL **静默截断**(err=nil 但数据被砍断),
@@ -402,11 +420,50 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         else:
             logger.warning("kafka_brokers_empty", hint="guild push disabled")
 
+        # ── player/login 公开展示投影(**弱依赖**)────────────────────────
+        # 运行期单批失败由 biz 独立 fail-soft，不影响申请列表和另一条投影。
+        if cfg.guild.player_name_resolver_addr:
+            signer = internalrpcauth.Signer(
+                cfg.guild.player_name_resolver_auth_secret,
+                SERVICE_NAME,
+                cfg.guild.player_name_resolver_auth_audience,
+            )
+            player_name_resolver = player_display.GrpcPlayerNameResolver(
+                cfg.guild.player_name_resolver_addr, signer
+            )
+            logger.info(
+                "player_name_resolver_ready",
+                addr=cfg.guild.player_name_resolver_addr,
+                caller=SERVICE_NAME,
+                audience=cfg.guild.player_name_resolver_auth_audience,
+            )
+        else:
+            logger.warning("player_name_resolver_disabled")
+        if cfg.guild.player_no_resolver_addr:
+            signer = internalrpcauth.Signer(
+                cfg.guild.player_no_resolver_auth_secret,
+                SERVICE_NAME,
+                cfg.guild.player_no_resolver_auth_audience,
+            )
+            player_no_resolver = player_display.GrpcPlayerNoResolver(
+                cfg.guild.player_no_resolver_addr, signer
+            )
+            logger.info(
+                "player_no_resolver_ready",
+                addr=cfg.guild.player_no_resolver_addr,
+                caller=SERVICE_NAME,
+                audience=cfg.guild.player_no_resolver_auth_audience,
+            )
+        else:
+            logger.warning("player_no_resolver_disabled")
+
         # ── 装配链(公会 + 临时群同进程)──────────────────────────────────
         # schema 名给保留期清理的全限定 DELETE 用;取 DSN 里的库名(生产 = pandora_social)。
         guild_repo = gguildrepo.MySQLGuildRepo(pool, conn_cfg.get("db") or GUILD_DB)
         group_repo = ggrouprepo.MySQLGroupRepo(pool)
         guild_uc = gbiz.GuildUsecase(guild_repo, guild_cache, pusher, cfg.guild)
+        guild_uc.set_player_name_resolver(player_name_resolver)
+        guild_uc.set_player_no_resolver(player_no_resolver)
 
         # 入会申请频率配额(anti-abuse §6 第 6 项):Redis 健康时启用,否则不限。
         # ★ 这是 fail-open 边界,且**刻意如此**:总量闸(每公会 pending 200)在事务里,
@@ -561,6 +618,10 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         if producer is not None:
             with contextlib.suppress(Exception):
                 await producer.close()
+        for resolver in (player_no_resolver, player_name_resolver):
+            if resolver is not None:
+                with contextlib.suppress(Exception):
+                    await resolver.close()
         for client in (rdb, session_rdb):
             if client is not None:
                 with contextlib.suppress(Exception):

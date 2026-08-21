@@ -1,0 +1,74 @@
+# Pandora auction 服务开发期配置(2026-06-19)。
+#
+# - gRPC :20016 / HTTP :21016(仅 /metrics)
+# - MySQL 强依赖(撮合权威库 pandora_auction:auction_orders + auction_matches)
+#   单库模式用 node.mysql_client.dsn;分库模式填 node.mysql_client.shards(按 market_id 路由)
+# - Redis 强依赖(跨实例 market 锁 + 旧版兼容 ZSET；新版本不从 ZSET 选单)
+# - Kafka:成交 pandora.auction.match 由 MySQL outbox 至少一次补偿；流转审计 audit 是弱依赖
+# - dev: enable_reflection=true 便于 grpcurl 联调
+
+server:
+  grpc:
+    network: tcp
+    addr: ":20116"
+    timeout: "15s"
+    enable_reflection: true     # dev 开;prod 关
+    max_conn_age: "15m"         # 达龄 GOAWAY 重拨,滚动更新时流量能滚到新副本(zero-downtime §6.2)
+  http:
+    network: tcp
+    addr: ":21116"
+
+node:
+  node_id: 1
+  mysql_client:
+    # 单库模式(W1):连 pandora_auction。当前分库只批准 2 个 DSN(按 market_id % N 路由)；
+    # >2 会 fail-fast，扩容前须先完成 owner idempotency registry 全量回填与完成标记。
+    dsn: "pandora:pandora_dev_pwd@tcp(127.0.0.1:3307)/pandora_auction?parseTime=true&charset=utf8mb4&loc=UTC"
+    max_open_conns: 20
+    max_idle_conns: 10
+  redis_client:
+    host: "127.0.0.1:6380"
+    db: 0
+    dial_timeout: "2s"
+    read_timeout: "1s"
+    write_timeout: "1s"
+
+# kafka producer 配置(发布 pandora.auction.match + pandora.auction.audit)
+# brokers 9093 = Pandora 端口规划(与 vanilla 9092 区分)
+kafka:
+  brokers: ["127.0.0.1:9093"]
+  dial_timeout: "2s"
+  write_timeout: "5s"
+  idempotent: true
+
+auction:
+  # 蓝绿 R3 只读预热时设 true；旧 auction 全部下线后必须改回 false 并重启，才可接写/跑补偿。
+  passive_warmup: false
+  shard_topology_generation: "auction-v1"
+  # 双分片首次登记 marker 时临时设 true，成功后立即恢复 false；单库首次升级可自动登记。
+  allow_shard_topology_bootstrap: false
+  max_quantity_per_order: 1000000
+  max_price: 1000000000
+  max_active_orders_per_player: 200  # 单玩家 PENDING+活跃挂单硬上限,Redis Lua 原子预留
+  # 与 auction-dev.yaml 保持逐字一致 —— 本文件只错开端口用于并排对拍,
+  # 业务旋钮一旦不同,diff 里就会出现与实现分叉无关的假差异。
+  rate_quota_per_min: 60
+  default_list_limit: 50
+  max_list_limit: 200
+  # inventory 内网 gRPC 地址(:20015)。配上 → 成交走真实结算(SettleAuctionMatch:
+  # 卖↔买资产原子对转 + match_id 幂等);仅无交易联调/单测可留空并显式设 allow_noop_settlement=true。
+  inventory_addr: "127.0.0.1:20015"
+  # 挂单存活时长(秒)。> 0 启用过期清扫:超 TTL 仍未成交的挂单自动 EXPIRED、移出簿、退还 escrow。
+  # dev 设 7 天;0 = 永不过期。
+  order_ttl_seconds: 604800
+  expiry_sweep_interval_seconds: 60   # 过期清扫扫描间隔
+  expiry_sweep_batch: 200             # 单批最多处理条数
+  # 持久副作用补偿：PENDING 冻结/撮合续跑、成交结算与终态 escrow 释放。
+  side_effect_reconcile_interval_seconds: 5
+  side_effect_reconcile_batch: 100
+  audit_queue_capacity: 1024  # 弱依赖 audit 异步队列；满时告警丢弃，不反压交易主路径
+  # 兼容字段：旧二进制多实例必须 true，集群配置生成器会强制 true；
+  # 新二进制无论本字段取值都启用跨实例 market 锁。dev 源配置保留 false 仅兼容旧单实例调试。
+  cross_instance_lock: false
+  market_lock_ttl_seconds: 30         # 锁 TTL(≤30s,不变量 §10)
+  market_lock_max_wait_ms: 3000       # 抢锁最大等待,超时返回 ERR_AUCTION_MARKET_BUSY

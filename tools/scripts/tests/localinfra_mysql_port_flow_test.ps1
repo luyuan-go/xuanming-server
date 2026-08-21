@@ -251,6 +251,17 @@ $fn = @($ast.FindAll({
 }, $true))
 Assert-True ($fn.Count -eq 1) 'run_services.ps1 存在唯一的 Get-ServiceConfigPath'
 if ($fn.Count -eq 1) {
+    Assert-True ($fn[0].Extent.Text -notmatch 'Assert-NoDockerMysqlOwned') `
+        '整批配置生成不得为每个服务重复执行昂贵的 mysqld CIM 归属检查'
+}
+$mysqlOwnershipCalls = @($ast.FindAll({
+    param($n)
+    $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'Assert-NoDockerMysqlOwned'
+}, $true))
+Assert-True ($mysqlOwnershipCalls.Count -eq 2) `
+    'MySQL exact 归属只在脚本入口与整批依赖探活各复核一次'
+if ($fn.Count -eq 1) {
     Invoke-Expression $fn[0].Extent.Text
     function Assert-NoDockerMysqlOwned {}
     $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pandora-localinfra-conf-{0}" -f [guid]::NewGuid().ToString('N'))
@@ -299,8 +310,8 @@ if ($fn.Count -eq 1) {
     foreach ($file in $mysqlConfigs) {
         $sourceDsnCount += [regex]::Matches([IO.File]::ReadAllText($file.FullName), 'tcp\(127\.0\.0\.1:3307\)').Count
     }
-    Assert-True ($mysqlConfigs.Count -eq 13) '当前 13 份 MySQL dev 配置全部进入测试清单'
-    Assert-True ($sourceDsnCount -eq 14) '当前 14 条 MySQL DSN 全部进入测试清单(inventory 含两条)'
+    Assert-True ($mysqlConfigs.Count -eq 15) '当前 15 份 MySQL dev 配置全部进入测试清单'
+    Assert-True ($sourceDsnCount -eq 16) '当前 16 条 MySQL DSN 全部进入测试清单(inventory 含两条)'
 
     $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pandora-localinfra-all-conf-{0}" -f [guid]::NewGuid().ToString('N'))
     $ProjectRoot = $sandbox
@@ -325,7 +336,7 @@ if ($fn.Count -eq 1) {
             Assert-True ($text -notmatch 'tcp\(127\.0\.0\.1:3307\)') "$relative 无残留 3307 MySQL DSN"
             $renderedDsnCount += [regex]::Matches($text, 'tcp\(127\.0\.0\.1:13308\)').Count
         }
-        Assert-True ($renderedDsnCount -eq 14) '生成配置共 14 条 DSN 全部改到选中端口'
+        Assert-True ($renderedDsnCount -eq 16) '生成配置共 16 条 DSN 全部改到选中端口'
     } finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -428,7 +439,10 @@ $initExecAt = $migrateText.IndexOf('Invoke-DevMysqlScript -Path')
 Assert-True ($whatIfAt -ge 0 -and $initExecAt -gt $whatIfAt -and
     $migrateText.Substring($whatIfAt, $initExecAt - $whatIfAt) -match '\}\s*else\s*\{') 'WhatIfOnly 在 mysql-init 写入前分支，确实不执行 SQL'
 Assert-True ($migrateText -match '这些库将先由 mysql-init 创建、再执行迁移') 'WhatIfOnly 把 init 将新建的库计入预计迁移目标'
-Assert-True ($migrateText -match 'pandora-dev-migrate-\{0\}-\{1\}' -and $migrateText -match '\[guid\]::NewGuid') '迁移临时目录含 GUID，不同工作区同 PID 不会互相覆盖 DSN'
+Assert-True ($migrateText -match 'run/localinfra/tmp/dev-migrate' -and
+    $migrateText -match '"\{0\}-\{1\}"\s+-f\s+\$PID,\s*\[guid\]::NewGuid' -and
+    $migrateText -match 'Assert-PandoraOrchestrationLockHeld') `
+    '迁移 session 绑定当前工作区编排锁且含 GUID，不同工作区/同 PID 不会互相覆盖 DSN'
 Assert-True (([regex]::Matches(([IO.File]::ReadAllText($infraPath)), 'Get-MysqlListenerRecordsForProcess')).Count -ge 3) '无状态 down/status 也能从池外已归属 mysqld 恢复 listener 端口'
 Assert-True ($startText -match 'local_infra\.ps1"\s+-Action status[\s\S]*?\$LASTEXITCODE\s+-ne\s+0[\s\S]*?ShowStatusExitCode\s*=\s*1' -and
     $startText -match 'if\s*\(\$Status\)\s*\{\s*Show-Status;\s*exit\s+\$script:ShowStatusExitCode' -and

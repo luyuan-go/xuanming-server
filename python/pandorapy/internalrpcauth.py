@@ -375,6 +375,56 @@ class Verifier:
             raise ErrReplay("nonce already consumed")
 
 
+class MultiCallerVerifier:
+    """按已签名 caller 分派到独立 ``Verifier``，不共享调用方密钥。
+
+    caller 只用于选择候选 verifier；真正的 caller/audience/签名/载荷/重放校验
+    仍由该 verifier 完整执行。未知 caller 在触碰 replay store 之前拒绝。
+    """
+
+    __slots__ = ("_by_caller",)
+
+    def __init__(self, *verifiers: Verifier) -> None:
+        if not verifiers:
+            raise ValueError("internal RPC multi-caller verifier requires at least one verifier")
+        by_caller: dict[str, Verifier] = {}
+        for verifier in verifiers:
+            if verifier is None:
+                raise ValueError("internal RPC multi-caller verifier must not be None")
+            caller = verifier.caller
+            if caller in by_caller:
+                raise ValueError(f"internal RPC multi-caller duplicate caller: {caller}")
+            by_caller[caller] = verifier
+        self._by_caller = by_caller
+
+    @property
+    def callers(self) -> tuple[str, ...]:
+        return tuple(self._by_caller)
+
+    def _select(self, metadata: dict[str, str]) -> Verifier:
+        caller = metadata.get(CALLER_METADATA_KEY, "")
+        verifier = self._by_caller.get(caller)
+        if verifier is None:
+            raise ErrUnauthorized("unknown caller")
+        return verifier
+
+    async def verify(
+        self, metadata: dict[str, str], full_method: str, subject: int
+    ) -> None:
+        await self._select(metadata).verify(metadata, full_method, subject)
+
+    async def verify_with_payload(
+        self,
+        metadata: dict[str, str],
+        full_method: str,
+        subject: int,
+        payload: bytes,
+    ) -> None:
+        await self._select(metadata).verify_with_payload(
+            metadata, full_method, subject, payload
+        )
+
+
 def _valid_nonce(encoded: str) -> bool:
     if not encoded:
         return False

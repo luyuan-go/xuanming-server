@@ -238,6 +238,34 @@ func (m *MultiCallerVerifier) Verify(ctx context.Context, fullMethod string, sub
 	return v.Verify(ctx, fullMethod, subject)
 }
 
+// VerifyWithPayload routes to the independent verifier registered for the
+// signed caller, then verifies the exact canonical request payload. Unknown
+// callers and malformed caller metadata are rejected before any replay nonce
+// is consumed.
+func (m *MultiCallerVerifier) VerifyWithPayload(
+	ctx context.Context,
+	fullMethod string,
+	subject uint64,
+	payload []byte,
+) error {
+	if m == nil || len(m.byCaller) == 0 {
+		return ErrUnauthorized
+	}
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ErrUnauthorized
+	}
+	caller, ok := single(md, CallerMetadataKey)
+	if !ok {
+		return ErrUnauthorized
+	}
+	v, ok := m.byCaller[caller]
+	if !ok {
+		return ErrUnauthorized
+	}
+	return v.VerifyWithPayload(ctx, fullMethod, subject, payload)
+}
+
 // VerifyWithPayload verifies the request-bound service credential and consumes
 // its nonce only after the canonical payload digest also matches.
 func (v *Verifier) VerifyWithPayload(

@@ -3932,7 +3932,11 @@ function Resolve-Prerequisites([string]$mode) {
             Initialize-LocalEdgeBinding
             # local 与 k8s 互斥(两者都占宿主 8443):先用 k8s 自己的关闭流程停掉集群。
             # -Check 是干跑,不做任何停服副作用。
-            if (-not $Check) { Stop-K8sStackForLocal }
+            if (-not $Check -and (Test-PandoraShouldAutoStopK8sForLocal `
+                    -NoDocker ([bool]$NoDocker) `
+                    -PlannerFastStart ($env:PANDORA_PLANNER_FAST_START -ceq '1'))) {
+                Stop-K8sStackForLocal
+            }
             # Envoy 的 8443/8444 是 compose 发布的固定宿主端口,被占时 dev_up 只会抛一句
             # "port is already allocated",看不出是谁占的。提前点名省得来回猜。
             if (-not (Assert-LocalEdgePortsFree)) { $allOk = $false }
@@ -4237,6 +4241,17 @@ function Stop-K8sStackForLocal {
     Write-Ok "k8s 集群已停止(数据保留,下次 -Mode k8s 会自动起回来)。"
 }
 
+function Test-PandoraShouldAutoStopK8sForLocal {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][bool]$NoDocker,
+        [Parameter(Mandatory)][bool]$PlannerFastStart
+    )
+    # 策划链路的范围是本机原生基础设施，K8s 完全不动。若 8443/8444 被 K8s
+    # 或其它进程占用，后续 exact-listener 预检仍会 fail-closed，但不会替策划停集群。
+    return -not ($NoDocker -and $PlannerFastStart)
+}
+
 function Stop-LocalStackForK8s {
     # local 模式 = docker 基础设施(含 pandora-envoy 占 8443)+ 宿主 go 进程(占 20001-20022)。
     # 用 local 自己的关闭流程停干净;没起过时这步是空跑。
@@ -4257,8 +4272,13 @@ function Invoke-Local {
         return
     }
     if ($NoDocker) {
-        Write-Step "local 模式(免 Docker):基础设施(本机原生进程) + 22 个 go 服务(宿主进程)"
-        Write-Info "MySQL/Redis/Kafka/Envoy 走免安装二进制;不装 Docker Desktop、不起 TiDB。"
+        if ($env:PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL -eq '1') {
+            Write-Step "local 模式(策划远端数据库):本机 Redis/Kafka/Envoy + 22 个业务服务"
+            Write-Info "数据库强制 central-managed；本机不下载、启动、停止或重置 MySQL。"
+        } else {
+            Write-Step "local 模式(免 Docker):基础设施(本机原生进程) + 22 个 go 服务(宿主进程)"
+            Write-Info "MySQL/Redis/Kafka/Envoy 走免安装二进制;不装 Docker Desktop、不起 TiDB。"
+        }
     } else {
         Write-Step "local 模式:基础设施(docker) + 22 个 go 服务(宿主进程)"
         Write-Info "策划本地联调用这个;服务可在 VS Code 断点调试。"
@@ -4282,7 +4302,8 @@ function Invoke-Local {
         }
     }
 
-    & "$ScriptDir/dev_all.ps1" -NoDocker:$NoDocker -ConfigTableChanged:$script:ConfigTableChanged
+    & "$ScriptDir/dev_all.ps1" -NoDocker:$NoDocker -ConfigTableChanged:$script:ConfigTableChanged `
+        -GenerateTables:($NoDocker -and $env:PANDORA_PLANNER_FAST_START -ceq '1' -and $GenTables)
     # dev_all.ps1 每一步失败都会 exit 1,但 `&` 调子脚本**不会**让本脚本失败 —— 不透传的话
     # start.ps1 走完 switch 就正常结束,双击窗口 / Web 管理台拿到的是「完成(退出码 0)」,
     # 而基础设施其实压根没起来(2026-08-12 现场:另一台机器缺 dev.env,[1/4] 就断了,外层照报 0)。
@@ -4820,7 +4841,51 @@ function Invoke-Docker {
 #   - DS 面 8444 未鉴权,默认仍固定在 127.0.0.1(admin 9901 也只绑本机)
 #   - 内网其它机器可直接连本机内网 IP
 #   - 打印内网访问地址,客户端把后端指向 <内网IP>:<port> 即可
+function ConvertFrom-PandoraRoutePrintDefaultIPv4 {
+    [CmdletBinding()]
+    param([AllowEmptyCollection()][string[]]$Lines)
+
+    $candidates = [Collections.Generic.List[object]]::new()
+    foreach ($line in @($Lines)) {
+        if ("$line" -notmatch '^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+\S+\s+(?<interface>(?:\d{1,3}\.){3}\d{1,3})\s+(?<metric>\d+)\s*$') {
+            continue
+        }
+        $address = $null
+        $metric = 0
+        if (-not [Net.IPAddress]::TryParse($Matches.interface, [ref]$address) -or
+            $address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+            -not [int]::TryParse($Matches.metric, [ref]$metric)) { continue }
+        $bytes = $address.GetAddressBytes()
+        if ([Net.IPAddress]::IsLoopback($address) -or $bytes[0] -eq 0 -or
+            ($bytes[0] -eq 169 -and $bytes[1] -eq 254)) { continue }
+        $candidates.Add([pscustomobject]@{ Address = $address.ToString(); Metric = $metric })
+    }
+    $best = @($candidates | Sort-Object Metric, Address | Select-Object -First 1)
+    if ($best.Count -eq 0) { return '' }
+    return [string]$best[0].Address
+}
+
+function Invoke-PandoraRoutePrintIPv4 {
+    $systemDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+    $routeExe = Join-Path $systemDirectory 'route.exe'
+    if (-not (Test-Path -LiteralPath $routeExe -PathType Leaf)) {
+        return [pscustomobject]@{ ExitCode = -1; Lines = @() }
+    }
+    $lines = @(& $routeExe PRINT -4 0.0.0.0 2>$null)
+    return [pscustomobject]@{ ExitCode = [int]$LASTEXITCODE; Lines = $lines }
+}
+
 function Resolve-LanIp {
+    # route.exe 是 Windows 自带的单进程快照，不会触发 NetTCPIP PowerShell 模块的
+    # 冷启动加载。输出失败/异常时仍回退原精确路径，不把未知当成网络可用。
+    try {
+        $routeSnapshot = Invoke-PandoraRoutePrintIPv4
+        if ($routeSnapshot -and [int]$routeSnapshot.ExitCode -eq 0) {
+            $routeAddress = ConvertFrom-PandoraRoutePrintDefaultIPv4 -Lines @($routeSnapshot.Lines)
+            if (-not [string]::IsNullOrWhiteSpace($routeAddress)) { return $routeAddress }
+        }
+    } catch { }
+
     # 取本机对外那张网卡的 IPv4。关键:按默认路由(0.0.0.0/0)选网卡,
     # 避开 Docker/WSL/Hyper-V 虚拟网卡的 172.*/10.*/192.168.* 地址——否则内网客户端拿到不可达地址。
     $isUsable = { $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.PrefixOrigin -ne 'WellKnown' }
@@ -7772,7 +7837,29 @@ function Show-Status {
 # ===== 主流程 =====
 $plannerTimingEnabled = $Mode -ceq 'local' -and $NoDocker -and
     $env:PANDORA_PLANNER_FAST_START -ceq '1' -and -not $Down -and -not $Status -and -not $Check -and -not $BuildOnly
-Start-PandoraPlannerTimingSession -Enabled $plannerTimingEnabled
+$plannerBootstrapMeasured = $plannerTimingEnabled -and $env:PANDORA_PWSH_BOOTSTRAP_MS -match '^\d+$'
+$plannerBootstrapMilliseconds = if ($plannerBootstrapMeasured) {
+    [int64]$env:PANDORA_PWSH_BOOTSTRAP_MS
+} else { [int64]0 }
+$plannerEntryMilliseconds = $plannerBootstrapMilliseconds
+if ($plannerTimingEnabled -and $env:PANDORA_CMD_STARTED_CS -match '^\d+$') {
+    $plannerNowCentiseconds = [int64][Math]::Floor([DateTime]::Now.TimeOfDay.TotalMilliseconds / 10.0)
+    $plannerEntryCentiseconds = $plannerNowCentiseconds - [int64]$env:PANDORA_CMD_STARTED_CS
+    if ($plannerEntryCentiseconds -lt 0) { $plannerEntryCentiseconds += [int64]8640000 }
+    $plannerEntryMilliseconds = [Math]::Max($plannerBootstrapMilliseconds, $plannerEntryCentiseconds * 10)
+}
+# CMD 开始时刻在 pwsh 进程诞生前；把 session 起点回拨，保证“总计”
+# 同时包含自举、pwsh 进程创建、start.ps1 解析和前置点源。
+$plannerTimingStartedAt = [Environment]::TickCount64 - $plannerEntryMilliseconds
+Start-PandoraPlannerTimingSession -Enabled $plannerTimingEnabled -StartedAtMilliseconds $plannerTimingStartedAt
+if ($plannerBootstrapMeasured) {
+    Add-PandoraPlannerTiming -Name 'PowerShell 自举' `
+        -ElapsedMilliseconds $plannerBootstrapMilliseconds
+}
+if ($plannerTimingEnabled -and $env:PANDORA_CMD_STARTED_CS -match '^\d+$') {
+    Add-PandoraPlannerTiming -Name 'PowerShell 启动/脚本装载' `
+        -ElapsedMilliseconds ([Math]::Max([int64]0, $plannerEntryMilliseconds - $plannerBootstrapMilliseconds))
+}
 $orchestrationLockEntered = $false
 try {
 if ($Mode -ne 'online' -and -not $Status -and -not $Check -and -not $BuildOnly) {
@@ -7787,12 +7874,13 @@ Write-Host "============================================" -ForegroundColor Magen
 
 if ($Status) { Show-Status; exit $script:ShowStatusExitCode }
 
-# -GenTables:先把策划 xlsx 导成服务端配置表。必须排在起服务 / 重启服务之前 —— 读表的
-# go 服务是在进程启动时从 configtable/dist 加载的,表还没生成就把服务起起来,读到的是上一批。
-# 导表失败会直接 exit(见 Invoke-ConfigTableGen:改表就是为了测它,用旧表跑更难查)。
+# -GenTables:普通入口先把策划 xlsx 导成服务端配置表。策划 NoDocker fast 入口会把导表
+# 下沉到 dev_all 的并行准备批次，与 staging build/基础设施重叠；业务发布和启动仍严格等待
+# 导表成功，绝不会让读表服务加载上一批。
 # -Down / -Check 是停机和干跑,导表对它们没有意义。
 $script:ConfigTableChanged = $false
-if ($GenTables -and -not $Down -and -not $Check) {
+$deferPlannerTableGeneration = $plannerTimingEnabled -and $GenTables -and -not $Down -and -not $Check
+if ($GenTables -and -not $Down -and -not $Check -and -not $deferPlannerTableGeneration) {
     $script:ConfigTableChanged = Invoke-PandoraPlannerTimedStep -Name '导表' -Action {
         Invoke-ConfigTableGen
     }
@@ -7807,8 +7895,15 @@ if ($GenTables -and -not $Down -and -not $Check) {
 $script:DsOnlyExitCode = 0
 if ($DsOnly -and (Invoke-LocalDsOnly)) { exit $script:DsOnlyExitCode }
 
-$prereqOk = Invoke-PandoraPlannerTimedStep -Name '环境检查' -Action {
-    Resolve-Prerequisites $Mode
+$prereqWatch = [Diagnostics.Stopwatch]::StartNew()
+$prereqStatus = '失败'
+try {
+    $prereqOk = Resolve-Prerequisites $Mode
+    if ($prereqOk) { $prereqStatus = '完成' }
+} finally {
+    $prereqWatch.Stop()
+    Add-PandoraPlannerTiming -Name '环境检查' `
+        -ElapsedMilliseconds $prereqWatch.ElapsedMilliseconds -Status $prereqStatus
 }
 
 if ($Check) {

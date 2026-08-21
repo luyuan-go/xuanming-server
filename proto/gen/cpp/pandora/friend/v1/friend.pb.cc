@@ -1645,11 +1645,11 @@ constexpr FriendRequestInfo::ParseTableT_ FriendRequestInfo::InternalGeneratePar
     {
       PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_._has_bits_),
       0, // no _extensions_
-      4, 24,  // max_field_number, fast_idx_mask
+      5, 56,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967280,  // skipmap
+      4294967264,  // skipmap
       offsetof(ParseTableT_, field_entries),
-      4,  // num_field_entries
+      5,  // num_field_entries
       0,  // num_aux_entries
       offsetof(ParseTableT_, field_names),  // no aux_entries
       class_data,
@@ -1659,10 +1659,7 @@ constexpr FriendRequestInfo::ParseTableT_ FriendRequestInfo::InternalGeneratePar
       ::_pbi::TcParser::GetTable<::pandora::friend_::v1::FriendRequestInfo>(),  // to_prefetch
       #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
     }, {{
-      // int64 created_ms = 4 [json_name = "createdMs"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(FriendRequestInfo, _impl_.created_ms_), 3>(),
-       {32, 3, 0,
-        PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.created_ms_)}},
+      {::_pbi::TcParser::MiniParse, {}},
       // uint64 request_id = 1 [json_name = "requestId"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(FriendRequestInfo, _impl_.request_id_), 1>(),
        {8, 1, 0,
@@ -1675,6 +1672,16 @@ constexpr FriendRequestInfo::ParseTableT_ FriendRequestInfo::InternalGeneratePar
       {::_pbi::TcParser::FastUS1,
        {26, 0, 0,
         PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.from_nickname_)}},
+      // int64 created_ms = 4 [json_name = "createdMs"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(FriendRequestInfo, _impl_.created_ms_), 3>(),
+       {32, 3, 0,
+        PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.created_ms_)}},
+      // uint64 from_player_no = 5 [json_name = "fromPlayerNo"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(FriendRequestInfo, _impl_.from_player_no_), 4>(),
+       {40, 4, 0,
+        PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.from_player_no_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
     }}, {{
       65535, 65535
     }}, {{
@@ -1686,6 +1693,8 @@ constexpr FriendRequestInfo::ParseTableT_ FriendRequestInfo::InternalGeneratePar
       {PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.from_nickname_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUtf8String | ::_fl::kRepAString)},
       // int64 created_ms = 4 [json_name = "createdMs"];
       {PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.created_ms_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // uint64 from_player_no = 5 [json_name = "fromPlayerNo"];
+      {PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.from_player_no_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
     }},
     // no aux_entries
     {{
@@ -1706,7 +1715,8 @@ inline constexpr FriendRequestInfo::Impl_::Impl_(
             ::_pbi::ConstantInitialized()),
         request_id_{::uint64_t{0u}},
         from_player_id_{::uint64_t{0u}},
-        created_ms_{::int64_t{0}} {}
+        created_ms_{::int64_t{0}},
+        from_player_no_{::uint64_t{0u}} {}
 
 template <typename>
 constexpr FriendRequestInfo::FriendRequestInfo(::_pbi::ConstantInitialized,
@@ -3852,15 +3862,17 @@ const ::uint32_t
         0,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::friend_::v1::FriendRequestInfo, _impl_._has_bits_),
-        7, // hasbit index offset
+        8, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::friend_::v1::FriendRequestInfo, _impl_.request_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::friend_::v1::FriendRequestInfo, _impl_.from_player_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::friend_::v1::FriendRequestInfo, _impl_.from_nickname_),
         PROTOBUF_FIELD_OFFSET(::pandora::friend_::v1::FriendRequestInfo, _impl_.created_ms_),
+        PROTOBUF_FIELD_OFFSET(::pandora::friend_::v1::FriendRequestInfo, _impl_.from_player_no_),
         1,
         2,
         0,
         3,
+        4,
         0x000, // bitmap
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::friend_::v1::ListFriendRequestsResponse, _impl_._has_bits_),
@@ -3976,23 +3988,23 @@ static const ::_pbi::MigrationSchema
         {35, sizeof(::pandora::friend_::v1::RejectFriendRequest)},
         {40, sizeof(::pandora::friend_::v1::RejectFriendResponse)},
         {45, sizeof(::pandora::friend_::v1::FriendRequestInfo)},
-        {56, sizeof(::pandora::friend_::v1::ListFriendRequestsRequest)},
-        {57, sizeof(::pandora::friend_::v1::ListFriendRequestsResponse)},
-        {64, sizeof(::pandora::friend_::v1::ListFriendsRequest)},
-        {65, sizeof(::pandora::friend_::v1::ListFriendsResponse)},
-        {72, sizeof(::pandora::friend_::v1::RemoveFriendRequest)},
-        {77, sizeof(::pandora::friend_::v1::RemoveFriendResponse)},
-        {82, sizeof(::pandora::friend_::v1::BlockRequest)},
-        {87, sizeof(::pandora::friend_::v1::BlockResponse)},
-        {92, sizeof(::pandora::friend_::v1::UnblockRequest)},
-        {97, sizeof(::pandora::friend_::v1::UnblockResponse)},
-        {102, sizeof(::pandora::friend_::v1::BlockInfo)},
-        {111, sizeof(::pandora::friend_::v1::ListBlocksRequest)},
-        {112, sizeof(::pandora::friend_::v1::ListBlocksResponse)},
-        {119, sizeof(::pandora::friend_::v1::RecommendedFriendInfo)},
-        {132, sizeof(::pandora::friend_::v1::RecommendFriendsRequest)},
-        {139, sizeof(::pandora::friend_::v1::RecommendFriendsResponse)},
-        {146, sizeof(::pandora::friend_::v1::FriendEvent)},
+        {58, sizeof(::pandora::friend_::v1::ListFriendRequestsRequest)},
+        {59, sizeof(::pandora::friend_::v1::ListFriendRequestsResponse)},
+        {66, sizeof(::pandora::friend_::v1::ListFriendsRequest)},
+        {67, sizeof(::pandora::friend_::v1::ListFriendsResponse)},
+        {74, sizeof(::pandora::friend_::v1::RemoveFriendRequest)},
+        {79, sizeof(::pandora::friend_::v1::RemoveFriendResponse)},
+        {84, sizeof(::pandora::friend_::v1::BlockRequest)},
+        {89, sizeof(::pandora::friend_::v1::BlockResponse)},
+        {94, sizeof(::pandora::friend_::v1::UnblockRequest)},
+        {99, sizeof(::pandora::friend_::v1::UnblockResponse)},
+        {104, sizeof(::pandora::friend_::v1::BlockInfo)},
+        {113, sizeof(::pandora::friend_::v1::ListBlocksRequest)},
+        {114, sizeof(::pandora::friend_::v1::ListBlocksResponse)},
+        {121, sizeof(::pandora::friend_::v1::RecommendedFriendInfo)},
+        {134, sizeof(::pandora::friend_::v1::RecommendFriendsRequest)},
+        {141, sizeof(::pandora::friend_::v1::RecommendFriendsResponse)},
+        {148, sizeof(::pandora::friend_::v1::FriendEvent)},
 };
 static const ::_pbi::MessageGlobalsBase* PROTOBUF_NONNULL const
     file_message_globals[] = {
@@ -4041,89 +4053,90 @@ const char descriptor_table_protodef_pandora_2ffriend_2fv1_2ffriend_2eproto[] AB
     "deR\004code\"E\n\023RejectFriendRequest\022\035\n\nreque"
     "st_id\030\002 \001(\004R\trequestIdJ\004\010\001\020\002R\tplayer_id\""
     "F\n\024RejectFriendResponse\022.\n\004code\030\001 \001(\0162\032."
-    "pandora.common.v1.ErrCodeR\004code\"\234\001\n\021Frie"
+    "pandora.common.v1.ErrCodeR\004code\"\302\001\n\021Frie"
     "ndRequestInfo\022\035\n\nrequest_id\030\001 \001(\004R\treque"
     "stId\022$\n\016from_player_id\030\002 \001(\004R\014fromPlayer"
     "Id\022#\n\rfrom_nickname\030\003 \001(\tR\014fromNickname\022"
-    "\035\n\ncreated_ms\030\004 \001(\003R\tcreatedMs\",\n\031ListFr"
-    "iendRequestsRequestJ\004\010\001\020\002R\tplayer_id\"\216\001\n"
-    "\032ListFriendRequestsResponse\022.\n\004code\030\001 \001("
-    "\0162\032.pandora.common.v1.ErrCodeR\004code\022@\n\010r"
-    "equests\030\002 \003(\0132$.pandora.friend.v1.Friend"
-    "RequestInfoR\010requests\"%\n\022ListFriendsRequ"
-    "estJ\004\010\001\020\002R\tplayer_id\"~\n\023ListFriendsRespo"
-    "nse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.Er"
-    "rCodeR\004code\0227\n\007friends\030\002 \003(\0132\035.pandora.f"
-    "riend.v1.FriendInfoR\007friends\"P\n\023RemoveFr"
-    "iendRequest\022(\n\020target_player_id\030\002 \001(\004R\016t"
-    "argetPlayerIdJ\004\010\001\020\002R\tplayer_id\"F\n\024Remove"
-    "FriendResponse\022.\n\004code\030\001 \001(\0162\032.pandora.c"
-    "ommon.v1.ErrCodeR\004code\"I\n\014BlockRequest\022("
-    "\n\020target_player_id\030\002 \001(\004R\016targetPlayerId"
-    "J\004\010\001\020\002R\tplayer_id\"\?\n\rBlockResponse\022.\n\004co"
-    "de\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004co"
-    "de\"K\n\016UnblockRequest\022(\n\020target_player_id"
-    "\030\002 \001(\004R\016targetPlayerIdJ\004\010\001\020\002R\tplayer_id\""
-    "A\n\017UnblockResponse\022.\n\004code\030\001 \001(\0162\032.pando"
-    "ra.common.v1.ErrCodeR\004code\"_\n\tBlockInfo\022"
-    "\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\032\n\010nickname"
-    "\030\002 \001(\tR\010nickname\022\031\n\010since_ms\030\003 \001(\003R\007sinc"
-    "eMs\"$\n\021ListBlocksRequestJ\004\010\001\020\002R\tplayer_i"
-    "d\"z\n\022ListBlocksResponse\022.\n\004code\030\001 \001(\0162\032."
-    "pandora.common.v1.ErrCodeR\004code\0224\n\006block"
-    "s\030\002 \003(\0132\034.pandora.friend.v1.BlockInfoR\006b"
-    "locks\"\277\001\n\025RecommendedFriendInfo\022\033\n\tplaye"
-    "r_id\030\001 \001(\004R\010playerId\022\032\n\010nickname\030\002 \001(\tR\010"
-    "nickname\022\033\n\tis_online\030\003 \001(\010R\010isOnline\022 \n"
-    "\014last_seen_ms\030\004 \001(\003R\nlastSeenMs\022.\n\023mutua"
-    "l_friend_count\030\005 \001(\rR\021mutualFriendCount\""
-    "n\n\027RecommendFriendsRequest\022\024\n\005limit\030\002 \001("
-    "\rR\005limit\022,\n\022exclude_player_ids\030\003 \003(\004R\020ex"
-    "cludePlayerIdsJ\004\010\001\020\002R\tplayer_id\"\236\001\n\030Reco"
-    "mmendFriendsResponse\022.\n\004code\030\001 \001(\0162\032.pan"
-    "dora.common.v1.ErrCodeR\004code\022R\n\017recommen"
-    "dations\030\002 \003(\0132(.pandora.friend.v1.Recomm"
-    "endedFriendInfoR\017recommendations\"\303\001\n\013Fri"
-    "endEvent\022 \n\014by_player_id\030\001 \001(\004R\nbyPlayer"
-    "Id\022 \n\014to_player_id\030\002 \001(\004R\ntoPlayerId\022\035\n\n"
-    "request_id\030\003 \001(\004R\trequestId\022<\n\006reason\030\004 "
-    "\001(\0162$.pandora.friend.v1.FriendEventReaso"
-    "nR\006reason\022\023\n\005ts_ms\030\005 \001(\003R\004tsMs*\312\001\n\023Frien"
-    "dRequestStatus\022%\n!FRIEND_REQUEST_STATUS_"
-    "UNSPECIFIED\020\000\022!\n\035FRIEND_REQUEST_STATUS_P"
-    "ENDING\020\001\022\"\n\036FRIEND_REQUEST_STATUS_ACCEPT"
-    "ED\020\002\022\"\n\036FRIEND_REQUEST_STATUS_REJECTED\020\003"
-    "\022!\n\035FRIEND_REQUEST_STATUS_EXPIRED\020\004*=\n\023F"
-    "riendPushEventType\022&\n\"FRIEND_PUSH_EVENT_"
-    "TYPE_UNSPECIFIED\020\000*\214\001\n\021FriendEventReason"
-    "\022#\n\037FRIEND_EVENT_REASON_UNSPECIFIED\020\000\022(\n"
-    "$FRIEND_EVENT_REASON_REQUEST_RECEIVED\020\001\022"
-    "(\n$FRIEND_EVENT_REASON_REQUEST_ACCEPTED\020"
-    "\0022\301\007\n\rFriendService\022V\n\tAddFriend\022#.pando"
-    "ra.friend.v1.AddFriendRequest\032$.pandora."
-    "friend.v1.AddFriendResponse\022_\n\014AcceptFri"
-    "end\022&.pandora.friend.v1.AcceptFriendRequ"
-    "est\032\'.pandora.friend.v1.AcceptFriendResp"
-    "onse\022_\n\014RejectFriend\022&.pandora.friend.v1"
-    ".RejectFriendRequest\032\'.pandora.friend.v1"
-    ".RejectFriendResponse\022q\n\022ListFriendReque"
-    "sts\022,.pandora.friend.v1.ListFriendReques"
-    "tsRequest\032-.pandora.friend.v1.ListFriend"
-    "RequestsResponse\022\\\n\013ListFriends\022%.pandor"
-    "a.friend.v1.ListFriendsRequest\032&.pandora"
-    ".friend.v1.ListFriendsResponse\022_\n\014Remove"
-    "Friend\022&.pandora.friend.v1.RemoveFriendR"
-    "equest\032\'.pandora.friend.v1.RemoveFriendR"
-    "esponse\022J\n\005Block\022\037.pandora.friend.v1.Blo"
-    "ckRequest\032 .pandora.friend.v1.BlockRespo"
-    "nse\022P\n\007Unblock\022!.pandora.friend.v1.Unblo"
-    "ckRequest\032\".pandora.friend.v1.UnblockRes"
-    "ponse\022Y\n\nListBlocks\022$.pandora.friend.v1."
-    "ListBlocksRequest\032%.pandora.friend.v1.Li"
-    "stBlocksResponse\022k\n\020RecommendFriends\022*.p"
-    "andora.friend.v1.RecommendFriendsRequest"
-    "\032+.pandora.friend.v1.RecommendFriendsRes"
-    "ponseb\006proto3"
+    "\035\n\ncreated_ms\030\004 \001(\003R\tcreatedMs\022$\n\016from_p"
+    "layer_no\030\005 \001(\004R\014fromPlayerNo\",\n\031ListFrie"
+    "ndRequestsRequestJ\004\010\001\020\002R\tplayer_id\"\216\001\n\032L"
+    "istFriendRequestsResponse\022.\n\004code\030\001 \001(\0162"
+    "\032.pandora.common.v1.ErrCodeR\004code\022@\n\010req"
+    "uests\030\002 \003(\0132$.pandora.friend.v1.FriendRe"
+    "questInfoR\010requests\"%\n\022ListFriendsReques"
+    "tJ\004\010\001\020\002R\tplayer_id\"~\n\023ListFriendsRespons"
+    "e\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrC"
+    "odeR\004code\0227\n\007friends\030\002 \003(\0132\035.pandora.fri"
+    "end.v1.FriendInfoR\007friends\"P\n\023RemoveFrie"
+    "ndRequest\022(\n\020target_player_id\030\002 \001(\004R\016tar"
+    "getPlayerIdJ\004\010\001\020\002R\tplayer_id\"F\n\024RemoveFr"
+    "iendResponse\022.\n\004code\030\001 \001(\0162\032.pandora.com"
+    "mon.v1.ErrCodeR\004code\"I\n\014BlockRequest\022(\n\020"
+    "target_player_id\030\002 \001(\004R\016targetPlayerIdJ\004"
+    "\010\001\020\002R\tplayer_id\"\?\n\rBlockResponse\022.\n\004code"
+    "\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004code"
+    "\"K\n\016UnblockRequest\022(\n\020target_player_id\030\002"
+    " \001(\004R\016targetPlayerIdJ\004\010\001\020\002R\tplayer_id\"A\n"
+    "\017UnblockResponse\022.\n\004code\030\001 \001(\0162\032.pandora"
+    ".common.v1.ErrCodeR\004code\"_\n\tBlockInfo\022\033\n"
+    "\tplayer_id\030\001 \001(\004R\010playerId\022\032\n\010nickname\030\002"
+    " \001(\tR\010nickname\022\031\n\010since_ms\030\003 \001(\003R\007sinceM"
+    "s\"$\n\021ListBlocksRequestJ\004\010\001\020\002R\tplayer_id\""
+    "z\n\022ListBlocksResponse\022.\n\004code\030\001 \001(\0162\032.pa"
+    "ndora.common.v1.ErrCodeR\004code\0224\n\006blocks\030"
+    "\002 \003(\0132\034.pandora.friend.v1.BlockInfoR\006blo"
+    "cks\"\277\001\n\025RecommendedFriendInfo\022\033\n\tplayer_"
+    "id\030\001 \001(\004R\010playerId\022\032\n\010nickname\030\002 \001(\tR\010ni"
+    "ckname\022\033\n\tis_online\030\003 \001(\010R\010isOnline\022 \n\014l"
+    "ast_seen_ms\030\004 \001(\003R\nlastSeenMs\022.\n\023mutual_"
+    "friend_count\030\005 \001(\rR\021mutualFriendCount\"n\n"
+    "\027RecommendFriendsRequest\022\024\n\005limit\030\002 \001(\rR"
+    "\005limit\022,\n\022exclude_player_ids\030\003 \003(\004R\020excl"
+    "udePlayerIdsJ\004\010\001\020\002R\tplayer_id\"\236\001\n\030Recomm"
+    "endFriendsResponse\022.\n\004code\030\001 \001(\0162\032.pando"
+    "ra.common.v1.ErrCodeR\004code\022R\n\017recommenda"
+    "tions\030\002 \003(\0132(.pandora.friend.v1.Recommen"
+    "dedFriendInfoR\017recommendations\"\303\001\n\013Frien"
+    "dEvent\022 \n\014by_player_id\030\001 \001(\004R\nbyPlayerId"
+    "\022 \n\014to_player_id\030\002 \001(\004R\ntoPlayerId\022\035\n\nre"
+    "quest_id\030\003 \001(\004R\trequestId\022<\n\006reason\030\004 \001("
+    "\0162$.pandora.friend.v1.FriendEventReasonR"
+    "\006reason\022\023\n\005ts_ms\030\005 \001(\003R\004tsMs*\312\001\n\023FriendR"
+    "equestStatus\022%\n!FRIEND_REQUEST_STATUS_UN"
+    "SPECIFIED\020\000\022!\n\035FRIEND_REQUEST_STATUS_PEN"
+    "DING\020\001\022\"\n\036FRIEND_REQUEST_STATUS_ACCEPTED"
+    "\020\002\022\"\n\036FRIEND_REQUEST_STATUS_REJECTED\020\003\022!"
+    "\n\035FRIEND_REQUEST_STATUS_EXPIRED\020\004*=\n\023Fri"
+    "endPushEventType\022&\n\"FRIEND_PUSH_EVENT_TY"
+    "PE_UNSPECIFIED\020\000*\214\001\n\021FriendEventReason\022#"
+    "\n\037FRIEND_EVENT_REASON_UNSPECIFIED\020\000\022(\n$F"
+    "RIEND_EVENT_REASON_REQUEST_RECEIVED\020\001\022(\n"
+    "$FRIEND_EVENT_REASON_REQUEST_ACCEPTED\020\0022"
+    "\301\007\n\rFriendService\022V\n\tAddFriend\022#.pandora"
+    ".friend.v1.AddFriendRequest\032$.pandora.fr"
+    "iend.v1.AddFriendResponse\022_\n\014AcceptFrien"
+    "d\022&.pandora.friend.v1.AcceptFriendReques"
+    "t\032\'.pandora.friend.v1.AcceptFriendRespon"
+    "se\022_\n\014RejectFriend\022&.pandora.friend.v1.R"
+    "ejectFriendRequest\032\'.pandora.friend.v1.R"
+    "ejectFriendResponse\022q\n\022ListFriendRequest"
+    "s\022,.pandora.friend.v1.ListFriendRequests"
+    "Request\032-.pandora.friend.v1.ListFriendRe"
+    "questsResponse\022\\\n\013ListFriends\022%.pandora."
+    "friend.v1.ListFriendsRequest\032&.pandora.f"
+    "riend.v1.ListFriendsResponse\022_\n\014RemoveFr"
+    "iend\022&.pandora.friend.v1.RemoveFriendReq"
+    "uest\032\'.pandora.friend.v1.RemoveFriendRes"
+    "ponse\022J\n\005Block\022\037.pandora.friend.v1.Block"
+    "Request\032 .pandora.friend.v1.BlockRespons"
+    "e\022P\n\007Unblock\022!.pandora.friend.v1.Unblock"
+    "Request\032\".pandora.friend.v1.UnblockRespo"
+    "nse\022Y\n\nListBlocks\022$.pandora.friend.v1.Li"
+    "stBlocksRequest\032%.pandora.friend.v1.List"
+    "BlocksResponse\022k\n\020RecommendFriends\022*.pan"
+    "dora.friend.v1.RecommendFriendsRequest\032+"
+    ".pandora.friend.v1.RecommendFriendsRespo"
+    "nseb\006proto3"
 };
 static const ::_pbi::DescriptorTable* PROTOBUF_NONNULL const
     descriptor_table_pandora_2ffriend_2fv1_2ffriend_2eproto_deps[1] = {
@@ -4133,7 +4146,7 @@ static ::absl::once_flag descriptor_table_pandora_2ffriend_2fv1_2ffriend_2eproto
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_pandora_2ffriend_2fv1_2ffriend_2eproto = {
     false,
     false,
-    3973,
+    4011,
     descriptor_table_protodef_pandora_2ffriend_2fv1_2ffriend_2eproto,
     "pandora/friend/v1/friend.proto",
     &descriptor_table_pandora_2ffriend_2fv1_2ffriend_2eproto_once,
@@ -5704,9 +5717,9 @@ FriendRequestInfo::FriendRequestInfo(
                offsetof(Impl_, request_id_),
            reinterpret_cast<const char*>(&from._impl_) +
                offsetof(Impl_, request_id_),
-           offsetof(Impl_, created_ms_) -
+           offsetof(Impl_, from_player_no_) -
                offsetof(Impl_, request_id_) +
-               sizeof(Impl_::created_ms_));
+               sizeof(Impl_::from_player_no_));
 
   // @@protoc_insertion_point(copy_constructor:pandora.friend.v1.FriendRequestInfo)
 }
@@ -5721,9 +5734,9 @@ inline void FriendRequestInfo::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena)
   ::memset(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, request_id_),
            0,
-           offsetof(Impl_, created_ms_) -
+           offsetof(Impl_, from_player_no_) -
                offsetof(Impl_, request_id_) +
-               sizeof(Impl_::created_ms_));
+               sizeof(Impl_::from_player_no_));
 }
 FriendRequestInfo::~FriendRequestInfo() {
   // @@protoc_insertion_point(destructor:pandora.friend.v1.FriendRequestInfo)
@@ -5777,10 +5790,10 @@ PROTOBUF_NOINLINE void FriendRequestInfo::Clear() {
   if (CheckHasBit(cached_has_bits, 0x00000001U)) {
     _impl_.from_nickname_.ClearNonDefaultToEmpty();
   }
-  if (BatchCheckHasBit(cached_has_bits, 0x0000000eU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001eU)) {
     ::memset(&_impl_.request_id_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.created_ms_) -
-        reinterpret_cast<char*>(&_impl_.request_id_)) + sizeof(_impl_.created_ms_));
+        reinterpret_cast<char*>(&_impl_.from_player_no_) -
+        reinterpret_cast<char*>(&_impl_.request_id_)) + sizeof(_impl_.from_player_no_));
   }
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
@@ -5842,6 +5855,15 @@ PROTOBUF_NOINLINE void FriendRequestInfo::Clear() {
     }
   }
 
+  // uint64 from_player_no = 5 [json_name = "fromPlayerNo"];
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (this_._internal_from_player_no() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          5, this_._internal_from_player_no(), target);
+    }
+  }
+
   if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
     target =
         ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
@@ -5867,7 +5889,7 @@ PROTOBUF_NOINLINE void FriendRequestInfo::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000000fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
     // string from_nickname = 3 [json_name = "fromNickname"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (!this_._internal_from_nickname().empty()) {
@@ -5896,6 +5918,13 @@ PROTOBUF_NOINLINE void FriendRequestInfo::Clear() {
             this_._internal_created_ms());
       }
     }
+    // uint64 from_player_no = 5 [json_name = "fromPlayerNo"];
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (this_._internal_from_player_no() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
+            this_._internal_from_player_no());
+      }
+    }
   }
   return this_.MaybeComputeUnknownFieldsSize(total_size,
                                              &this_._impl_._cached_size_);
@@ -5914,7 +5943,7 @@ void FriendRequestInfo::MergeImpl(::google::protobuf::MessageLite& to_msg,
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000000fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (!from._internal_from_nickname().empty()) {
         _this->_internal_set_from_nickname(from._internal_from_nickname());
@@ -5939,6 +5968,11 @@ void FriendRequestInfo::MergeImpl(::google::protobuf::MessageLite& to_msg,
         _this->_impl_.created_ms_ = from._impl_.created_ms_;
       }
     }
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (from._internal_from_player_no() != 0) {
+        _this->_impl_.from_player_no_ = from._impl_.from_player_no_;
+      }
+    }
   }
   _this->_impl_._has_bits_[0] |= cached_has_bits;
   _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
@@ -5961,8 +5995,8 @@ void FriendRequestInfo::InternalSwap(FriendRequestInfo* PROTOBUF_RESTRICT PROTOB
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.from_nickname_, &other->_impl_.from_nickname_, arena);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.created_ms_)
-      + sizeof(FriendRequestInfo::_impl_.created_ms_)
+      PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.from_player_no_)
+      + sizeof(FriendRequestInfo::_impl_.from_player_no_)
       - PROTOBUF_FIELD_OFFSET(FriendRequestInfo, _impl_.request_id_)>(
           reinterpret_cast<char*>(&_impl_.request_id_),
           reinterpret_cast<char*>(&other->_impl_.request_id_));

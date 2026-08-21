@@ -25,6 +25,7 @@ import time
 from pandora.inventory.v1 import inventory_pb2 as inv_pb
 from pandora.player.v1 import player_pb2 as ppb
 
+from pandorapy import cellroute
 from pandorapy import dbguard
 from pandorapy import errcode
 from pandorapy import log as plog
@@ -119,6 +120,8 @@ class PlayerUsecase:
         self._ownership = None
         self._exp_pusher = None
         self._push_lease = None
+        # 分片部署时由 main 经 set_cell_router 注入;单 Cell 时恒 None(不打落点日志)。
+        self._router = None
         # 上一轮领导权状态,只由发布器单协程读写(跃迁日志去重用)。
         self._push_lease_held = False
 
@@ -130,6 +133,35 @@ class PlayerUsecase:
         Store 热更以整批不可变快照原子切换;单次事务先取一份快照,不会跨版本混算。
         """
         self._store = store
+
+    def set_cell_router(self, router) -> None:  # noqa: ANN001 —— cellroute.Router | None
+        """注入确定性 region/cell 路由器(对应 Go 的 `SetCellRouter`)。
+
+        只用于**档案落点观测**(§4.2「同一 player_id 的 owner 数据必落同一 cell」的
+        上线核对信号)。不注入 = 单 Cell,写路径一字不改。
+        """
+        self._router = router
+
+    def _log_profile_placement(self, player_id: int, op: str) -> None:
+        """一次档案写之后,把这名玩家的 owner 落点打成观测日志。
+
+        router 未注入 / player_id=0 / 路由失败 → 整条不执行(单 Cell 语义不变)。
+        ★ 刻意不 fail:落点观测失败不该让一次已经提交的档案写变成错误应答。
+        """
+        if self._router is None or player_id == 0:
+            return
+        try:
+            loc = self._router.route(player_id)
+        except cellroute.CellRouteError:
+            return
+        plog.get().debug(
+            "profile_placement",
+            player_id=player_id,
+            op=op,
+            region=loc.region_id,
+            cell=loc.cell_id,
+            shard_key=profile_shard_key(player_id),
+        )
 
     def set_instance_ownership_checker(self, checker) -> None:  # noqa: ANN001
         """注入精确实例归属查询实现。
@@ -363,6 +395,8 @@ class PlayerUsecase:
             new_mmr=new_mmr,
             rating_pool=pool,
         )
+        # 档案落点观测(router 未注入时整条不执行)。位置与 Go 一致:写成功之后。
+        self._log_profile_placement(player_id, "update_mmr")
         return new_mmr, False
 
     # ── 出战养成 ──────────────────────────────────────────────────────────

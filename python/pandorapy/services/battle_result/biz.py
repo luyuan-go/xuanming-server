@@ -210,8 +210,18 @@ class BattleResultUsecase(bprog.ProgressMixin):
         # 而那是在**后台循环里**炸 —— 进程照跑、health 照答 SERVING。
         self._exp_granter = None
         self._mission_reporter = None
+        # Model-B 终态回收 relay。None = authority_mode 非 redis(legacy)→ 发布器不启动。
+        # 同样必须在这里预置:_publish_terminal_release_batch 在后台循环里读它判空。
+        self._terminal_relay = None
 
     # ── setter ────────────────────────────────────────────────────────────
+
+    def set_terminal_release_relay(self, relay) -> None:  # noqa: ANN001
+        """Model-B 正常结算资源回收 relay(对应 Go 的 SetTerminalReleaseRelay)。
+
+        只在 `ds_auth.authority_mode=redis` 且 schema / Redis 探测全过后注入。
+        """
+        self._terminal_relay = relay
 
     def set_instance_granter(self, granter) -> None:  # noqa: ANN001
         """inventory 掉落发放器。None / 不调 = inventory_addr 未配 → 不启动掉落发布器,
@@ -229,8 +239,8 @@ class BattleResultUsecase(bprog.ProgressMixin):
     def set_monster_exp_table(self, table) -> None:  # noqa: ANN001
         """怪物击杀经验查表(configtable role_level)。
 
-        **非 nil-safe**:实时进度通道用它;Python 侧未实现该通道,这里保留注入点
-        是为了让 main.py 的装配与 Go 同形(缺表在启动期就 fail-fast,不留到运行期)。
+        **非 nil-safe**:实时进度通道(report_progress)直接查它算经验。
+        缺表在启动期就 fail-fast(不留到运行期的第一批进度才炸)。
         """
         self._monster_exp = table
 
@@ -1165,6 +1175,202 @@ class BattleResultUsecase(bprog.ProgressMixin):
         if first_error is not None:
             raise first_error
         return released
+
+    # ── 后台:Battle terminal-release 事务出箱(Model-B)────────────────────
+
+    async def run_terminal_release_publisher(self) -> None:
+        """启动正常结算资源回收 worker。对应 Go 的 `RunTerminalReleasePublisher`。
+
+        它**只能**在 MySQL schema probe、relay 构造和 dsauth capability 获取全部成功后
+        启动(main 侧的顺序保证)。单行失败保留重试、不阻塞同批其它对局;UID
+        precondition 与 ds_allocator 的 Redis CAS 保证多副本 / 响应丢失幂等。
+        """
+        if self._terminal_relay is None:
+            plog.get().info("terminal_release_publisher_disabled")
+            return
+        interval = self._cfg.terminal_release_interval_td().total_seconds()
+        if interval <= 0:
+            interval = 2.0
+        plog.get().info(
+            "terminal_release_publisher_started",
+            interval=self._cfg.terminal_release_interval,
+            batch=self._terminal_release_batch_size(),
+        )
+        try:
+            await safego.loop(
+                "battle_terminal_release_publisher",
+                interval,
+                self._publish_terminal_release_tick,
+            )
+        finally:
+            plog.get().info("terminal_release_publisher_stopped")
+
+    async def _publish_terminal_release_tick(self) -> None:
+        try:
+            await self.publish_terminal_release_batch()
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            # 准确的行级原因在 terminal_release_phase1_failed / _finalize_failed /
+            # _mark_failed / _delete_failed 上;这里只记"本轮整批中断"。
+            plog.get().warning("terminal_release_batch_failed", err=str(exc))
+
+    def _terminal_release_batch_size(self) -> int:
+        return self._cfg.terminal_release_batch_size_or_default()
+
+    async def publish_terminal_release_batch(self) -> int:  # noqa: C901 —— 与 Go 同为线性两阶段
+        """两阶段推进一批终态回收行。返回本轮 finalize(删行)的条数。
+
+        ★ 阶段顺序不可交换,且**每一步的失败处置都不一样**:
+          - phase1 RPC 失败       → `continue`(保留原行重试;Redis/K8s unknown 绝不推进 DB)
+          - phase1 mark 失败      → `raise`(中断整批:Redis CAS 已成功但 durable ACK 未知,
+                                    下轮必须按库真实状态重读,不能带着错误认知继续)
+          - phase2 finalize 失败  → `continue`(released 行保留;重试只校验 / Expire 同 proof)
+          - phase2 delete 失败    → `raise`(同上,中断本轮)
+        """
+        if self._terminal_relay is None:
+            return 0
+        recs = await self._repo.fetch_terminal_release_outbox(
+            self._terminal_release_batch_size(), int(time.time() * 1000)
+        )
+        finalized = 0
+        for rec in recs:
+            if rec.released_at_ms < 0:
+                # 库里出现不可能的值 = schema 漂移 / 写入者 bug,本轮整批停止且会反复发生。
+                plog.get().error(
+                    "terminal_release_row_invalid",
+                    match_id=rec.match_id,
+                    allocation_id=rec.allocation_id,
+                    pod=rec.ds_pod_name,
+                    outbox_id=rec.id,
+                    released_at_ms=rec.released_at_ms,
+                    reason="negative_released_at_ms",
+                    hint="terminal_release_outbox 行非法,本轮中断;DS pod 不会被回收,需人工排查",
+                )
+                raise errcode.PandoraError(
+                    errcode.ErrInvalidState,
+                    "terminal release outbox id=%d has invalid released_at_ms",
+                    rec.id,
+                )
+            row_started = time.monotonic()
+            token = plog.bind_trace_id(str(uuid.uuid4()))
+            try:
+                if rec.released_at_ms == 0:
+                    try:
+                        await asyncio.wait_for(
+                            self._terminal_relay.release_terminal(rec), timeout=10.0
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except BaseException as exc:  # noqa: BLE001
+                        # Redis/K8s unknown 绝不能推进 DB phase;永久墓碑 / 原始行保留重试。
+                        plog.get().warning(
+                            "terminal_release_phase1_failed",
+                            match_id=rec.match_id,
+                            allocation_id=rec.allocation_id,
+                            pod=rec.ds_pod_name,
+                            outbox_id=rec.id,
+                            elapsed_ms=int((time.monotonic() - row_started) * 1000),
+                            code=errcode.as_code(exc),
+                            err=str(exc),
+                        )
+                        continue
+                    try:
+                        marked = await self._repo.mark_terminal_release_released(
+                            rec.id, int(time.time() * 1000)
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except BaseException as exc:  # noqa: BLE001
+                        # UID delete 已成功但 durable ACK 未知:phase1 绝不 expire Redis。
+                        # 下轮按 DB 真实状态重读;0 则重放 UID delete,>0 则进入 finalize。
+                        plog.get().warning(
+                            "terminal_release_mark_failed",
+                            match_id=rec.match_id,
+                            allocation_id=rec.allocation_id,
+                            pod=rec.ds_pod_name,
+                            outbox_id=rec.id,
+                            elapsed_ms=int((time.monotonic() - row_started) * 1000),
+                            code=errcode.as_code(exc),
+                            err=str(exc),
+                            hint="Redis terminal CAS 已成功但 MySQL durable ACK 未知,"
+                            "本轮中断等下轮按库真实状态重跑",
+                        )
+                        raise
+                    if not marked:
+                        plog.get().debug(
+                            "terminal_release_phase1_already_advanced",
+                            match_id=rec.match_id,
+                            outbox_id=rec.id,
+                        )
+                    else:
+                        # 不可逆推进(Redis terminal/receipt CAS 已完成 + MySQL 已 durable 标记)。
+                        plog.get().info(
+                            "terminal_release_phase1_done",
+                            match_id=rec.match_id,
+                            allocation_id=rec.allocation_id,
+                            pod=rec.ds_pod_name,
+                            outbox_id=rec.id,
+                            elapsed_ms=int((time.monotonic() - row_started) * 1000),
+                        )
+                    continue
+
+                try:
+                    await asyncio.wait_for(
+                        self._terminal_relay.finalize_terminal(rec), timeout=10.0
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as exc:  # noqa: BLE001
+                    # finalize 响应未知绝不能 DELETE released 行;重试只校验 / Expire 同 proof,
+                    # 绝不再次删除 K8s。若 TTL 已自然清空全部墓碑,服务端按幂等成功返回。
+                    plog.get().warning(
+                        "terminal_release_finalize_failed",
+                        match_id=rec.match_id,
+                        allocation_id=rec.allocation_id,
+                        pod=rec.ds_pod_name,
+                        outbox_id=rec.id,
+                        elapsed_ms=int((time.monotonic() - row_started) * 1000),
+                        code=errcode.as_code(exc),
+                        err=str(exc),
+                    )
+                    continue
+                try:
+                    await self._repo.delete_terminal_release_outbox(rec.id)
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as exc:  # noqa: BLE001
+                    # finalize 已成功但 DB delete 失败:released 行保留。下一轮只重放
+                    # finalize;即使墓碑 TTL 已过、三键都不存在,也会幂等重认成功。
+                    plog.get().warning(
+                        "terminal_release_delete_failed",
+                        match_id=rec.match_id,
+                        allocation_id=rec.allocation_id,
+                        pod=rec.ds_pod_name,
+                        outbox_id=rec.id,
+                        elapsed_ms=int((time.monotonic() - row_started) * 1000),
+                        code=errcode.as_code(exc),
+                        err=str(exc),
+                        hint="回收已完成但出箱行未删 → 下轮重放 finalize(幂等)",
+                    )
+                    raise
+                # 落在 DELETE 之后:先打日志再落库时,库操作失败会让日志与库状态互相矛盾,
+                # 排障会按"已完成"处理(同 progress_unknown_fact_stream_stopped 的纪律)。
+                plog.get().info(
+                    "terminal_release_finalized",
+                    match_id=rec.match_id,
+                    allocation_id=rec.allocation_id,
+                    pod=rec.ds_pod_name,
+                    outbox_id=rec.id,
+                    released_at_ms=rec.released_at_ms,
+                    elapsed_ms=int((time.monotonic() - row_started) * 1000),
+                )
+                finalized += 1
+            finally:
+                token.var.reset(token)
+        if finalized > 0:
+            plog.get().debug("terminal_release_outbox_finalized", count=finalized)
+        return finalized
 
     # ── 后台:保留期清理(§9.24)──────────────────────────────────────────
 

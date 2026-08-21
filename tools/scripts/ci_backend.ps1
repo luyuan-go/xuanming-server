@@ -243,6 +243,8 @@ $contractTests = @(
     'tools/scripts/tests/mysql_service_runtime_config_contract_test.ps1'
     'tools/scripts/tests/planner_mysql_oneclick_contract_test.ps1'
     'tools/scripts/tests/planner_mysql_preflight_contract_test.ps1'
+    # 策划可只停业务与本机 DS，保留 MySQL/Redis/Kafka/Envoy；不得误接 infra/K8s down。
+    'tools/scripts/tests/planner_keep_infra_stop_contract_test.ps1'
     # Windows Get-NetTCPConnection 单次可阻塞数秒；快速 listener seam 仍须保留 PID/exe/my.ini 归属闸。
     'tools/scripts/tests/run_services_listener_query_contract_test.ps1'
     # 策划专用热启动：强指纹复用本机二进制，非 login/login 两波批量启动与 exact-PID 统一就绪。
@@ -251,8 +253,16 @@ $contractTests = @(
     'tools/scripts/tests/planner_playable_exit_contract_test.ps1'
     # 策划本机 MySQL 热启动：SQL 强收据跳过重复 init DDL，miss 时单 mysql 进程批量重放。
     'tools/scripts/tests/dev_migrate_planner_fast_contract_test.ps1'
+    # fast migration 留在父 runspace 复用编排锁；所有 native child 必须由 Job Object 有界回收，
+    # 包括 stdin 卡死、输出超限和父 pwsh 被硬杀三条只在故障时出现的路径。
+    'tools/scripts/tests/planner_bounded_process_contract_test.ps1'
+    # canonical MySQL ownership(CIM/netstat)与固定 target 同处一个受限 Job；明文 DSN session
+    # 在 workspace 锁内清扫，覆盖 hard-kill/live-owner/reparse/cleanup-failure 故障路径。
+    'tools/scripts/tests/planner_owned_migration_worker_contract_test.ps1'
     # 策划已安装基础设施的冷启动：批量 launch、共享 listener 轮询与 direct/Kafka-child exact owner。
     'tools/scripts/tests/localinfra_planner_parallel_start_contract_test.ps1'
+    # 策划并行准备：exact child 真实耗时/有界 drain、投机构建稳定重试与生产依赖接线。
+    'tools/scripts/tests/planner_parallel_prepare_contract_test.ps1'
     # SVN 带包时全程离线、Git 空目录时逐项联网；所有本地来源仍必须过固定 SHA256。
     'tools/scripts/tests/localinfra_bundled_packages_contract_test.ps1'
     # 免 Go 策划机必须随发布包拿到 pandora-migrate.exe；否则旧数据目录会跳过增量迁移。

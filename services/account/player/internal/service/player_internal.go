@@ -37,7 +37,8 @@ func NewPlayerInternalService(uc playerNameUsecase, verifier playerNameRequestVe
 	return &PlayerInternalService{uc: uc, verifier: verifier}
 }
 
-// ResolvePlayerNames 只接受 player_id，并把规范化后的完整请求绑定到 team 服务身份签名。
+// ResolvePlayerNames 只接受 player_id，并把规范化后的完整请求绑定到
+// team/friend/guild 各自独立的内部服务身份签名。
 func (s *PlayerInternalService) ResolvePlayerNames(
 	ctx context.Context,
 	req *playerv1.GetPlayerNamesRequest,

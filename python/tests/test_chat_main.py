@@ -35,7 +35,10 @@ GO_BUDGETS = "services/social/chat/internal/data/budgets.go"
 
 
 def _py_main_src() -> str:
-    return pathlib.Path(cmain.__file__).read_text(encoding="utf-8")
+    """只看代码：注释/docstring 里提到事件名不算数（理由见 tests/srcprobe.py）。"""
+    from tests.srcprobe import module_code_text
+
+    return module_code_text(cmain)
 
 
 def _log_pos(src: str, level: str, event: str) -> int:

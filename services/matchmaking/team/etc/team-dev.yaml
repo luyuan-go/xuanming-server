@@ -45,6 +45,11 @@ team:
   max_members: 5
   # optimistic_retry: WATCH/MULTI/EXEC 冲突时最大重试次数
   optimistic_retry: 3
+  # rate_quota_per_min: 申请/邀请的 per-player 每分钟频率配额(anti-abuse §6 第 6 项)。
+  #   与 §9.18 的 pending 总量上限正交:总量限「同时挂多少」,本值限「刷多快」。
+  #   显式写出而不依赖代码默认值:Go 与 Python 两栈各持一份默认(12),只改一侧
+  #   会在灰度期让同一玩家在两种副本上限额不同且两边日志都正常。
+  rate_quota_per_min: 60
   # matchmaker_addr: matchmaker gRPC 直连地址——成员离队/被踢时联动撤销其匹配票据
   # (弱依赖,留空则不联动)
   matchmaker_addr: "127.0.0.1:20011"

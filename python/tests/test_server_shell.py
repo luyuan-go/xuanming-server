@@ -15,6 +15,7 @@ import contextlib
 import json
 import pathlib
 import re
+from unittest import mock
 
 import grpc
 import pytest
@@ -28,6 +29,8 @@ from pandorapy import interceptors as pintercept
 from pandorapy import killswitch
 from pandorapy import metrics
 from pandorapy import server as pserver
+
+from tests.srcprobe import module_code_text
 
 PLAYER_HEADER = pintercept.METADATA_KEY_PLAYER_ID
 _METHOD = "/pandora.dialogue.v1.DialogueService/StartDialogue"
@@ -269,18 +272,62 @@ async def test_server_timeout_does_not_touch_fast_handler() -> None:
         await server.stop(grace=None)
 
 
-# ── ★ 配了但没实现的能力必须 fail-fast ──────────────────────────────────────
+# ── ★ BBR 自适应限流的装配 ─────────────────────────────────────────────────
 
 
-def test_enable_rate_limit_fails_fast_instead_of_being_ignored() -> None:
-    """★ `enable_rate_limit=true` 必须**起不来**,不能静默忽略。
+def _chain_types(grpc_conf: pconfig.GrpcConf) -> list[str]:
+    """取出 server 实际拿到的拦截器类名序列。
 
-    Go 侧那是 Kratos 的 BBR 自适应限流,Python 侧没有实现。静默忽略的后果是
-    yaml 写着 true、运维以为有过载保护、实际一点都没有 —— 比"没这功能"糟糕得多
-    (CLAUDE.md §14:开关打开后的分支必须是完整可用的真实实现)。
+    ★ 断言**真实的链**,不是"构造成功了"。grpc.aio.server 对拦截器列表不做任何
+    校验,漏挂一个照样构造成功 —— 而"漏挂限流"与"挂了但不生效"在外部完全同形。
+
+    调用方必须是 async 用例:grpc.aio.server() 在构造时就要拿当前事件循环,
+    同步用例里会 RuntimeError('There is no current event loop')。
     """
-    with pytest.raises(NotImplementedError, match="enable_rate_limit"):
-        pserver.build_grpc_server(pconfig.GrpcConf(enable_rate_limit=True))
+    seen: list[str] = []
+    real = grpc.aio.server
+
+    def spy(*args: object, **kwargs: object) -> object:
+        for itc in kwargs.get("interceptors", ()) or ():
+            seen.append(type(itc).__name__)
+        return real(*args, **kwargs)
+
+    with mock.patch.object(grpc.aio, "server", spy):
+        pserver.build_grpc_server(grpc_conf)
+    return seen
+
+
+async def test_rate_limit_off_by_default_leaves_chain_untouched() -> None:
+    """dev 默认关:链上不该出现限流拦截器。"""
+    chain = _chain_types(pconfig.GrpcConf())
+    assert "RateLimitInterceptor" not in chain
+
+
+async def test_enable_rate_limit_actually_wires_bbr() -> None:
+    """★ `enable_rate_limit=true` 必须真的挂上 BBR。
+
+    这条曾经断言的是 `pytest.raises(NotImplementedError)` —— 那时 Python 侧确实
+    没实现,fail-fast 是对的。但它不是可选项:`gen_cluster_config.ps1 -Prod`
+    对 12 个 unary session-gate 服务 + login + push **机械强制**置 true(契约测试
+    gen_cluster_prod_ratelimit_contract_test.ps1 锁定),也就是说这 14 个服务
+    只要不实现 BBR 就一个都切不了 Python。现已移植(pandorapy/bbr.py)。
+    """
+    chain = _chain_types(pconfig.GrpcConf(enable_rate_limit=True))
+    assert "RateLimitInterceptor" in chain
+
+
+async def test_rate_limit_sits_inside_observability_and_outside_killswitch() -> None:
+    """★ 链序必须与 Go 的 Metrics → [RateLimit] → KillSwitch 一致。
+
+    位置不是风格问题,两侧都错得很具体:
+      · 跑到 Observability **外面** → 被丢的请求不进 pandora_rpc_total,
+        过载时"到底丢了多少"这个唯一要看的数直接消失。
+      · 跑到 KillSwitch **里面** → 已被运维关停的 RPC 还要先过一遍限流统计,
+        关停语义被限流的丢弃盖住。
+    """
+    chain = _chain_types(pconfig.GrpcConf(enable_rate_limit=True))
+    assert chain.index("ObservabilityInterceptor") < chain.index("RateLimitInterceptor")
+    assert chain.index("RateLimitInterceptor") < chain.index("KillSwitchInterceptor")
 
 
 def test_conn_age_options_are_exactly_what_grpc_gets() -> None:
@@ -422,9 +469,9 @@ def test_access_log_events_exist_in_go_source(repo_root: pathlib.Path) -> None:
     for event in ("rpc_ok", "rpc_slow", "rpc_failed", "rpc_inband_error"):
         assert f'"{event}"' in src, f"Go 侧没有事件 {event} —— 是不是名字对错了?"
 
-    py = (
-        pathlib.Path(pintercept.__file__).read_text(encoding="utf-8")
-    )
+    # 只看代码：注释/docstring 里写着事件名不代表真的产出了这条日志
+    # （理由见 tests/srcprobe.py）。
+    py = module_code_text(pintercept)
     for event in ("rpc_ok", "rpc_slow", "rpc_failed", "rpc_inband_error"):
         assert f'"{event}"' in py, f"Python 侧不产出 {event}"
 

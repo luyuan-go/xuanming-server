@@ -10,7 +10,6 @@ pandora.friend.event → push 推给接收方(**弱依赖**);ListFriends / Recom
     ① abs_conf_path_failed          -conf 解不成绝对路径                fail-fast
     ② config_load_failed            yaml 读不到                          fail-fast
     ③ config_scan_failed            yaml 结构对不上 / 配了未实现的段      fail-fast
-                                    (含 cell_route.mode ——见下方说明)
     ④ friend_retention_mode_invalid retention_mode 拼错                  fail-fast
     ⑤ mysql_dsn_required            好友图库 DSN 缺失                    fail-fast
     ⑥ mysql_connect_failed          连不上好友图库                        fail-fast
@@ -27,10 +26,9 @@ pandora.friend.event → push 推给接收方(**弱依赖**);ListFriends / Recom
       locator_addr_empty                                → 在线状态全 false
       friend_rate_quota_disabled                        → 不限流(总量闸仍在)
 
-★ Go 有一道 cellroute_init_failed(`etcdtable.WireRouter`),Python 侧位置不同但
-  **方向相同**:`pandorapy.config.BaseConf` 在加载配置时就对 `cell_route.mode` 非空
-  直接拒启(Python 只实现单 Cell),所以它落在闸③ config_scan_failed 里。
-  两边都不会出现"配了 cell 路由却按单 Cell 静默跑"。
+★ cellroute 装配(Go 的 `etcdtable.WireRouter`)已于 2026-08-20 补齐,落在建完 usecase
+  之后:`cell_route.mode` 为空 → 单 Cell、router 为 None、行为不变;`static` / `etcd`
+  → 真正建表并注入,失败打 `cellroute_init_failed` 拒启。非法 mode 仍在闸③被拦。
 
 后台循环两条(全部走 pandorapy.safego:裸 create_task 的协程死掉后进程照跑、
 health 照答 SERVING、**零日志**):
@@ -60,7 +58,9 @@ import asyncmy
 
 from pandora.friend.v1 import friend_pb2_grpc
 
+from pandorapy import cellroute_etcd
 from pandorapy import dbguard
+from pandorapy import internalrpcauth
 from pandorapy import kafka_topics
 from pandorapy import kafkax
 from pandorapy import log as plog
@@ -70,6 +70,7 @@ from pandorapy import safego
 from pandorapy import server as pserver
 from pandorapy import sessiongate
 from pandorapy import snowflake_etcd as psnowflake_etcd
+from pandorapy.services import player_display
 from pandorapy.services.friend import biz as fbiz
 from pandorapy.services.friend import budgets as fbudgets
 from pandorapy.services.friend import conf as fconf
@@ -164,7 +165,8 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         return 1
     except Exception as exc:  # noqa: BLE001
         # Go 把"读不到文件"和"结构对不上"分成两个事件名,这里保持同样区分。
-        # 「配了但 Python 侧没实现的功能段拒启」(cell_route.mode)也落在这个分支。
+        # 「配了但 Python 侧没实现的功能段拒启」以及非法的 `cell_route.mode`
+        # (`static` / `etcd` 之外的值)也落在这个分支。
         logger.error("config_scan_failed", err=str(exc), path=str(conf_path))
         return 1
 
@@ -179,6 +181,11 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             err=str(exc),
             hint='friend.retention_mode 只接受 "report_only"(默认,不删) 或 "delete"',
         )
+        return 1
+    try:
+        cfg.validate_player_display_resolvers()
+    except ValueError as exc:
+        logger.error("player_display_resolver_config_invalid", err=str(exc))
         return 1
 
     # ── 闸⑤ MySQL DSN(强依赖:好友图落库不可降级)─────────────────────────
@@ -220,6 +227,11 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
     rdb = None
     producer = None
     online = None
+    player_name_resolver = None
+    player_no_resolver = None
+    # ★ 必须在 try **之前**声明:它在 finally 里被读。写在 try 内部的话,
+    # 任何在赋值行之前失败的闸都会让 finally 抛 NameError,把真正的退出原因顶掉。
+    cell_watcher = None
     try:
         # ── 闸⑦ 严格模式(§9.24)──────────────────────────────────────────
         # 非严格 sql_mode 下超长写入会被 MySQL **静默截断**(err=nil 但数据被砍断),
@@ -328,11 +340,73 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                 "locator_addr_empty", hint="friend online status disabled (all offline)"
             )
 
+        # ── player/login 公开展示投影(**弱依赖**)────────────────────────
+        # 凭据配置错误已在触库前 fail-fast；运行期 RPC 失败由 biz 按批 fail-soft。
+        if cfg.friend.player_name_resolver_addr:
+            signer = internalrpcauth.Signer(
+                cfg.friend.player_name_resolver_auth_secret,
+                SERVICE_NAME,
+                cfg.friend.player_name_resolver_auth_audience,
+            )
+            player_name_resolver = player_display.GrpcPlayerNameResolver(
+                cfg.friend.player_name_resolver_addr, signer
+            )
+            logger.info(
+                "player_name_resolver_ready",
+                addr=cfg.friend.player_name_resolver_addr,
+                caller=SERVICE_NAME,
+                audience=cfg.friend.player_name_resolver_auth_audience,
+            )
+        else:
+            logger.warning("player_name_resolver_disabled")
+        if cfg.friend.player_no_resolver_addr:
+            signer = internalrpcauth.Signer(
+                cfg.friend.player_no_resolver_auth_secret,
+                SERVICE_NAME,
+                cfg.friend.player_no_resolver_auth_audience,
+            )
+            player_no_resolver = player_display.GrpcPlayerNoResolver(
+                cfg.friend.player_no_resolver_addr, signer
+            )
+            logger.info(
+                "player_no_resolver_ready",
+                addr=cfg.friend.player_no_resolver_addr,
+                caller=SERVICE_NAME,
+                audience=cfg.friend.player_no_resolver_auth_audience,
+            )
+        else:
+            logger.warning("player_no_resolver_disabled")
+
         # ── 装配链 ────────────────────────────────────────────────────────
         # 保留期清理要写全限定表名,库名传的是 **DSN 里实际连上的那个库**
         # 而不是写死的 pandora_social(TiDB 档 / 测试库连的都不是它)。
         repo = frepo.MySQLFriendRepo(pool, conn_cfg["db"])
         uc = fbiz.FriendUsecase(repo, pusher, online, cfg.friend)
+        uc.set_player_name_resolver(player_name_resolver)
+        uc.set_player_no_resolver(player_no_resolver)
+
+        # ── cellroute 装配(位置与 Go 的 `etcdtable.WireRouter` 同在 usecase 建完之后)─
+        #
+        # off(mode 空,当前唯一形态)→ router 为 None,分片观测不执行,行为不变。
+        # static → 本地铺表;etcd → 连 etcd 全量 Get + watch 热更,watcher 在 finally 关。
+        #
+        # ★ 这里 fail-fast 而不是降级成单 Cell:好友图本轮仍是单库单事务,
+        #   但“配了分片却按单 Cell 跑”意味着运维以为已经在分片、实际一个分片没分 ——
+        #   起不来是刺眼的,静默跑错形态才是致命的。
+        try:
+            router, cell_watcher = await cellroute_etcd.build_router(cfg.cell_route)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            logger.error("cellroute_init_failed", err=str(exc))
+            return 1
+        if router is not None:
+            uc.set_cell_router(router)
+            logger.info(
+                "cellroute_enabled",
+                self_region=cfg.cell_route.self_region,
+                self_cell=cfg.cell_route.self_cell,
+            )
 
         # ── Redis:频率配额(弱依赖)+ 会话现行性门 ──────────────────────
         # ★ Ping 的时机与 Go 逐条一致:sessiongate.MustBuild **只在 require=true 时**
@@ -457,9 +531,16 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         if producer is not None:
             with contextlib.suppress(Exception):
                 await producer.close()
+        if cell_watcher is not None:
+            with contextlib.suppress(Exception):
+                await cell_watcher.close()
         if online is not None:
             with contextlib.suppress(Exception):
                 await online.close()
+        for resolver in (player_no_resolver, player_name_resolver):
+            if resolver is not None:
+                with contextlib.suppress(Exception):
+                    await resolver.close()
         if rdb is not None:
             # redis-py 5 是 aclose(),更早的版本只有 close()。两个都试是因为
             # 停机路径上关不掉连接不该变成启动失败的替罪羊。

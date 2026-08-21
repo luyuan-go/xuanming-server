@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 
 from pandorapy import config as pconfig
 from pandorapy import dbguard
+from pandorapy import internalrpcauth
 
 DEFAULT_GRPC_ADDR = ":20004"
 DEFAULT_HTTP_ADDR = ":21004"
@@ -48,6 +49,8 @@ DEFAULT_REQUEST_RETENTION_DAYS = 90
 DEFAULT_SWEEP_INTERVAL_SEC = 300.0  # Go: 5 * time.Minute
 DEFAULT_SWEEP_BATCH = 500
 DEFAULT_PAIR_GUARD_RETENTION_DAYS = 30
+DEFAULT_PLAYER_NAME_RESOLVER_AUTH_AUDIENCE = "player:name"
+DEFAULT_PLAYER_NO_RESOLVER_AUTH_AUDIENCE = "login:player-no"
 
 # 推荐策略链缺省顺序(Go buildStrategies:名单为空 → [mutual, random])。
 DEFAULT_RECOMMEND_STRATEGIES = ("mutual", "random")
@@ -122,6 +125,15 @@ class FriendConf(BaseModel):
     # player_locator gRPC 地址(host:port)。
     # 空 → ListFriends / RecommendFriends 不查在线状态(is_online 全 false,弱依赖)。
     locator_addr: str = ""
+
+    # 申请列表公开展示投影。昵称与编号分属两个 authority，分别使用 friend
+    # 调用方的独立 request-bound HMAC 凭据；任一 addr 留空即关闭对应弱依赖。
+    player_name_resolver_addr: str = ""
+    player_name_resolver_auth_secret: str = ""
+    player_name_resolver_auth_audience: str = ""
+    player_no_resolver_addr: str = ""
+    player_no_resolver_auth_secret: str = ""
+    player_no_resolver_auth_audience: str = ""
 
     # 单次推荐好友数量(默认 10,硬上限 20,超界收敛到 20)。
     recommend_limit: int = 0
@@ -220,10 +232,63 @@ class Config(pconfig.BaseConf):
             f.sweep_batch = DEFAULT_SWEEP_BATCH
         if f.pair_guard_retention_days <= 0:
             f.pair_guard_retention_days = DEFAULT_PAIR_GUARD_RETENTION_DAYS
+        if (
+            f.player_name_resolver_addr
+            and not f.player_name_resolver_auth_audience
+        ):
+            f.player_name_resolver_auth_audience = (
+                DEFAULT_PLAYER_NAME_RESOLVER_AUTH_AUDIENCE
+            )
+        if (
+            f.player_no_resolver_addr
+            and not f.player_no_resolver_auth_audience
+        ):
+            f.player_no_resolver_auth_audience = DEFAULT_PLAYER_NO_RESOLVER_AUTH_AUDIENCE
         if not self.server.grpc.addr:
             self.server.grpc.addr = DEFAULT_GRPC_ADDR
         if not self.server.http.addr:
             self.server.http.addr = DEFAULT_HTTP_ADDR
+
+    def validate_player_display_resolvers(self) -> None:
+        """展示 resolver 的地址/凭据必须闭包，两个 authority 不得复用密钥。"""
+        f = self.friend
+        self._validate_resolver(
+            "friend.player_name_resolver",
+            f.player_name_resolver_addr,
+            f.player_name_resolver_auth_secret,
+            f.player_name_resolver_auth_audience,
+        )
+        self._validate_resolver(
+            "friend.player_no_resolver",
+            f.player_no_resolver_addr,
+            f.player_no_resolver_auth_secret,
+            f.player_no_resolver_auth_audience,
+        )
+        if (
+            f.player_name_resolver_auth_secret
+            and f.player_no_resolver_auth_secret
+            and f.player_name_resolver_auth_secret == f.player_no_resolver_auth_secret
+        ):
+            raise ValueError(
+                "friend.player_name_resolver_auth_secret must differ from "
+                "friend.player_no_resolver_auth_secret"
+            )
+
+    @staticmethod
+    def _validate_resolver(label: str, addr: str, secret: str, audience: str) -> None:
+        if not addr:
+            if secret or audience:
+                raise ValueError(f"{label} credentials require addr")
+            return
+        if not secret:
+            raise ValueError(f"{label}_auth_secret required when addr is configured")
+        if not audience:
+            raise ValueError(f"{label}_auth_audience required when addr is configured")
+        try:
+            internalrpcauth.validate_secret(secret)
+            internalrpcauth.validate_identity(audience)
+        except ValueError as exc:
+            raise ValueError(f"{label}: {exc}") from exc
 
     @classmethod
     def load(cls, path: str) -> "Config":

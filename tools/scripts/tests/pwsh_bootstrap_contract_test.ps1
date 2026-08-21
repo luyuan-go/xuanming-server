@@ -39,11 +39,12 @@ function Assert-True([bool]$Condition, [string]$Message) {
 $BootstrapCmd = Join-Path $ScriptsDir 'bootstrap_pwsh.cmd'
 $PinFile = Join-Path $ScriptsDir 'lib/pwsh_bootstrap.pin'
 
-# 免 Docker 三入口 = 本次自举的服务对象。其余入口(k8s / 出包 / 导表)面向程序,
+# 免 Docker 四入口 = 本次自举的服务对象。其余入口(k8s / 出包 / 导表)面向程序,
 # 保持原来的「没 pwsh 就明确报错」,不在本契约范围内。
 $NoDockerEntries = @(
     '策划一键启动-免Docker-测试版.cmd'
     '策划一键停止-免Docker-测试版.cmd'
+    '策划一键停止业务-保留基础设施-免Docker-测试版.cmd'
     '策划一键重启DS-免Docker-测试版.cmd'
 )
 
@@ -125,7 +126,7 @@ Assert-True ($bootstrapText -match '(?s):snapshot_archive.*?mklink /h.*?copy /y'
 Assert-True ($bootstrapText -match '_PB_CACHE_LOCK' -and $bootstrapText -match ':publish_cache') `
     '固定 cache 名通过独立 publish 文件和短锁发布'
 
-# ── [4] 三个免 Docker 入口真的接上了自举 ────────────────────────────────────
+# ── [4] 四个免 Docker 入口真的接上了自举 ────────────────────────────────────
 Write-Host '[4] 入口接线' -ForegroundColor Cyan
 foreach ($name in $NoDockerEntries) {
     $path = Join-Path $ProjectRoot $name

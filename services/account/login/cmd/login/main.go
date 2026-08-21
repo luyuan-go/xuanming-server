@@ -402,8 +402,23 @@ func main() {
 		os.Exit(1)
 	}
 	svc.SetPlayerNoResolveUsecase(playerNoUC)
-	var playerNoVerifier *internalrpcauth.Verifier
-	if cfg.Login.PlayerNoResolveAuthSecret != "" {
+	var playerNoVerifier *internalrpcauth.MultiCallerVerifier
+	playerNoCredentials := []struct {
+		caller   string
+		secret   string
+		audience string
+	}{
+		{"team", cfg.Login.PlayerNoResolveAuthSecret, cfg.Login.PlayerNoResolveAuthAudience},
+		{"friend", cfg.Login.FriendPlayerNoResolveAuthSecret, cfg.Login.FriendPlayerNoResolveAuthAudience},
+		{"guild", cfg.Login.GuildPlayerNoResolveAuthSecret, cfg.Login.GuildPlayerNoResolveAuthAudience},
+	}
+	playerNoCallerCount := 0
+	for _, credential := range playerNoCredentials {
+		if credential.secret != "" {
+			playerNoCallerCount++
+		}
+	}
+	if playerNoCallerCount != 0 {
 		if rdb == nil {
 			helper.Errorw("msg", "player_no_resolve_auth_requires_redis",
 				"hint", "shared Redis nonce authority is required for LoginInternalService.ResolvePlayerNos")
@@ -415,15 +430,26 @@ func main() {
 			helper.Errorw("msg", "player_no_resolve_verifier_init_failed", "err", replayErr)
 			os.Exit(1)
 		}
-		v, verifyErr := internalrpcauth.NewVerifier(cfg.Login.PlayerNoResolveAuthSecret, "team",
-			cfg.Login.PlayerNoResolveAuthAudience, 30*time.Second, replay)
-		if verifyErr != nil {
-			helper.Errorw("msg", "player_no_resolve_verifier_init_failed", "err", verifyErr)
+		verifiers := make([]*internalrpcauth.Verifier, 0, playerNoCallerCount)
+		for _, credential := range playerNoCredentials {
+			if credential.secret == "" {
+				continue
+			}
+			verifier, verifyErr := internalrpcauth.NewVerifier(credential.secret, credential.caller,
+				credential.audience, 30*time.Second, replay)
+			if verifyErr != nil {
+				helper.Errorw("msg", "player_no_resolve_verifier_init_failed", "caller", credential.caller, "err", verifyErr)
+				os.Exit(1)
+			}
+			verifiers = append(verifiers, verifier)
+			helper.Infow("msg", "player_no_resolve_verifier_ready", "caller", credential.caller,
+				"audience", credential.audience, "max_batch", playerno.ResolveBatchLimit)
+		}
+		playerNoVerifier, replayErr = internalrpcauth.NewMultiCallerVerifier(verifiers...)
+		if replayErr != nil {
+			helper.Errorw("msg", "player_no_resolve_verifier_init_failed", "err", replayErr)
 			os.Exit(1)
 		}
-		playerNoVerifier = v
-		helper.Infow("msg", "player_no_resolve_verifier_ready", "caller", "team",
-			"audience", cfg.Login.PlayerNoResolveAuthAudience, "max_batch", playerno.ResolveBatchLimit)
 	}
 	internalSvc := service.NewLoginInternalService(playerNoUC, playerNoVerifier)
 	// UE DS 在线 VerifyDSTicket 入场权威：默认 off/legacy 完全不改变旧内部调用；

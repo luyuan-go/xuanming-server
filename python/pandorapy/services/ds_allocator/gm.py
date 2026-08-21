@@ -50,6 +50,12 @@ from pandorapy.services.ds_allocator.battle_auth import BattleCredentialIdentity
 
 # ── 常量(与 Go 逐字同值)─────────────────────────────────────────────────────
 
+#: gRPC 反射注册用的服务全名。与 `gm_pb2_grpc` 注册时用的字符串同源(见
+#: `add_GmServiceServicer_to_server` 里的 `'pandora.gm.v1.GmService'`);写错了
+#: 反射列表会少一条,grpcurl list 看不到这个服务,但业务调用照常可用 —— 是个
+#: 只在排障时才发现的静默缺口,所以集中在这里定义一次。
+GRPC_SERVICE_FULL_NAME = "pandora.gm.v1.GmService"
+
 #: `PollCommands` 未指定 max 时的默认批量。
 DEFAULT_POLL_MAX = 16
 #: `PollCommands` 单次出队硬上限(§9 不变量 18 的读取侧上限)。

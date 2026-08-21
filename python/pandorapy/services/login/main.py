@@ -57,13 +57,14 @@ DSTicket(进场票)全部由它签。它带病上线的后果不是"某个功能
     db_capacity_guard_initial + db_capacity_guard   容量巡检(启动一轮 + 1h)
     (etcd 档的 snowflake 续约在 provide_node 内部拉起,算第五条)
 
-★ 诚实边界(见 honest_gaps,每一条都是 fail-closed 而不是静默降级):
-    - DSTicket v2(RS256):未实现 → 配了就拒启(㉓㉖),绝不静默签 HS256 顶替
-      (DS 只认 RS256,静默降级 = 全服进不去场景且启动日志全绿)。
-    - Model B(ds_auth.authority_mode=redis)的在线入场权威:未实现 → 拒启(㉚)。
-    - capability fence(dsauthfence 运行时):未实现 → 需要时拒启(㉛)。
-    - matchmaker 只读权威兜底:未接线 → 只保留配置面的告警,断线重连按 WAIT 处理
-      (biz 层的 §9.22 fail-closed 分支)。
+★ 与 Go 的差异:无。DSTicket v2(RS256 签发 + JWKS 校验)、Model B 在线入场权威
+  (Redis admission checker + DS 回调守卫)、capability fence(dsauthfence 运行时
+  注册 / 陈旧回收 / 失租退出)、matchmaker 只读权威兜底(ResolvePlayerMatchContext)
+  与 IssueDSTicket 的 hub / battle 路由(ResolveHubEndpointFromMatch /
+  ResolveBattleEndpoint)均已接线。
+  仍然保留的 fail-closed 姿态是**设计**而非缺口:v2 配一半(只签不验 / 只验不签)、
+  v2 但没配 hub_allocator、Model B 但没配 RS256 签发器、fence 取不到 —— 一律拒启,
+  绝不静默用 HS256 顶替 RS256(DS 只认 RS256,静默降级 = 全服进不去场景且启动日志全绿)。
 
 运行:
     cd python
@@ -80,6 +81,7 @@ from pandorapy import _utf8  # noqa: F401  isort:skip
 import argparse
 import asyncio
 import contextlib
+import os
 import pathlib
 import sys
 
@@ -90,6 +92,8 @@ from pandorapy import auth as pauth
 from pandorapy import config as pconfig
 from pandorapy import dbguard
 from pandorapy import dsauth
+from pandorapy import dsauthfence
+from pandorapy import dsticket as pdsticket
 from pandorapy import godur
 from pandorapy import internalrpcauth
 from pandorapy import log as plog
@@ -98,6 +102,7 @@ from pandorapy import redisx
 from pandorapy import safego
 from pandorapy import server as pserver
 from pandorapy import snowflake_etcd as psnowflake_etcd
+from pandorapy.services.login import battleroute as lbattleroute
 from pandorapy.services.login import biz as lbiz
 from pandorapy.services.login import budgets as lbudgets
 from pandorapy.services.login import clients as lclients
@@ -267,6 +272,24 @@ def ds_admission_incomplete(ds_guard, rdb) -> bool:  # noqa: ANN001
 def _repo_enabled(present: bool) -> str:
     """对应 Go 的 repoEnabled():service_ready 日志里 redis/disabled 两个字面量。"""
     return "redis" if present else "disabled"
+
+
+async def _watch_fence_lost(fence: dsauthfence.Holder) -> None:
+    """capability 失租守望 —— 对应 Go 的 `go func(){ <-fence.Lost(); …; os.Exit(1) }`。
+
+    ★ 这**不是**"用定时器掩盖时序"(§16.10):没有轮询、没有猜测,只是把 Holder 已经
+      判定好的失效事件翻译成进程退出。到期动作是**停止一切写**,不是"假设已经好了
+      继续往下走"。
+    ★ 用 `os._exit` 而不是抛异常:失租的 login 一秒都不能再兑换 DS 入场票,
+      而优雅退出要等在途 RPC 排空 —— 那正是"旧 writer 继续消费票据"的窗口。
+    """
+    await fence.lost.wait()
+    plog.get().error(
+        "login_ds_auth_fence_lost",
+        reason=fence.lost_reason(),
+        hint="立即退出，禁止失租 login writer 消费 DS 入场票",
+    )
+    os._exit(1)  # noqa: SLF001
 
 
 async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912, PLR0915
@@ -634,11 +657,30 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
     session_repo = ldata.RedisSessionRepo(rdb) if rdb is not None else None
     jti_repo = ldata.RedisTicketJTIRepo(rdb) if rdb is not None else None
 
-    # team → login 内部 player_no 批量解析验签。handler 始终注册；未配置时它
-    # fail-closed。配置了 secret 就必须有共享 Redis replay authority，不能退化成
-    # 进程内 nonce 表（多副本下可跨 Pod 重放）。
-    player_no_verifier: internalrpcauth.Verifier | None = None
-    if lg.player_no_resolve_auth_secret:
+    # team/friend/guild → login 内部 player_no 批量解析验签。每个 caller 有独立
+    # key；MultiCaller 只按 caller 选 verifier，最终仍做 payload-bound 校验。
+    player_no_verifier = None
+    player_no_credentials = (
+        (
+            "team",
+            lg.player_no_resolve_auth_secret,
+            lg.player_no_resolve_auth_audience,
+        ),
+        (
+            "friend",
+            lg.friend_player_no_resolve_auth_secret,
+            lg.friend_player_no_resolve_auth_audience,
+        ),
+        (
+            "guild",
+            lg.guild_player_no_resolve_auth_secret,
+            lg.guild_player_no_resolve_auth_audience,
+        ),
+    )
+    enabled_player_no_credentials = [
+        item for item in player_no_credentials if item[1]
+    ]
+    if enabled_player_no_credentials:
         if rdb is None:
             logger.error(
                 "player_no_resolve_auth_requires_redis",
@@ -646,25 +688,31 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
             )
             return 1
         try:
-            player_no_verifier = internalrpcauth.Verifier(
-                lg.player_no_resolve_auth_secret,
-                "team",
-                lg.player_no_resolve_auth_audience,
-                PLAYER_NO_RESOLVE_MAX_CLOCK_SKEW_SEC,
-                internalrpcauth.RedisReplayStore(
-                    rdb, PLAYER_NO_RESOLVE_NONCE_PREFIX
-                ),
+            replay = internalrpcauth.RedisReplayStore(
+                rdb, PLAYER_NO_RESOLVE_NONCE_PREFIX
             )
+            verifiers = [
+                internalrpcauth.Verifier(
+                    secret,
+                    caller,
+                    audience,
+                    PLAYER_NO_RESOLVE_MAX_CLOCK_SKEW_SEC,
+                    replay,
+                )
+                for caller, secret, audience in enabled_player_no_credentials
+            ]
+            player_no_verifier = internalrpcauth.MultiCallerVerifier(*verifiers)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001
             logger.error("player_no_resolve_verifier_init_failed", err=str(exc))
             return 1
-        logger.info(
-            "player_no_resolve_verifier_ready",
-            caller="team",
-            audience=lg.player_no_resolve_auth_audience,
-        )
+        for caller, _secret, audience in enabled_player_no_credentials:
+            logger.info(
+                "player_no_resolve_verifier_ready",
+                caller=caller,
+                audience=audience,
+            )
     else:
         logger.warning(
             "player_no_resolve_verifier_disabled",
@@ -702,24 +750,29 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
             hint="生产 addr 用 dns:/// headless 才有多后端轮询效果",
         )
 
-    # matchmaker:Python 侧**未接线**(biz 的断线重连三态门未移植)。
-    # 配置面的三条判定仍然逐条保留 —— 它们说的是"这份 yaml 对不对",与实现无关;
-    # 少打一条会让运维以为配置没问题,而 resume 权威其实从来没生效过。
+    # matchmaker:断线重连三态门的**耐久权威**兜底(P0-2/P0-3)。
+    # addr 空 = biz 走 presence-only 降级(dev/local 兼容);addr 已配但 secret 缺失
+    # 只告警不拒启 —— 与 Go 同:启用了 resume auth 的 matchmaker 会拒裸调,
+    # 表现是权威兜底失效,但这是**对端**配置问题,不该由本进程拒启掩盖。
+    match_resolver = None
     match_mode = "disabled"
     if not lg.matchmaker.addr:
         logger.warning(
             "matchmaker_authority_disabled_in_config",
-            hint="set login.matchmaker.addr to enable durable battle-authority fallback",
+            hint=(
+                "set login.matchmaker.addr to enable durable battle-authority "
+                "fallback (P0-2/P0-3)"
+            ),
         )
     else:
-        match_mode = "not_implemented"
+        match_signer = None
         if lg.matchmaker.auth_secret:
             try:
-                # Go 侧 secret 非法直接 panic(配置错误 fail-fast)。这里只校验形状,
-                # 不建 signer(没有调用点)—— 但校验必须照跑:一份非法 secret 在
-                # Go 版拒启、Python 版放行,等于两栈对同一份 yaml 结论不同。
-                internalrpcauth.validate_secret(lg.matchmaker.auth_secret)
+                match_signer = internalrpcauth.Signer(
+                    lg.matchmaker.auth_secret, "login", lg.matchmaker.auth_audience
+                )
             except Exception as exc:  # noqa: BLE001
+                # Go 侧 panic(配置错误 fail-fast)。
                 logger.error("match_resume_auth_secret_invalid", err=str(exc))
                 return 1
         else:
@@ -730,13 +783,14 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     "match_resume_auth_*; unsigned calls are rejected"
                 ),
             )
-        logger.warning(
-            "matchmaker_resolver_not_implemented",
+        match_resolver = lclients.GrpcMatchContextResolver(
+            lg.matchmaker.addr, match_signer
+        )
+        match_mode = "grpc"
+        logger.info(
+            "matchmaker_dial_ok",
             addr=lg.matchmaker.addr,
-            hint=(
-                "Python 版未移植 ResolvePlayerMatchContext 兜底:locator 报 BATTLE 时"
-                "按 §9.22 返回 WAIT(不冒充默认 Hub),玩家表现为退避重查"
-            ),
+            resume_auth=match_signer is not None,
         )
 
     profile_seeder = None
@@ -753,19 +807,33 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
         player_mode = "grpc"
         logger.info("player_dial_ok", addr=lg.player.addr, purpose="role_name_seeding")
 
-    # ── ㉓㉔ DSTicket v2(RS256)—— Python 侧未实现,配了就拒启 ────────────
-    # 静默用 HS256 顶替 RS256 的后果:DS 侧只认 RS256,票签出来了但一律被拒,
-    # 表现为"全服进不去场景"且**启动日志全绿**。所以只有拒启一条路。
+    # ── ㉓㉔ DSTicket v2(RS256)verifier ─────────────────────────────────
+    # Hub allocator 的 v2 票与 Session / legacy HS256 是**独立信任域**。Login 主登录链
+    # 和 VerifyDSTicket 诊断链共用同一份完整 overlap JWKS verifier,但分别显式注入。
+    v2_verifier: pdsticket.DSTicketVerifier | None = None
     if lg.ds_ticket.verifier_enabled():
-        logger.error(
-            "ds_ticket_v2_verifier_init_failed",
-            err="DSTicket v2 (RS256/JWKS) not implemented in the Python build",
-            hint="check login.ds_ticket.jwks_file / keyset_revision / active_kid;需要 v2 请用 Go 版跑 login",
+        try:
+            v2_verifier = pdsticket.new_ds_ticket_verifier_from_conf(
+                pdsticket.DSTicketConf(
+                    jwks_file=lg.ds_ticket.jwks_file,
+                    active_kid=lg.ds_ticket.active_kid,
+                    keyset_revision=lg.ds_ticket.keyset_revision,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "ds_ticket_v2_verifier_init_failed",
+                err=str(exc),
+                hint="check login.ds_ticket.jwks_file / keyset_revision / active_kid",
+            )
+            return 1
+        logger.info(
+            "ds_ticket_v2_verifier_ready",
+            active_kid=lg.ds_ticket.active_kid,
+            keyset_revision=lg.ds_ticket.keyset_revision,
         )
-        return 1
-    if lg.ds_ticket.signer_enabled():
-        # Go 的顺序:先 verifier 闸,再 "signer 必须配 verifier" 闸。这里 verifier
-        # 段已经拒启,能走到这说明 jwks_file 为空 —— 正好命中 Go 的第二道闸。
+    if lg.ds_ticket.signer_enabled() and v2_verifier is None:
+        # 只签不验 = Login 收到 hub_allocator 回的 RS256 票时无从校验。
         logger.error(
             "ds_ticket_v2_signer_requires_verifier",
             hint="Login 需要校验 Hub allocator 返回的 RS256 票据，请配置完整的重叠期 JWKS",
@@ -862,6 +930,12 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
         )
 
     login_uc.set_require_hub_assignment_binding(lg.require_hub_assignment_binding)
+    # matchmaker 耐久权威(presence 未命中 BATTLE 时的第二次确认;双在场窗口的唯一封口)。
+    login_uc.set_match_context_resolver(match_resolver)
+    # RS256 档位:只看 login.ds_ticket 配没配 verifier(Go `rs256DSTicketProfileEnabled`
+    # = `v2Verifier != nil`)。它与 require_hub_assignment_binding 两轴正交,
+    # 共同决定 `_strict_battle_gate_profile`。
+    login_uc.set_rs256_ds_ticket_profile(v2_verifier is not None)
     login_uc.set_role_ledger(role_ledger)
     if profile_seeder is not None:
         login_uc.set_profile_seeder(profile_seeder)
@@ -916,16 +990,68 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
             hint="未配 node.redis_client:带完整归属绑定的 Hub 票将因权威不可判定被拒(fail-closed)",
         )
 
-    # ── ㉖㉗ v2 signer(未实现,已在 ㉓㉔ 拒启)/ ㉘ Model B ────────────────
-    # ㉖㉗ 的两个条件(signer_enabled)在上面已经 return 1,走到这里必然未启用 v2。
-    if cfg.ds_auth.authority_mode_redis():
-        # Go 的 model_b_requires_ds_ticket_v2_signer:B1 k8s Login 只允许 RS256
-        # battle 票。Python 没有 v2 签发能力 → 这个组合永远不成立,拒启。
+    # ── ㉖㉗ v2 signer / ㉘ Model B ──────────────────────────────────────
+    # DSTicket v2(RS256,方案 B):配了私钥即启用;启用后 login 侧 battle 票**全部**
+    # 走 v2 实例绑定签发,hub 票拒签(v2 hub 票只能由 hub_allocator 签,它才有实例
+    # 绑定权威)。加载失败直接拒启(fail-closed)。
+    if lg.ds_ticket.signer_enabled():
+        try:
+            v2_signer = pdsticket.new_ds_ticket_signer_from_conf(
+                pdsticket.DSTicketConf(
+                    private_key_file=lg.ds_ticket.private_key_file,
+                    active_kid=lg.ds_ticket.active_kid,
+                    ttl=lg.ds_ticket.ttl_td() or None,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "ds_ticket_v2_signer_init_failed",
+                err=str(exc),
+                hint="check login.ds_ticket.private_key_file / active_kid / ttl",
+            )
+            return 1
+        if hub_mode != "grpc":
+            # v2 档下 login 回退自签的 HS256 hub 票会被 v2 DS 全拒 —— 半完成配置,拒启。
+            logger.error(
+                "ds_ticket_v2_requires_hub_allocator",
+                hub_assigner=hub_mode,
+                hint=(
+                    "ds_ticket v2 启用时必须配置 login.hub.addr"
+                    "(hub 票只能由 hub_allocator 签)"
+                ),
+            )
+            return 1
+        ticket_uc.set_ds_ticket_v2_signer(v2_signer)
+        logger.info(
+            "ds_ticket_v2_signer_ready",
+            kid=v2_signer.kid(),
+            ttl=godur.duration_string(v2_signer.ttl()),
+        )
+    if cfg.ds_auth.authority_mode_redis() and not lg.ds_ticket.signer_enabled():
         logger.error(
             "model_b_requires_ds_ticket_v2_signer",
-            hint="B1 k8s Login 只允许 RS256 battle 票；Python 版未实现 DSTicket v2,请用 Go 版跑 login",
+            hint="B1 k8s Login 只允许 RS256 battle 票；配置 login.ds_ticket.private_key_file + active_kid",
         )
         return 1
+    if v2_verifier is not None:
+        ticket_uc.set_ds_ticket_v2_verifier(v2_verifier)
+
+    # ── Battle 签票 / Hub 放行的 roster 权威门 ───────────────────────────
+    # 未注入时 battle 签票 fail-closed(ErrUnavailable)—— 绝不"没有权威就直接签":
+    # 那正是"知道 match_id 就能拿到那局进场票"的旁路。
+    if rdb is not None:
+        ticket_uc.set_battle_ticket_authorizer(
+            lbattleroute.RedisBattleTicketAuthorizer(
+                rdb,
+                require_model_b=cfg.ds_auth.authority_mode_redis(),
+                max_heartbeat_age_sec=(
+                    cfg.ds_auth.active_heartbeat_max_age_td().total_seconds()
+                ),
+            )
+        )
+    # 必须在对外监听**之前**注入:issuer 为 None 且 locator 已报 BATTLE 时,
+    # `_try_battle_reconnect` 一律 ErrUnavailable —— 绝不回退到直签票或继续 Hub 链。
+    login_uc.set_battle_ticket_issuer(ticket_uc)
 
     # ── ㉙ DS 回调守卫 ───────────────────────────────────────────────────
     # mode 拼错必须启动即失败,不能静默回落 off —— 那等于把一道安全门悄悄关掉,
@@ -1028,19 +1154,37 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
 
     # ── ㉛ capability fence ──────────────────────────────────────────────
     # Go 在 service_ready 之后才 Acquire,这里保持同序。
-    # Python 未实现 dsauthfence 运行时(capability 注册 + 陈旧回收 + writer epoch),
-    # 需要它的档位一律拒启:没有 fence 的 login 会在失租后继续消费 DS 入场票,
-    # 而"失租"这件事本身没有任何本地信号。
+    # 向 etcd 注册一份带租约的 capability 并守望失租:失租 / epoch 回退的旧 login
+    # writer 必须**立即退出**,否则它会继续消费 DS 入场票 —— 而"失租"这件事本身
+    # 没有任何本地信号。
     fence_cfg, fence_enabled = cfg.capability_fence()
+    fence: dsauthfence.Holder | None = None
     if fence_enabled:
-        logger.error(
-            "login_ds_auth_fence_acquire_failed",
-            err="dsauthfence runtime not implemented in the Python build",
-            etcd_prefix=fence_cfg.etcd_prefix,
-            keyset_revision=fence_cfg.keyset_revision,
-            hint="需要 capability fence(ds_auth.authority_mode=redis 或 require_hub_assignment_binding)请用 Go 版跑 login",
+        try:
+            fence = await dsauthfence.acquire_runtime(
+                dsauthfence.RuntimeConfig(
+                    endpoints=list(fence_cfg.etcd_endpoints),
+                    prefix=fence_cfg.etcd_prefix,
+                    service=SERVICE_NAME,
+                    keyset_revision=fence_cfg.keyset_revision,
+                    writer_epoch=dsauthfence.PROTOCOL_EPOCH_V2,
+                    lease_ttl_sec=fence_cfg.etcd_lease_ttl_sec,
+                    dial_timeout_sec=fence_cfg.etcd_dial_timeout_td().total_seconds(),
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            logger.error("login_ds_auth_fence_acquire_failed", err=str(exc))
+            return 1
+        background.append(
+            ("login_ds_auth_fence_lost_watch", lambda: _watch_fence_lost(fence))
         )
-        return 1
+        logger.info(
+            "login_ds_auth_fence_ready",
+            required_writer_epoch=fence.required_epoch(),
+            reclaimed_stale_capability=fence.reclaimed,
+        )
 
     try:
         await pserver.run(
@@ -1057,7 +1201,12 @@ async def _run_with_pool(  # noqa: C901, PLR0911, PLR0912, PLR0915
         # 客户端 channel 逐个关掉。Go 侧是 main 的一串 defer conn.Close();
         # 漏关的表现是进程退出时 grpc.aio 打一堆 "channel not closed" 噪音,
         # 把真正的退出原因埋掉。
-        for client in (notifier, hub_assigner, profile_seeder, owner_client):
+        if fence is not None:
+            with contextlib.suppress(Exception):
+                await fence.close()
+        for client in (
+            notifier, hub_assigner, profile_seeder, owner_client, match_resolver,
+        ):
             if client is None:
                 continue
             with contextlib.suppress(Exception):

@@ -103,10 +103,32 @@ def budgets() -> list[dbguard.TableBudget]:
     ]
 
 
-# ── 列级字节预算(Go 的 BigFields)—— Python 侧未接线 ─────────────────────────
+# ── 列级字节预算(Go 的 BigFields)─────────────────────────────────────────
 #
-# Go 有 dbguard.ColumnBudget(全表扫描,仅人工 / 低频触发:match_release_outbox.payload
-# 768B 预警、battle_exit_proof_outbox.payload 1536B 预警)。共享的 pandorapy/dbguard.py
-# **没有** ColumnBudget 类型,而共享件本轮禁改 —— 这里如实留白而不是自己造一份:
-# 造一份平行实现会让两栈的列预警阈值各自漂移,而两边都"跑得过"。
-# 需要它时应在 pandorapy/dbguard.py 里补 ColumnBudget(见交付说明 shared_files_needed)。
+# ⚠️ 与 `budgets()` 的调用时机**完全不同**:表级走 information_schema(毫秒级、
+# 不锁表)可以挂周期 ticker;列级是 `MAX(LENGTH(col))` **全表扫描**,只在
+# ①表级 avg_row_bytes 告警后人工定位、②天级低频巡检时跑。
+# 别把它接到 sweep ticker 上 —— 那会把生产库扫死。
+def big_fields() -> list[dbguard.ColumnBudget]:
+    """列级字节预算 —— 与 Go `data.BigFields()` 逐字段一致。
+
+    两条都是 75% 预警线:等撞到列类型上限才发现,写入已经在失败了(严格模式下
+    Error 1406),而这条巡检的意义正是**在写失败之前**给出排查窗口。
+    """
+    return [
+        dbguard.ColumnBudget(
+            table="match_release_outbox",
+            column="payload",
+            max_bytes=768,
+            note=(
+                "列是 VARBINARY(1024);768=75% 预警线。超限说明 player_ids 随队伍规模胀大,"
+                "再涨会让整场结算的释放出箱写失败"
+            ),
+        ),
+        dbguard.ColumnBudget(
+            table="battle_exit_proof_outbox",
+            column="payload",
+            max_bytes=1536,
+            note="列是 VARBINARY(2048);1536=75% 预警线",
+        ),
+    ]

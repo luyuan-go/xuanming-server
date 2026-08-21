@@ -50,6 +50,11 @@ auction:
   max_quantity_per_order: 1000000
   max_price: 1000000000
   max_active_orders_per_player: 200  # 单玩家 PENDING+活跃挂单硬上限,Redis Lua 原子预留
+  # rate_quota_per_min: 挂单/出价/撤单的 per-player 每分钟频率配额(anti-abuse §6 第 6 项)。
+  #   与 max_active_orders_per_player 总量闸正交:总量限「同时挂多少」,本值限「刷多快」。
+  #   显式写出而不依赖代码默认值:Go 与 Python 两栈各持一份默认(20),只改一侧
+  #   会在灰度期让同一玩家在两种副本上限额不同且两边日志都正常。
+  rate_quota_per_min: 60
   default_list_limit: 50
   max_list_limit: 200
   # inventory 内网 gRPC 地址(:20015)。配上 → 成交走真实结算(SettleAuctionMatch:

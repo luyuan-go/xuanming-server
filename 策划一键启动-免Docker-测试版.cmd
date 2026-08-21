@@ -21,17 +21,17 @@ rem  portable binaries unpacked under run\localinfra\ - nothing is
 rem  installed into Windows, nothing is registered as a service, and
 rem  removing that folder removes everything.
 rem
-rem  Accounts and DB schema are identical to the Docker path. MySQL uses a
-rem  verified private port selected from 13307..13398, so an existing Docker
-rem  MySQL on 3307 is never reused, migrated, or stopped. Runtime config copies
-rem  are generated under run\localinfra; tracked service YAML stays unchanged:
-rem    MySQL 127.0.0.1:auto(13307..13398)   Redis 127.0.0.1:6380
-rem    Kafka 127.0.0.1:9093   Envoy :8443 (client) / 127.0.0.1:8444 (DS)
+rem  SQL uses the remote planner workspace when central-mysql.json is present.
+rem  A machine that has never enrolled remotely uses its exact-owned local
+rem  MySQL; once central state exists, failures never fall back to local data.
+rem  Runtime config copies stay under run\localinfra; tracked YAML is unchanged:
+rem    MySQL local-owned:auto(13307..13398) or central-managed
+rem    Redis 127.0.0.1:6380   Kafka 127.0.0.1:9093
+rem    Envoy :8443 (client) / 127.0.0.1:8444 (DS)
 rem
 rem  Differences you should know about:
-rem    * TiDB is NOT started (TiKV has no usable native Windows build).
-rem      friend / chat / guild / mail connect to the local MySQL
-rem      pandora_social database instead. Same schema, same code path.
+rem    * The current central enrollment contract supports Oracle MySQL only;
+rem      do not point it at TiDB. TiDB needs its own validated adapter.
 rem    * Prometheus / Grafana / Loki are NOT started (planners do not
 rem      use them; saves ~1 GB of RAM).
 rem    * The local Envoy is v1.28.0 (the last official Windows build).
@@ -55,19 +55,35 @@ rem  Stop: pwsh tools\scripts\start.ps1 -Mode local -NoDocker -Down
 rem ============================================================
 setlocal
 cd /d "%~dp0"
+echo [planner] launcher=%~f0
+set "PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL="
+if exist "%~dp0installers\planner-db\central-mysql.json" (
+  set "PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL=1"
+  echo [planner] database=central-managed
+) else (
+  echo [planner] database=local-owned ^(remote bundle not installed^)
+)
 
 rem This project requires PowerShell 7 (pwsh) and does NOT run on Windows
 rem PowerShell 5.1. If the machine has no pwsh, bootstrap_pwsh.cmd unpacks the
 rem official portable build under run\localinfra - no installer, no admin, no
 rem change to the machine. Read that file for why it is not the .msi.
+for /f "tokens=1-4 delims=:., " %%A in ("%TIME: =0%") do set /a "_PANDORA_BOOT_START_CS=(1%%A-100)*360000+(1%%B-100)*6000+(1%%C-100)*100+(1%%D-100)"
+set "PANDORA_CMD_STARTED_CS=%_PANDORA_BOOT_START_CS%"
 call "%~dp0tools\scripts\bootstrap_pwsh.cmd"
-if errorlevel 1 (
+set "_PANDORA_BOOTSTRAP_RC=%ERRORLEVEL%"
+for /f "tokens=1-4 delims=:., " %%A in ("%TIME: =0%") do set /a "_PANDORA_BOOT_END_CS=(1%%A-100)*360000+(1%%B-100)*6000+(1%%C-100)*100+(1%%D-100)"
+set /a "_PANDORA_BOOT_ELAPSED_CS=_PANDORA_BOOT_END_CS-_PANDORA_BOOT_START_CS"
+if %_PANDORA_BOOT_ELAPSED_CS% LSS 0 set /a "_PANDORA_BOOT_ELAPSED_CS+=8640000"
+set /a "PANDORA_PWSH_BOOTSTRAP_MS=_PANDORA_BOOT_ELAPSED_CS*10"
+if not "%_PANDORA_BOOTSTRAP_RC%"=="0" (
+  echo [timing] powershell-bootstrap %PANDORA_PWSH_BOOTSTRAP_MS% ms failed
   rem The web admin runs this headless; pausing there would hang it forever.
   rem Keep an interactive failure window visible, but suppress the standard
   rem "Press any key" success-looking prompt.
   echo [ERROR] PowerShell bootstrap failed. See the error above.
   if not defined PANDORA_NONINTERACTIVE pause >nul
-  exit /b 1
+  exit /b %_PANDORA_BOOTSTRAP_RC%
 )
 rem Quote it: with the portable build this is a full path, which can contain spaces.
 set "PS=%PANDORA_PWSH%"

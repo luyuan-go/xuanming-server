@@ -9,7 +9,7 @@
 // 关键规则:
 //   - LEADER 不能直接退会 / 被踢:必须先 TransferLeader 或 DisbandGuild(否则公会无主)
 //   - 推送原则 2:通知不回发操作者本人(申请通知发给会长 / 官员;审批结果发给申请人)
-//   - nickname 留空:由客户端按 player_id 解析展示名(CLAUDE.md §5.8 最小数据单位)
+//   - 入会申请 nickname/player_no 由 player/login 权威批量投影；审批仍只认 player_id
 //   - 客户端只拿可见结构(CLAUDE.md §14):RPC 只回 Guild / GuildMember / GuildJoinRequest
 package biz
 
@@ -21,6 +21,7 @@ import (
 
 	"github.com/luyuancpp/pandora/pkg/errcode"
 	plog "github.com/luyuancpp/pandora/pkg/log"
+	"github.com/luyuancpp/pandora/pkg/playerdisplay"
 	guildv1 "github.com/luyuancpp/pandora/proto/gen/go/pandora/guild/v1"
 
 	"github.com/luyuancpp/pandora/services/social/guild/internal/conf"
@@ -33,6 +34,16 @@ type GuildEventPusher interface {
 	PushGuildEvent(ctx context.Context, toPlayerID uint64, evt *guildv1.GuildEvent) error
 }
 
+// PlayerNameResolver / PlayerNoResolver 只提供客户端展示投影；审批权限与
+// request identity 始终由原始 player_id 决定。
+type PlayerNameResolver interface {
+	ResolvePlayerNames(ctx context.Context, playerIDs []uint64) (map[uint64]string, error)
+}
+
+type PlayerNoResolver interface {
+	ResolvePlayerNos(ctx context.Context, playerIDs []uint64) (map[uint64]uint64, error)
+}
+
 // GuildUsecase 是 guild 服务公会业务逻辑核心。
 type GuildUsecase struct {
 	repo     data.GuildRepo
@@ -43,6 +54,9 @@ type GuildUsecase struct {
 
 	// rateQuota 入会申请频率配额(anti-abuse §6 第 6 项)。可为 nil(不限)。
 	rateQuota ActionRateQuota
+
+	playerNameResolver PlayerNameResolver
+	playerNoResolver   PlayerNoResolver
 
 	// 缓存降级日志限流(模式 C):GetGuild / GetMyGuild 是「全服共享热 key」的高 QPS 只读
 	// 入口,Redis 一抖就按请求量刷屏,且一次请求可能叠 get + 回填 set 两条。缓存是显式弱
@@ -71,6 +85,14 @@ type ActionRateQuota interface {
 // SetRateQuota 注入频率配额(可选;不注入 = 不限,dev 无 Redis 联调兼容)。
 func (u *GuildUsecase) SetRateQuota(q ActionRateQuota) {
 	u.rateQuota = q
+}
+
+func (u *GuildUsecase) SetPlayerNameResolver(r PlayerNameResolver) {
+	u.playerNameResolver = r
+}
+
+func (u *GuildUsecase) SetPlayerNoResolver(r PlayerNoResolver) {
+	u.playerNoResolver = r
 }
 
 // allowAction 频率配额门:窗内超额返回 ErrRateLimited(先于一切副作用);fail-open。
@@ -535,13 +557,31 @@ func (u *GuildUsecase) ListJoinRequests(ctx context.Context, requesterID, cursor
 	if err != nil {
 		return nil, 0, err
 	}
+	playerIDs := make([]uint64, 0, len(rows))
+	for _, request := range rows {
+		if request.PlayerID != 0 {
+			playerIDs = append(playerIDs, request.PlayerID)
+		}
+	}
+	projection, err := playerdisplay.Resolve(ctx, playerIDs, u.playerNameResolver, u.playerNoResolver)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, failure := range projection.Failures {
+		plog.With(ctx).Warnw("msg", "guild_join_request_display_resolve_failed",
+			"dependency", failure.Dependency,
+			"batch_size", len(failure.PlayerIDs),
+			"err", failure.Err)
+	}
 	out := make([]*guildv1.GuildJoinRequest, 0, len(rows))
 	for _, rq := range rows {
 		out = append(out, &guildv1.GuildJoinRequest{
 			RequestId:    rq.RequestID,
 			GuildId:      rq.GuildID,
 			FromPlayerId: rq.PlayerID,
+			FromNickname: projection.Names[rq.PlayerID],
 			CreatedMs:    rq.CreatedMs,
+			FromPlayerNo: projection.Numbers[rq.PlayerID],
 		})
 	}
 	var next uint64

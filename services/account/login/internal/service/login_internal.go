@@ -34,8 +34,9 @@ func NewLoginInternalService(uc *biz.PlayerNoResolveUsecase, verifier playerNoRe
 	return &LoginInternalService{uc: uc, verifier: verifier}
 }
 
-// ResolvePlayerNos 只接受 player_id，并把规范化后的完整请求体绑定到 team 服务身份签名。
-// 账号库查询失败会返回错误码；team 调用方按展示弱依赖把该错误降级成 player_no=0。
+// ResolvePlayerNos 只接受 player_id，并把规范化后的完整请求体绑定到
+// team/friend/guild 各自独立的内部服务身份签名。账号库查询失败会返回错误码；
+// 调用方按展示弱依赖把该错误降级成 player_no=0。
 func (s *LoginInternalService) ResolvePlayerNos(
 	ctx context.Context,
 	req *loginv1.ResolvePlayerNosRequest,
@@ -67,7 +68,7 @@ func (s *LoginInternalService) ResolvePlayerNos(
 	return resolvePlayerNosFromAuthority(ctx, s.uc, playerIDs), nil
 }
 
-// resolvePlayerNosFromAuthority 是 Team internal RPC 与 DS-only RPC 共用的单批权威读取。
+// resolvePlayerNosFromAuthority 是 team/friend/guild internal RPC 与 DS-only RPC 共用的单批权威读取。
 // 调用方必须先完成各自的身份校验与 normalizePlayerNoIDs；查询失败绝不返回部分 entries。
 func resolvePlayerNosFromAuthority(
 	ctx context.Context,

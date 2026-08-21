@@ -1,0 +1,220 @@
+# Pandora hub_allocator 服务开发期配置(W4 ⑤,2026-06-06)。
+#
+# - gRPC :20021 / HTTP :21021(仅 /metrics)
+# - Redis 强依赖(大厅 DS 分片镜像 + 玩家归属 + 心跳超时 ZSET 扫描)
+# - JWT 强依赖(AssignHub / TransferHub 签 hub DSTicket,不变量 §3)
+# - W4 ⑤ 用 MockHubFleetProvider(种确定性假分片),真 Agones Fleet 接入留后续
+# - duration 字段用 pkg/config.Duration,yaml 可直接写 "15s"
+# - dev: enable_reflection=true 便于 grpcurl 联调
+
+server:
+  grpc:
+    network: tcp
+    addr: ":20021"
+    timeout: "15s"              # demo:弱网/本机抖动下 unary RPC 放宽;prod 再按接口收紧
+    enable_reflection: true     # dev 开;prod 关(零值=false)
+    max_conn_age: "15m"         # 达龄 GOAWAY 重拨,滚动更新时流量能滚到新副本(zero-downtime §6.2)
+  http:
+    network: tcp
+    addr: ":21021"
+
+node:
+  node_id: 1
+  redis_client:
+    host: "127.0.0.1:16379"
+    db: 0
+    dial_timeout: "2s"
+    # 2026-08-04 由 1s 放宽到 5s(仅 dev),与 ds_allocator-dev.yaml 同因同改:
+    # 本机同时跑 UE 编辑器 + 多个 DS + 客户端 + 21 个 Go 服务时,单次 Redis 读偶发超 1s
+    # 会抛原始错误 → 上层判 ErrUnknown → 分配/心跳整体失败。生产不受影响(prod 配置不动)。
+    read_timeout: "5s"
+    write_timeout: "5s"
+
+# jwt: 给玩家签 hub DSTicket(不变量 §3 短时效 5min)
+# secret/issuer/audience 必须与 login 服务 + Envoy jwt_authn provider 完全一致
+jwt:
+  issuer: "pandora-login"
+  audience: "pandora-client"
+  secret: "pandora-dev-jwt-secret-change-me-32!"
+  session_ttl: "24h"
+  ds_ticket_ttl: "5m"
+
+# ── DS 回调服务令牌(审核 P1 #1:DS→后端回调认证)─────────────────────────────
+# hub_allocator 双角色:①签发——ListShards 发现 ready Hub DS 时签 hub 令牌(绑 pod),
+# 经 GameServer annotation pandora.dev/ds-token(agones,剩余寿命 < TTL/3 自动续期)/
+# PANDORA_DS_TOKEN env(local)下发;②校验——Heartbeat 按 mode 验证令牌 + pod 范围绑定。
+# mode: off(默认;UE DS 未带令牌前必须 off)→ permissive(灰度观察)→ enforce(强制)。
+# secret 配了就签发(无害,DS 拿不到签名密钥);dev 与 jwt.secret 同值,生产独立密钥。
+ds_auth:
+  # mode=local 的新 UE 使用机械隔离 local-off-v1：只接受 off+legacy，且 secret 仍必填用于
+  # 签发完整 Model-B tuple；permissive/enforce/redis 或缺 signer 会启动失败，不会退回 legacy JWT。
+  mode: "off"
+  authority_mode: "legacy"
+  active_heartbeat_max_age: "30s"
+  secret: "pandora-dev-jwt-secret-change-me-32!"
+  # authority_mode=redis 时以下机械 fence 必填；dev/legacy 保持空且不会连接 etcd。
+  # fence:
+  #   etcd_endpoints: ["127.0.0.1:2380"]
+  #   etcd_prefix: "/pandora/ds-auth/"
+  #   etcd_lease_ttl_sec: 15
+  #   etcd_dial_timeout: "5s"
+  #   keyset_revision: "pandora-ds-auth-v2-r1"
+
+# kafka producer 配置(发布 pandora.hub.migrate 强制整合迁移通知,push 服务订阅消费)。
+# 弱依赖:brokers 不通只警告不阫塞。brokers 为空 + consolidation_enabled=true 时,
+# 迁移仅靠 Hub DS drain 心跳指令兜底(无无缝倒计时推送)。brokers 9093 = Pandora 端口规划。
+kafka:
+  brokers: ["127.0.0.1:9093"]
+  dial_timeout: "2s"
+  write_timeout: "5s"
+  idempotent: true
+
+# ── Hub DS 分片来源模式(标准两模式开关,与 ds_allocator.mode 对齐)─────────────
+# mode 单一开关决定大厅 DS 从哪来:
+#   "local"  → 本机 exec 一个常驻 Windows Hub DS 进程(Windows 单机自测,见下方 local_hub)
+#   "agones" → k8s Agones Fleet 发现 Hub DS 分片(Linux 线上,见下方 agones)
+#   "mock"   → 确定性假分片(无真实 Hub DS,离线联调)
+# mode 为权威开关;留空时才回退按 agones.enabled 推导(向后兼容旧配置)。
+# dev 默认 local:登录成功后 login 拿到本机 Hub DS 地址下发客户端,客户端 ClientTravel 进大厅。
+# 上线切 "agones"。
+mode: "mock"
+
+hub:
+  # heartbeat_timeout: Hub DS 心跳超时阈值(不变量 §4),超过没收到 Heartbeat → 分片 draining 停止分配
+  heartbeat_timeout: "30s"
+
+  # owner 迁移双写(owner-authority.md migrate ①③④⑥):签票点 Begin(HUB) + 实例租约 +
+  # census 代提交 Admit。dev 一键启动已含 owner 服务(:20017);弱依赖,owner 掉线仅告警。
+  # contract 阶段全链验证后才置 owner_lease_required: true。
+  owner_addr: "127.0.0.1:20017"
+  # sweep_interval: 后台心跳超时扫描间隔
+  sweep_interval: "5s"
+  # shard_ttl: 分片镜像 Redis key TTL(每次 Assign/Heartbeat 刷新)
+  shard_ttl: "30m"
+  # assignment_ttl: 玩家→分片归属 Redis key TTL(每次 Assign/Transfer 刷新)
+  assignment_ttl: "30m"
+  # reservation_ttl: 必须覆盖 B1 DSTicket 最长 3m + DS 验票 leeway 15s，且不超过 assignment_ttl
+  reservation_ttl: "3m15s"
+  # default_region: AssignHub 未指定 region 时的兜底分区
+  default_region: "cn"
+  # default_capacity: 单分片人数上限(大厅 500 人/实例)
+  default_capacity: 500
+  # autoscale_enabled: Hub Fleet 自动扩缩容。
+  # ⚠️ 只在 agones.enabled=true(真 Fleet scaler)时生效:Mock provider 是拓扑-only 不实现 scaler,
+  # 开了也不会运行(进程启动会打 autoscale_inert_under_mock 告警)。dev 默认走 Mock → 此处保持 false。
+  # 想在本机验真实扩缩容:设 agones.enabled=true + minikube/Agones 环境。整合逻辑本身有 biz 单测覆盖。
+  autoscale_enabled: false
+  # players_per_hub: 单 Hub 目标承载人数(>500 自动扩容到新大厅)
+  players_per_hub: 500
+  # min_replicas: 开服默认拉起大厅副本数(可配置)
+  min_replicas: 1
+  # max_replicas: 大厅副本上限(防止异常扩容)
+  max_replicas: 20
+  # consolidation_enabled: 强制整合(低负载时把人换到该去的分片,排空后缩容)。
+  # 依赖 autoscale_enabled=true(故同样需 agones.enabled=true 才生效)+ kafka.brokers(推无缝迁移通知)。
+  # Mock 模式下不会运行(避免对假分片/假玩家跑搬迁误导);搬迁逻辑由 biz 单测验证。
+  consolidation_enabled: false
+  # migrate_grace_seconds: 迁移优雅倒计时(秒),客户端/Hub DS 提示倒计时 + 缩容回收最短等待
+  migrate_grace_seconds: 30
+  # consolidation_batch: 单次 reconcile 每个排空分片最多迁移人数(防撑死,超过部分下个周期续排)
+  consolidation_batch: 50
+  # optimistic_retry: WATCH/MULTI/EXEC 乐观锁冲突最大重试次数
+  optimistic_retry: 3
+  # transfer_cooldown: 玩家主动切线冷却(防刷);窗口内再切返回 ERR_HUB_TRANSFER_COOLDOWN。<=0 不限流
+  transfer_cooldown: "10s"
+  # locator_addr: player_locator gRPC 地址(玩家切线护栏:战斗/匹配中禁切)。
+  # 弱依赖:留空则跳过位置检查。dev 直连 player_locator 服务 gRPC :20006。
+  locator_addr: ""
+  # writer_lease_mode: 写者继任租约档位(enforce|warmup|off;留空=enforce,行为不变)。
+  # 只在"从不含 writerlease 的旧镜像首次升级"时才需要临时改成 warmup 走两跳,
+  # 完整发布合约见 docs/design/session-generation-rollout.md §5.4。
+  writer_lease_mode: "enforce"
+  # mock_shard_count: W4 ⑤ MockHubFleetProvider 每 region 种的假分片数
+  mock_shard_count: 3
+  # mock_hub_addr_host: Mock 分片返回的假 Hub DS host
+  mock_hub_addr_host: "127.0.0.1"
+  # mock_hub_port_base: Mock 分片端口基址(分片 port = base + shard_id)
+  mock_hub_port_base: 7776
+
+# W4 ⑬: 真 Agones Hub DS Fleet 发现配置。
+# dev 默认 enabled=false 走 Mock(本机无 k8s/Agones 也能跑 hub_allocator)。
+# 本地 minikube 联调:enabled=true + fleet_name + api_server(minikube apiserver) + token_path。
+# 集群内运行时 api_server/token_path/ca_path 可留空用 in-cluster 默认。
+agones:
+  enabled: false
+  api_server: "https://kubernetes.default.svc"  # in-cluster 默认;minikube 外联临时改本地,勿提交
+  namespace: "default"
+  fleet_name: "pandora-hub"
+  token_path: "/var/run/secrets/kubernetes.io/serviceaccount/token"  # in-cluster 默认;"-" 禁用 token,本机临时值勿提交
+  ca_path: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"     # in-cluster 默认
+  insecure_skip_tls_verify: false  # in-cluster=false;minikube 外联自签时本地临时置 true,勿提交
+  list_timeout: "5s"
+
+# 本机拉起一个常驻 Windows Hub DS 调试模式(mode=local 时生效)。
+# hub_allocator 首次 AssignHub 时 exec 一个常驻 UE Windows DS(加载大厅关卡 / PandoraHubGameMode),
+# 把它作为唯一分片返回;进程随 hub_allocator 退出而 Kill。常驻不按对局回收(与战斗 DS 不同)。
+# 与战斗 DS 同一个 staged/cooked PandoraServer.exe,靠 map_name 区分大厅/战斗关卡;端口与战斗 DS(7800+)错开用 7777。
+# 不能指向 Pandora/Binaries/Win64 裸二进制,否则缺 cooked 内容会在加载资产时崩溃。
+# 跨机器移植:下面写死的是本开发机路径;换机器/换盘符无需手改——只要把客户端 Client 仓库放到
+# 与本服务器仓库平级的目录,play.ps1 -Battle 会自动探测 Packages\Server_Win64_*\WindowsServer\
+# PandoraServer.exe 并经 PANDORA_DS_EXE / PANDORA_DS_DIR 注入;此处路径在本机不存在时自动回退到注入值。
+local_hub:
+  # launcher:本机 Hub DS 的「进程形态」,与 ds_allocator.local_ds.launcher 对称,两种模式并存,
+  # 只改这一行即可切换,后端链路一字不改(两种形态都带 -server,NetMode 恒为 NM_DedicatedServer,
+  # 大厅心跳/SetLocationHub/在线准入完全一致)。
+  #   packaged (默认) 跑打包好的 PandoraServer.exe。内容已 cook,改 .uasset 要重新出包才生效。
+  #   editor          跑引擎的 UnrealEditor.exe + 下面的 project_path,直接读工程里未 cook 的
+  #                   Content/。策划存盘后重进大厅即生效,免出包;代价是启动慢(要加载一大批
+  #                   编辑器模块、读散装资产、首次可能现场构 DDC),首次进大厅可能要等一两分钟。
+  #                   注:editor 形态**不编 shader** —— -server 下引擎跳过全局与材质着色器编译。
+  # 也可用环境变量 PANDORA_DS_LAUNCHER=editor 临时切换(同时作用于大厅和战斗 DS),免改本文件。
+  launcher: "packaged"
+  # 策划机可改用 ${PANDORA_DS_ROOT} 拼接(指向客户端仓库【同级】的出包根目录,如 F:/work):
+  #   executable_path: "${PANDORA_DS_ROOT}/Packages/Server_Win64_Shipping/WindowsServer/PandoraServer.exe"
+  # 路径分隔符正斜杠 / 反斜杠都行(go 侧 filepath.FromSlash 归一化);下面是本开发机绝对路径。
+  # launcher=editor 时这里要改成引擎的 UnrealEditor.exe,例如(策划机引擎目录各不相同,按本机实际填):
+  #   executable_path: "E:/Program Files/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe"
+  # 2026-08-04:出包输出根已从客户端 SVN 工作副本内移到与之【平级】(F:\work\Packages)。
+  executable_path: "F:\\work\\Packages\\Server_Win64_Development\\WindowsServer\\PandoraServer.exe"
+  # project_path:仅 launcher=editor 时必填(packaged 忽略)。UE 只把命令行第一个不以 '-' 开头的
+  # token 当工程,所以它会被排在关卡 URL 之前;填错/不存在会在启动时直接报错,不会静默秒退。
+  # 也可用环境变量 PANDORA_DS_UPROJECT 注入。
+  # project_path: "F:/work/Pandora-Client-SVN/Pandora/Pandora.uproject"
+  map_name: "/Game/Test/Level/MainCity?game=/Script/Pandora.PandoraHubGameMode" # 大厅关卡(留空用 DS 默认关卡)
+  # advertise_host:返回给客户端 NetDriver 连接的大厅 host。本机自测用 127.0.0.1;
+  # 内网测试服(play.ps1 -Battle -Intranet)会自动探测本机内网 IPv4 并经环境变量
+  # PANDORA_DS_ADVERTISE_HOST 覆盖此值(优先级高于这里的写死值,策划零操作,无需改本文件)。
+  advertise_host: "127.0.0.1"
+  port: 7777                                   # 常驻 Hub DS 监听端口
+  # region: "cn"                               # 留空取 hub.default_region
+  # capacity: 500                              # 留空取 hub.default_capacity
+  working_dir: "F:\\work\\Packages\\Server_Win64_Development\\WindowsServer" # DS 进程工作目录(staged 根目录)
+  log_dir: "run/dev/logs/ds"                   # Hub DS stdout/stderr 落 pandora-hub-local.log
+  # extra_args:追加 UE DS 命令行参数(本地 DS 面明文)。例:["-PANDORA_BACKEND=http://127.0.0.1:8444"]
+  #
+  # -NoZenAutoLaunch=127.0.0.1:8558 (2026-08-05):与 ds_allocator-dev.yaml 同因同解 —— 本机 IPv6
+  # 回环连出被拦(connect [::1]:8558 报 WSAEACCES 10013,127.0.0.1 正常),引擎默认按
+  # http://[::1]:8558 探活 Zen,每次 Hub DS 冷启动白等满健康超时(实测 ~30.9s)才降级文件 DDC。
+  # 改走 ConnectExisting 指向 IPv4,跳过等待且保住 Zen DDC 命中。两处必须一起改,否则 Hub 侧照付。
+  # 根治是放行本机 IPv6 回环;修好后删掉本行即可回到引擎默认。
+  #
+  # -AssetGatherSync=false (2026-08-05):同 ds_allocator-dev.yaml,把 -server 启动期的资产扫描
+  # 挪到后台线程(约 1 秒量级)。本段只在本机 local 形态被读,线上 Agones 不走这里。
+  extra_args: ["-NoZenAutoLaunch=127.0.0.1:8558", "-AssetGatherSync=false"]
+  extra_env:
+    PANDORA_HUB_ALLOCATOR_ADDR: "127.0.0.1:8444"
+    PANDORA_DS_ADMISSION_ADDR: "127.0.0.1:8444"
+    PANDORA_PLAYER_LOCATOR_ADDR: "127.0.0.1:8444"
+    # 本地 dev 的 Envoy DS 面 :8444 是明文 grpc-web(见 deploy/envoy/envoy.yaml pandora_ds_listener)。
+    PANDORA_DS_ALLOCATOR_TLS: "0"
+
+# 会话现行性门(R5 复审 P0-1,INC-20260722-004):校验客户端面请求 jti == login 会话权威
+# (pandora:sess,node.redis_client 指向的共享 Redis)当前一代,顶号后旧 JWT 立即失效。
+# dev 宽松档 require=false(gate 已装配时顶号/登出照常拒;仅漏配端点时跳过判定);
+# -Prod 产物由 gen_cluster_config.ps1 机械置 true(漏配端点拒启)。
+session_gate:
+  require: false
+  # 票据 sjti 绑定强制门(R7 收口,分阶段激活):false(默认)= 兼容档,ACK 收到空 sjti
+  # 告警放行(旧 Hub DS 不转发 sjti/旧签发面残票混版可用);true = 硬拒。
+  # 激活前提:全 fleet Hub DS 已转发 sjti、旧 DS 排空、等满一个票据最大 TTL。
+  require_ticket_sjti: false

@@ -38,6 +38,7 @@ from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy.services.matchmaker import helpers as h
 from pandorapy.services.matchmaker import presence_gate
+from pandorapy.services.matchmaker import region_affinity
 from pandorapy.services.matchmaker.clients import (
     ROSTER_LOCK_LEASE_MS,
     new_operation_id,
@@ -103,6 +104,15 @@ class MatchUsecase(MatchRpcMixin, MatchLoopMixin):
         self.tables = None
         self.entry_limiter = None
 
+        # 多 Region 部署(阶段 3)由 main 经 set_cell_router 注入,`_form_matches_in_pool`
+        # 随即升级为「region 内优先 + 跨 region 溢出」两级撮合;None = 单 Cell / dev,
+        # 走单桶贪心(历史行为,零分区开销)。对应 Go 的 `MatchUsecase.router`。
+        self.router = None
+        # 跨 region 策略参数。与 Go 同样自包含、不进 conf(阶段 3 装配时再从配置填充),
+        # 但默认值必须与 Go 的 DefaultRegionMatchPolicy() 逐个相同,否则两栈并排跑
+        # 同一批票据会在不同时机溢出。
+        self.region_policy = region_affinity.default_region_match_policy()
+
         # 撮合循环内部节流游标(只在单 goroutine/单 task 里读写,无需加锁)。
         self._last_liveness_sweep = 0.0
         self._last_start_reconcile = 0.0
@@ -124,6 +134,14 @@ class MatchUsecase(MatchRpcMixin, MatchLoopMixin):
 
     def set_entry_limiter(self, limiter) -> None:  # noqa: ANN001
         self.entry_limiter = limiter
+
+    def set_cell_router(self, router) -> None:  # noqa: ANN001 —— cellroute.Router
+        """注入确定性 region 路由器(可选,多 Region 部署用)。
+
+        对应 Go 的 `MatchUsecase.SetCellRouter`。用 setter 而非构造参数(与 Go 一致),
+        避免未启用的调用点被迫改签名。
+        """
+        self.router = router
 
     # ── 配置表派生的开局形状 ────────────────────────────────────────────────
 

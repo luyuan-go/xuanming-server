@@ -143,10 +143,15 @@ def test_gate_config_load_failed_on_broken_yaml(tmp_path: pathlib.Path) -> None:
 
 
 def test_gate_cellroute_init_failed_on_unsupported_mode(tmp_path: pathlib.Path) -> None:
-    """cell_route.mode 非空 = Python 侧只实现单 Cell → 拒启。
+    """cell_route.mode 不在 {"", static, etcd} 里 → 拒启。
 
     静默按单 Cell 跑的话玩家会被路由到错的 cell 且**不报错**(§14)。
-    事件名与 Go 的 cellroute_init_failed 相同(告警按事件名建),只是位置比 Go 早。
+    事件名与 Go 的 cellroute_init_failed 相同(告警按事件名建)。
+
+    ★ 2026-08-21 校正:本用例原先写的理由是「Python 侧只实现单 Cell」—— 那已随
+    `cellroute_etcd` 装配补齐而失效。现在 static / etcd 都是**合法**的(见
+    `test_matchmaker_region_affinity.test_valid_cell_route_modes_no_longer_rejected_at_config_load`),
+    只有真正不认识的 mode 才拒启。
     """
     path = _write(tmp_path, _MIN_YAML + '\ncell_route:\n  mode: "keyspace"\n')
     code, logs = _run_main(path)

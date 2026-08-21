@@ -550,6 +550,177 @@ owner 用它**拒**带玩家 JWT 的调用。同一个符号，两种相反的�
 扩到服务目录**全部 .py** 之后当场炸出 **87 处**未放行 `CancelledError` 的宽 except
 （`main.py` 的启动路径、`repo.py` 的数据层都有）。同一条判据，覆盖面差 5 倍。
 
+### 5.2.9 收尾批次（2026-08-21）：三条"没有任何现成闸能抓"的
+
+三条都不是"写错了"，是**写了但没接上 / 读错了地方 / 注释成了假证据**。共同点：
+测试全绿、服务照常 SERVING、日志零行。
+
+| # | 缺陷 | 后果 | 为什么没闸抓得到 |
+|---|---|---|---|
+| ① | `matchmaker/main.py:_self_region` 仍从 `cfg.model_extra["cell_route"]` 读，而 `cell_route` 已升格为 `BaseConf` 的 pydantic **正式字段** | pydantic 不把已声明字段放进 `model_extra` ⇒ 恒返回 0 ⇒ leader 选举分片键恒为 `.../r0` ⇒ **所有 region 副本挤进同一次选举，非 leader region 的撮合永久停摆且零错误日志**（违反 §9.20/§9.21） | `model_extra.get()` 语法完全合法，取不到就是 `None` 走默认分支。`auction/conf.py:255` 早把这个形状记成"历史教训"，但没人 grep 第二个读者 |
+| ② | 模块 docstring 与用例 docstring 仍写着"Python 侧只实现单 Cell，所以 static/etcd 都拒启" | `cellroute_etcd` 装配补齐后 static/etcd 已合法，注释变成**假的安全论据**——下一个人照它推理会得出错误结论 | 注释不参与执行 |
+| ③ | `inventory/main.py:_run_bag_journal_sweep` 定义了但**从没 append 进 background**（Go 侧 `cmd/inventory/main.go:255` 有 `go runBagJournalSweep(...)`） | `bag_journal` 只增表永不清理，违反 §9.24 | ruff 的 F401/F841 只管 import 与局部变量，**模块级函数没人调用不是 lint 错**；单测不会去调私有 `_run_*`；起服务、health、日志三个观测面与"接上了但没到清理时间"完全同形 |
+
+**新增的机械闸**：`test_service_layer_contract.py::test_background_runners_are_actually_wired`
+——扫每个 `services/*/main.py`，`_run_*` / `*_loop` 顶层协程定义了就必须在别处被引用。
+配套金丝雀 `test_the_runner_wiring_check_is_not_vacuous` 防它随命名约定变化而空转。
+
+> ⚠️ 这条检查的**第一版又误报了一次**（第三次，见 §5.2.8）：判据是
+> `re.findall(name, src) > 1`，而补接线时留的那句注释「此前 `_run_bag_journal_sweep`
+> 定义了但从未挂进 background」**自己就含这个名字**，把接线拆掉后检查照样打绿。
+> 改成数 AST 的 `ast.Name`(Load) 引用后立刻抓到。
+> **注释会抵消文本判据；能拿 AST 就别数文本。**
+>
+> 📌 当时以为这是一次孤立失误。**不是** —— 按同一形状复查后又找到两处（其中一处
+> 守着 §9.16 的排空在途），见 §5.2.10。
+
+**全仓对账**：把 Go 各 `cmd/*/main.go` 的 `go xxx(...)` 具名 goroutine 全部枚举
+（13 个 `runCapacityGuard` + leaderboard 双 sweep + mail / dialogue / owner / inventory
+各自的 sweep + inventory 的 `runLegacyBagMigration`），逐个确认 Python 有对应
+`background` 条目。除 ③ 外无遗漏。**移植 `main.go` 的标准动作就是这份对账**。
+
+**测试自身的缺口**：D5 迁移的 7 个变异全被抓，但把 `plog.get().error(...)` 整块删掉时
+29 个用例**全绿** —— 日志事件名（`bag_legacy_migration_player_failed` /
+`_done_with_failures` / `_done`，与 Go 逐字相同、告警按名建）没有任何断言守着，
+可以被静默删掉。已补 `structlog.testing.capture_logs` 的事件名守护用例。
+**判据：凡"改了不会让任何断言变红"的东西，就是没被测。**
+
+### 5.2.10 机械检查数文本 → 被注释/docstring 抵消（同一缺陷已栽三次）
+
+§5.2.9 那条脚注（"注释会抵消文本判据"）当时被当成一次孤立失误记下。**它不是孤立的。**
+按同一形状全仓复查后，又找到两处，其中一处守着 §9.16 的排空在途。
+
+#### 实测证据
+
+`test_service_layer_contract.py::test_cancelled_error_is_re_raised_before_any_broad_except`
+第一版按行正则匹配 `except BaseException`，放行条件①是「往前 12 行的窗口里出现过
+`CancelledError` 这个字符串」。而本仓每一处真守卫上面都跟着一段
+「★ 取消必须穿透:CancelledError 是 BaseException…」的解释性注释。
+
+变异：把 `leaderboard/main.py:_retention_round` 里真的
+`except asyncio.CancelledError: raise` 删掉、**只留那句注释**：
+
+| 判据 | 结果 |
+|---|---|
+| 正则版（前 12 行窗口含该字符串） | **238 passed** —— 没抓到 |
+| AST 版（按 `try` 节点结构判 handler 声明顺序） | **1 failed**，精确报 `leaderboard/main.py` 第 435 行 |
+
+改 AST 顺带补上了正则版的三个**结构性**盲区：裸 `except:`（同样抓 `BaseException`，
+但匹配不到字面量所以整个漏掉）、`except (Foo, BaseException):` 元组形式、以及
+「前 12 行」这个拍脑袋的窗口（改后由 `try` 节点结构决定归属，不受行距与嵌套影响）。
+
+#### 另外两处现场
+
+- `test_login_main.py::test_cancelled_error_is_never_swallowed`：8 行窗口版，与上条
+  判据重复且更弱。已改为**委派**给 AST 版，只保留一条归属断言（确认 login 的
+  main / service / rest / passwd 确实落在那道门的扫描集合里）。两份判据必然漂移，
+  弱的那份还会给人虚假的安心。
+- `test_player_locator_service.py`：`assert event in lmain.__doc__ or event in <原始源码>`
+  —— **明文把模块 docstring 当成证据**。事件名只写在头注释里、压根没打这条日志，
+  照样绿，而 Loki 上按这个名字建的告警此刻已经失去覆盖。
+
+#### 治法
+
+1. **首选 AST**。判据能用语法结构表达就别落在文本上。
+2. 「某调用 / 某字面量还在不在」这类断言，用 AST 表达要为每种形状写一套匹配，按
+   `CLAUDE.md §15.2` 属于把简单问题复杂化。改用新增的
+   [`python/tests/srcprobe.py`](../../python/tests/srcprobe.py)：`code_text()` /
+   `module_code_text()` **把注释与 docstring 替换成等量空白、代码原样保留**，之后
+   仍旧子串匹配。
+   - 抹成空白而非删除，是为了保住行列结构 —— `src.index(a) < src.index(b)` 那类
+     比顺序的用例依赖它（`test_login_main.py::test_gate_order_matches_go`）。
+   - docstring 按**整行**抹：`ast` 的 `col_offset` 是 UTF-8 **字节**偏移，本仓
+     docstring 全是中文，字节偏移与字符下标对不上。注释按 token 列范围精确抹
+     （`tokenize` 给的是字符偏移），所以 `x = 1  # 说明` 里的 `x = 1` 完整保留。
+   - `test_login_main.py` 里原先手工写的 `.split('"""', 2)[2]`（只跳模块 docstring、
+     盖不住行内注释与函数 docstring）是同一个坑的就地补丁，已一并删除。
+3. `srcprobe` 自身有 `tests/test_srcprobe.py` 守着：正反用例 + 在 21 个真实
+   `services/*/main.py` 上做「抹前抹后 AST 等价」的无损校验。它要是哪天退化成
+   原样返回，依赖它的二十来条断言会**一起变成恒绿且零报错**。
+4. **每条新机械检查都要配一条金丝雀**，断言它不是空转（扫到的样本数下限 + 内联的
+   正例与反例源码）。否则"全绿"分不清"真的没有违规"和"判据根本没生效"。
+
+已迁移的调用点：team / login / player / chat / auction / battle_result / inventory /
+player_locator / dsauthfence / server_shell / application_display_auth_config。
+读 **Go** 源码提取期望值的那些断言不在此列 —— 那是跨语言对拍，Go 侧用不了 Python AST。
+
+### 5.2.11 跨栈对账扫尾（2026-08-21）：Kafka topic / Prometheus 指标 / conf 默认值
+
+按「凡是两栈共享的契约都要有机械闸」逐项过了一遍，三项结论各不相同。
+
+#### ① Kafka topic —— 无缺口，早就守住了
+
+Go 侧 18 个常量（`pkg/kafkax/topics.go`）+ 1 个服务内常量
+（`services/runtime/push/internal/biz/push.go` 的 `ResyncTopic`），Python 侧
+`pandorapy/kafka_topics.py` 18 个 + `services/push/biz.py` 的 `RESYNC_TOPIC`，取值逐字节相同。
+`tests/test_kafka_topics.py` 已有双向闸（Go 有 Python 必须有、Python 多出来的也要报），
+并且**重新解析 Go 源码**而不是信生成器。无需改动。
+
+#### ② Prometheus 指标 —— 找到真缺口：写入侧 payload 的两个指标 Python 完全没有
+
+全量比对 `services/**/*.go` + `pkg/**/*.go` 与 `python/pandorapy/**/*.py` 里的
+`pandora_*` 字面量后，只在 Go 侧的有两个：`pandora_db_payload_bytes`（histogram）与
+`pandora_db_payload_rejected_total`（counter），都出自 `pkg/dbguard/payload.go`。
+
+Python 的 `dbguard.check_payload` 此前**只打日志、不记指标**。这不是"少一块图"：
+
+- 日志进 Loki、指标进 Prometheus，而容量告警规则建在后者。于是"某张表的写入一直被
+  fail-closed 拒掉"在 Python 副本上是 **NoData 而不是告警**；
+- histogram 没有替代品。Go 的注释专门写了为什么必须看 p99 而不是 max：p99 正常 + max 爆
+  = 个别玩家数据畸形；p99 一起涨 = 设计性无界增长（`CLAUDE.md §9.24` 的"深度"方向）。
+  只有日志的话这个区分做不出来；
+- 讽刺的是 `pandorapy/dbguard.py` 指标区的头注释已经写明"Python 副本不写它们的后果是
+  同一块面板在灰度期只反映 Go 副本"，而 payload 这两个恰恰漏了。
+
+已补：`PAYLOAD_BYTES` / `PAYLOAD_REJECTED`，名字、label（`db/table/column`）、桶边界
+（Go `ExponentialBuckets(64, 2, 11)` = 64…65536）逐个对齐。两处顺序细节按 Go 复刻：
+**observe 在 `max<=0` 提前返回之前**（还没定阈值的列正是最需要看分布的，否则成了
+"没阈值所以不观测、不观测所以定不出阈值"），**被拒的那次也要进 histogram**（否则最胖的
+样本恰好被剔掉，p99 系统性低估）。
+
+配套修了调用点命名：Go 的 label 是三个独立字段，Python 收成了点分名字 `<db>.<table>.<column>`，
+而 mission 的三处只写了两段（缺 db），那三条曲线在 Grafana 上 db 标签为空、按 db 过滤直接看不到。
+新增 `test_every_check_payload_call_site_uses_a_three_segment_name`（AST 扫调用点）钉住这一点。
+`_payload_labels` 段数不足时向左补空而不是抛异常 —— 这函数在写路径上，为一个观测标签把玩家的
+写入打挂等于把可观测性问题升级成可用性事故。
+
+#### ③ conf 默认值 —— 找到真缺口：21 个服务里 4 个从来没有对账门禁
+
+有门禁的 17 个：auction / battle_result / chat / guild / friend / ds_allocator /
+hub_allocator / inventory / mail / leaderboard / mission / login / dialogue /
+player_locator / push / team / trade。
+**没有的 4 个：matchmaker / player / owner / data_service。**
+
+逐值核对下来**当前没有实际漂移**（matchmaker 的 5000/16/5/200/20/2000/3/1/`5v5_ranked`/
+`:20011`/`:21011`、player 的 1500/0/32、owner 的 500/90 都对得上）——
+所以这是"闸缺失"而不是"已经漂了"。但缺闸本身就是问题：两栈读同一份 yaml，默认值分叉的表现是
+**两边都不报错地跑出不同行为**（yaml 没写 `team_size` 时 Go 按 5 组队、Python 按 0 组队，
+need = side_count×0 = 0，撮合循环空转，没有任何日志会说这件事）。
+
+顺带一个值得记的实例：`pandorapy/services/matchmaker/conf.py` 顶上的注释白纸黑字写着
+「抽成常量……是为了让 `tests/test_matchmaker_conf.py` 能直接对着 Go 源码断言」，
+而 **`tests/test_matchmaker_conf.py` 从来没有存在过**。注释描述了一个不存在的门禁，
+读代码的人会以为这块已经守住了 —— 与 §5.2.10 是同一类病（把"说了"当成"做了"）。
+
+已补 [`python/tests/test_conf_defaults_parity.py`](../../python/tests/test_conf_defaults_parity.py)：
+整数 / 时长 / 字符串默认值 + 判据符号 + 端口，期望值全部从 `conf.go` 现场解析。三个细节：
+
+- `_camel_to_snake` 必须认识连写缩写。朴素实现把 `BaseMMR` 拆成 `base_m_m_r`，字段"在
+  Python 侧找不到"，断言静默跳过 —— 对账测试最怕这种"看着绿其实没查"。
+- 时长比对**解析后的 timedelta** 而不是字符串：Go 写 `60 * time.Second`、Python 写 `"60s"`
+  或 `"1m"`，字面量不同但语义相同；而 `"60"`（缺单位）这种真错误只有解析后才看得出来。
+- 被后续钳位覆盖的字段（matchmaker `TeamSize`：`== 0 → 5`，紧接着 `< 1 → 1` / `> 50 → 50`）
+  要跳过"负值原样保留"那一半，否则会把一个**正确的** Python 实现判成错。
+
+最后加了一条不准再漏的闸 `test_every_service_has_a_go_conf_gate`：枚举 21 个 Go
+`internal/conf/conf.go`，逐个确认有测试文件引用过。判据走 AST 取字符串字面量而不是数原文
+（注释里出现 `conf.go` 三个字不该被当成"这里有门禁"，见 §5.2.10）。历史缺口正是这么形成的 ——
+17 个服务各自顺手加了门禁，剩下 4 个谁也没管，**而且没有任何机制会报告这件事**。
+
+变异验证：matchmaker `team_size` 5→6、owner `sweep_batch` 500→400 均被抓（各 2 条红）。
+另有一个诚实的盲区：默认值恰好是 0 的字段（player `mmr_floor`）查不出符号漂移 ——
+`< 0` 与 `<= 0` 对任何输入结果都是 0，行为完全等价，没有可观测差异可断言。已写进 docstring。
+
 ### 5.3 环境与工具坑
 
 | 坑 | 现象 | 处置 |
@@ -565,10 +736,19 @@ owner 用它**拒**带玩家 JWT 的调用。同一个符号，两种相反的�
 ### 5.4 复跑校验命令
 
 **跨实现对拍**（推进剩下 19 个服务的主循环，不是可选步骤）：
-探针与完整说明在 `python/tools/parity/`（`README.md` + `probe_dialogue.py` + `probe_owner.py`）。
+探针与完整说明在 `python/tools/parity/`。现有 7 份：`probe_owner.py`、`probe_dialogue.py`、
+`probe_login.py`、`probe_mission.py`、`probe_auction.py`，以及 2026-08-21 新增的
+`probe_hub.py`（hub_allocator，36 场景）与 `probe_ds.py`（ds_allocator，43 场景）。
 那份 README 里有起服务的准确命令（**工作目录必须是服务目录**，配表与 DSN 的相对路径
 都相对进程 cwd 解析）、Go 版起到错开端口的做法，以及四条写探针的规矩。
 2026-08-19 抓到的 7 条缺陷全部来自这一步，没有一条是单元测试能发现的。
+
+两个 allocator 探针都**必须把两侧 `mode` 改成 `"mock"`**：`dev` 默认 `local`，
+会真去 exec Windows DS 进程，两个实现各起一份、端口互抢，diff 里全是与实现无关的噪声。
+它们各自还踩到一条新坑，已写进 README：hub 的分片镜像按 **pod 名**建行（不按 player_id
+分区，只分段挡不住跨运行污染，解法是打相对基线的**增量**而不是把人数盖掉）；
+ds 的分配是**一次性资源占用**（每条场景必须用自己的 `match_id`，复用则全部落进
+`allocate_idempotent_hit` 快路径，diff 零但什么都没验）。
 
 **单元测试**：
 
@@ -650,7 +830,7 @@ TiDB 版本与排序规则**行为探针**、fence 租约抢占……），业�
 |---|---:|---|---|---|
 | `safego` | 120 | 33 / 19 | **本轮已补** | 见 §5.2.3 ⑧ |
 | `sessiongate` | 95 | 28 / **14** | **零** | 13 个服务在 `internal/server/grpc.go` 里挂 `pmw.SessionCurrent`。缺了 = 顶号后的旧 JWT 在 exp 前（默认 24h）**仍保有全部按 player_id 定向的能力**（好友申请 / 交易 / 背包），正是 INC-20260722-004 的形状，且**完全静默**。⚠️ **第 14 处是 push，形态不同**：`Subscribe` 是 server stream，Kratos 的 unary 中间件链**对它一律不生效**，Go 是在 service 层手写补齐的（`service/push.go:66-104` + `biz/push.go:145-211`，含 30s 看门狗与 `sessionFailClose=3`）。迁 push 的人去找中间件会找不到 |
-| `cellroute` | 767 | 16 / 13 | 有表实现、**无装配入口** | yaml 配了 `cell_route` 段时 Python 静默按单 Cell 跑 |
+| `cellroute` | 767 | 16 / 13 | **已补齐装配层**(2026-08-20) | 见 §6.4「仍未做」表的更新说明 |
 | `internalrpcauth` | 442 | 13 / 4 | **零** | 东西向 RPC 的 HMAC 签名（绑 caller+method+subject+ts+nonce）。签名对不上是响亮的；**漏掉 nonce 消费**则重放保护静默消失 |
 | `kafkax` 的 producer/consumer/topics | 898 | — / 12 | **只迁了一致性哈希** | 见 §6.1.2 |
 | `releasetrack` | 48 | 11 / 2 | **零** | sha256 cohort 选择必须跨语言逐位一致，否则同一玩家在 Go 副本判 canary、Python 副本判 stable。只被两个 allocator 用，随 allocator 的档期 |
@@ -800,15 +980,42 @@ writerlease 的选举/激活超时/无主告警三条故障注入，再落码。
 | Kill-Switch 没接进拦截器链 | 新增 `KillSwitchInterceptor`，且**挡在业务 handler 之前**（跑完再丢弃结果等于没关）。健康检查豁免——挡住它等于把整个 Pod 从 Endpoints 摘掉 |
 | Kill-Switch 只做精确匹配 | 补 `*` / `<service>/*` / `feature/<名>` 三级，与 Go 的判定顺序逐级一致；feature 组按**代码注册的成员**展开，重复注册合并而非覆盖 |
 | `grpc.timeout` 解析了不生效 | 新增 `TimeoutInterceptor`，与客户端 deadline 取更短者，超时回 `DEADLINE_EXCEEDED` |
-| `GrpcConf` 静默丢弃两个字段 | `max_conn_age_grace` 显式建模并映射到 grpc option；`enable_rate_limit` 建模后**启动即 fail-fast**——Python 侧没有 BBR，配着 true 却没有过载保护比"没这功能"糟糕得多 |
+| `GrpcConf` 静默丢弃两个字段 | `max_conn_age_grace` 显式建模并映射到 grpc option；`enable_rate_limit` 曾建模后**启动即 fail-fast**（当时 Python 侧没有 BBR，配着 true 却没有过载保护比"没这功能"糟糕得多）。**2026-08-21 起该 fail-fast 已撤销**：`pandorapy/bbr.py` 补齐自适应限流，`build_grpc_server` 按开关插 `RateLimitInterceptor`，详见下方"④ BBR 自适应限流"|
 | 指标名与 Go 不相交 | 改成 `pandora_rpc_total` / `pandora_rpc_duration_seconds`，label 与分桶逐值对齐（桶不一致 = 两栈 P99 不可比）。业务 errcode 维度另开 `pandora_rpc_inband_total`（Go 只把它打进日志） |
+
+**④ BBR 自适应限流（2026-08-21）**
+
+`enable_rate_limit` 不是可选项：`tools/scripts/gen_cluster_config.ps1 -Prod` 对
+**14 个服务**（12 个 unary session-gate + `login` + `push`）机械强制写 `true`，
+带 FATAL 校验和契约测试 `gen_cluster_prod_ratelimit_contract_test.ps1`。
+所以在原先的 fail-fast 语义下，这 14 个服务在 Python 栈上**生产配置直接起不来** ——
+这是硬切换阻塞项，不是"锦上添花"。
+
+**为什么手抄而不是用库**（CLAUDE.md §15.1 标准能力优先，先查证过）：
+
+- GitHub 仓库搜索 `python adaptive concurrency limit load shedding` 与
+  `BBR rate limit python` 均返回 **0 个仓库**。
+- `go-kratos/aegis`（BBR 原版，239★）Go 98.9%，最后一次 release 在三年前；
+  `Netflix/concurrency-limits`（3.6k★）是 **Java 100%**。
+- Python 侧星最多的几个 —— slowapi(2.0k★，本身只是 wrapper，"实际限流工作由
+  limits 完成")、aiolimiter(775★，漏桶)、limits(642★，固定/滑动窗)、
+  PyrateLimiter(515★，漏桶) —— **全部是"按 key 配阈值的配额执行器"**，
+  与"按机器实时负载自适应丢弃"是两类东西，替代不了。
+
+**唯一一处刻意与 Go 不同**：信号源。Go 版读 cgroup CPU 使用率；Python 版换成
+**事件循环线程的饱和度**（`time.thread_time()` 增量 / 墙钟增量）。原因是
+asyncio 单线程跑满时，4 核容器的 cgroup CPU 只有 ≈250‰，永远碰不到 800 阈值 ——
+照抄的话这个限流器**在最需要它的时候恒不触发**。这一条写在 `bbr.py` 模块 docstring 里。
+
+第二处刻意分叉：Go 的 `minRT` 在空窗口时算 `int64(math.Ceil(math.MaxFloat64))`
+（未定义行为）；Python 显式返回 1 并注释说明，不复制 UB。
 
 **③ 接线缺口**
 
 - `snowflake_etcd` 接进 dialogue main（`node_id_source` 二选一，失租 `os._exit(1)`），并从**零测试**补到 8 条真 etcd 用例。
 - `trade` 的 Noop 账本闸从"Go 的 main.go 里"下沉到 `TradeUsecase.__init__` —— Python 侧 trade 没有 main，那句 docstring 曾是一句不成立的承诺。现在忘记接账本在结构上不可能通过。
 - 移植 `redisx` 的限流原语（`Quota` / `ActionQuota` / `Cooldown` / `ArmPenalty`），trade 的 `rate_quota_per_min` 从此有可注入实现。
-- `cell_route.mode` 非空时**拒绝启动**（此前静默按单 Cell 跑，与配置意图不符且零信号）。
+- `cell_route.mode` 非空时按 Go 的同一判据校验(2026-08-20 起已补齐装配层,`static` / `etcd` 都能真正建 Router;只有非法 / 未知 mode 才拒启)。
 - `auth` 补 TTL ≥ 1s 启动闸 + `AdditionalSecrets`（不停服密钥轮换的载体），并把"过期 / 非法"拆成两个错误码——合成一个之后客户端只能一律重试，密钥配错那天会变成全量重试风暴。
 - `proto_gen.ps1` 加生成 Python stub —— 此前改完 proto 只重生成 Go，Python 侧还在用旧 stub（加字段读不到、改字段号**串字段**，而 CI 跑旧 stub 照样全绿）。
 
@@ -824,7 +1031,8 @@ writerlease 的选举/激活超时/无主告警三条故障注入，再落码。
 
 | 项 | 现状与影响 |
 |---|---|
-| **cellroute 装配本体** | 静态表、路由算法、均衡铺表都有且有测试；缺 `BuildRouter` 按 mode 装配、keyspace 分片、表热更、etcdtable 源。**已不再静默出错**（配了 `cell_route.mode` 才拒启），但要用多 Cell 仍须先做完这层 |
+| ~~**cellroute 装配本体**~~ | **已完成(2026-08-20)**:`cellroute.build_router`(off/static/etcd 三分支)、`FullLocation` / `in_cell_shard` / `cell_tag` keyspace 分片、`AtomicTable` + `encode_entry` / `decode_entries` 表热更编解码、`cellroute_etcd`(全量 Get 铺初始表 + watch 整表替换)。`config.BaseConf` 正式建模 `cell_route` 字段,校验统一走 `RouterConfig.validate_mode`;push 的 cell 归属毒丸闸已按 Go 同位接线。测试 `tests/test_cellroute.py`(34 条)+ `tests/test_push_service.py` 的 6 条归属用例,毒丸闸已做变异验证 |
+| ~~**cellroute 在 friend / player / data_service 的接线**~~ | **已完成(2026-08-20)**:三处 `main.py` 都在建完 usecase 之后调 `cellroute_etcd.build_router` 并注入(对应 Go 的 `etcdtable.WireRouter`),watcher 在 `finally` 关。补齐了 Go 的两处观测:`pandorapy/services/friend/sharding.py`(幂等键口径 `accept_idempotency_key` / `edge_build_key` + 落点判定 + `friend_edge_sharding` 日志)与 player 的 `_log_profile_placement`(`profile_placement`,接在 `update_mmr` 成功之后)。测试 `tests/test_friend_sharding.py`(20 条,`edge_build_key` 已做变异验证) |
 | **Grafana 面板不入库** | 仓库里只有告警规则与数据源，**没有 dashboards 目录**。指标侧的机制已补齐（`pandora_runtime_info{runtime="python"}`，面板按 instance join 即可分栈），但面板 JSON 本身没有写——照着别人现有的看板猜面板属于臆造，需要人拍板做哪几块 |
 | **`snowflake_etcd` 只接了 dialogue** | 不是遗漏:其余 19 个服务**还没有 main.py**，无处可接。谁写下一个 main，照 dialogue 那段抄即可 |
 

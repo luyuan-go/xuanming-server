@@ -81,8 +81,12 @@ type LoginConf struct {
 
 	// PlayerNoResolveAuthSecret/Audience 校验 team→login 内部 ResolvePlayerNos 的
 	// request-bound HMAC。该接口只接受 player_id 批量查询，且不经客户端 Envoy 暴露。
-	PlayerNoResolveAuthSecret   string `yaml:"player_no_resolve_auth_secret,omitempty" json:"player_no_resolve_auth_secret,omitempty"`
-	PlayerNoResolveAuthAudience string `yaml:"player_no_resolve_auth_audience,omitempty" json:"player_no_resolve_auth_audience,omitempty"`
+	PlayerNoResolveAuthSecret         string `yaml:"player_no_resolve_auth_secret,omitempty" json:"player_no_resolve_auth_secret,omitempty"`
+	PlayerNoResolveAuthAudience       string `yaml:"player_no_resolve_auth_audience,omitempty" json:"player_no_resolve_auth_audience,omitempty"`
+	FriendPlayerNoResolveAuthSecret   string `yaml:"friend_player_no_resolve_auth_secret,omitempty" json:"friend_player_no_resolve_auth_secret,omitempty"`
+	FriendPlayerNoResolveAuthAudience string `yaml:"friend_player_no_resolve_auth_audience,omitempty" json:"friend_player_no_resolve_auth_audience,omitempty"`
+	GuildPlayerNoResolveAuthSecret    string `yaml:"guild_player_no_resolve_auth_secret,omitempty" json:"guild_player_no_resolve_auth_secret,omitempty"`
+	GuildPlayerNoResolveAuthAudience  string `yaml:"guild_player_no_resolve_auth_audience,omitempty" json:"guild_player_no_resolve_auth_audience,omitempty"`
 
 	// SessionGenerationEnforce 是 SetRole 会话代际强制门(R7 收口,滚动发布分阶段激活)。
 	// false(默认):Login 照常把单调代际写进 MySQL(emit/双写),SetRole 只做 Redis
@@ -311,20 +315,52 @@ func (c *Config) Defaults() {
 	if c.Login.PlayerNoResolveAuthSecret != "" && c.Login.PlayerNoResolveAuthAudience == "" {
 		c.Login.PlayerNoResolveAuthAudience = "login:player-no"
 	}
+	if c.Login.FriendPlayerNoResolveAuthSecret != "" && c.Login.FriendPlayerNoResolveAuthAudience == "" {
+		c.Login.FriendPlayerNoResolveAuthAudience = "login:player-no"
+	}
+	if c.Login.GuildPlayerNoResolveAuthSecret != "" && c.Login.GuildPlayerNoResolveAuthAudience == "" {
+		c.Login.GuildPlayerNoResolveAuthAudience = "login:player-no"
+	}
 	c.DSAuth.Defaults()
 }
 
 // Validate 校验不能靠运行期降级修复的配置冲突。
 func (c *Config) Validate() error {
-	if c.Login.PlayerNoResolveAuthSecret != "" {
-		if err := internalrpcauth.ValidateSecret(c.Login.PlayerNoResolveAuthSecret); err != nil {
-			return fmt.Errorf("login.player_no_resolve_auth_secret: %w", err)
+	type callerCredential struct {
+		caller   string
+		field    string
+		secret   string
+		audience string
+	}
+	credentials := []callerCredential{
+		{"team", "player_no_resolve_auth", c.Login.PlayerNoResolveAuthSecret, c.Login.PlayerNoResolveAuthAudience},
+		{"friend", "friend_player_no_resolve_auth", c.Login.FriendPlayerNoResolveAuthSecret, c.Login.FriendPlayerNoResolveAuthAudience},
+		{"guild", "guild_player_no_resolve_auth", c.Login.GuildPlayerNoResolveAuthSecret, c.Login.GuildPlayerNoResolveAuthAudience},
+	}
+	seenSecrets := make(map[string]string, len(credentials))
+	hasPlayerNoVerifier := false
+	for _, credential := range credentials {
+		if credential.secret == "" {
+			if credential.audience != "" {
+				return fmt.Errorf("login.%s_audience requires %s_secret", credential.field, credential.field)
+			}
+			continue
 		}
-		if err := internalrpcauth.ValidateIdentity(c.Login.PlayerNoResolveAuthAudience); err != nil {
-			return fmt.Errorf("login.player_no_resolve_auth_audience: %w", err)
+		hasPlayerNoVerifier = true
+		if err := internalrpcauth.ValidateSecret(credential.secret); err != nil {
+			return fmt.Errorf("login.%s_secret: %w", credential.field, err)
 		}
-	} else if c.Login.PlayerNoResolveAuthAudience != "" {
-		return fmt.Errorf("login.player_no_resolve_auth_audience requires player_no_resolve_auth_secret")
+		if err := internalrpcauth.ValidateIdentity(credential.audience); err != nil {
+			return fmt.Errorf("login.%s_audience: %w", credential.field, err)
+		}
+		if priorCaller, reused := seenSecrets[credential.secret]; reused {
+			return fmt.Errorf("login %s player-no HMAC key must differ from %s caller key",
+				credential.caller, priorCaller)
+		}
+		seenSecrets[credential.secret] = credential.caller
+	}
+	if hasPlayerNoVerifier && c.Node.RedisClient.Host == "" && len(c.Node.RedisClient.Addrs) == 0 {
+		return fmt.Errorf("login player-no resolver auth requires node.redis_client replay authority")
 	}
 	if c.Login.DSTicket.SignerEnabled() && c.Login.DSTicket.ActiveKid == "" {
 		return fmt.Errorf("login.ds_ticket signer requires explicit active_kid")

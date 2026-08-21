@@ -32,6 +32,7 @@ from mysqlfixture import skip_only_if_mysql_is_down
 from pandora.common.v1 import errcode_pb2
 from pandora.login.v1 import login_pb2
 
+from pandorapy import dsticket as pdsticket
 from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy.services.login import conf as lconf
@@ -39,6 +40,8 @@ from pandorapy.services.login import main as lmain
 from pandorapy.services.login import passwd as lpasswd
 from pandorapy.services.login import rest as lrest
 from pandorapy.services.login import service as lsvc
+
+from tests.srcprobe import module_code_text
 
 GO_CONF = "services/account/login/internal/conf/conf.go"
 GO_MAIN = "services/account/login/cmd/login/main.go"
@@ -313,8 +316,8 @@ def test_model_b_config_is_valid_but_main_still_refuses(tmp_path: pathlib.Path) 
 
     # 而 main 侧必须有两道 fail-closed,且都排在 gRPC server 构造之前 ——
     # 排在之后的话进程会先开始监听,k8s 判 Ready、流量切过来,再退出。
-    # 同样去掉模块 docstring 再比(理由见 test_gate_order_matches_go)。
-    src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8").split('"""', 2)[2]
+    # 同样去掉 docstring 再比（理由见 test_gate_order_matches_go）。
+    src = module_code_text(lmain)
     for gate in ("model_b_requires_ds_ticket_v2_signer", "ds_admission_authority_incomplete"):
         assert src.index(f'"{gate}"') < src.index("build_grpc_server"), gate
     assert src.index('"login_ds_auth_fence_acquire_failed"') < src.index("pserver.run(")
@@ -353,7 +356,7 @@ def test_passwd_backend_gate_exists_and_refuses_to_degrade() -> None:
     所以本模块在缺包时**不提供任何可用路径**。这里直接验 require_backend 的方向。
     """
     assert lpasswd.AVAILABLE, "本环境应已装 bcrypt(pyproject 依赖)"
-    src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8")
+    src = module_code_text(lmain)
     assert "passwd_backend_required" in src
     assert "lpasswd.require_backend()" in src
 
@@ -400,7 +403,7 @@ def test_fail_fast_event_names_exist_in_go_main(repo_root: pathlib.Path) -> None
        运行期变量,任何基于源码正则的门都够不着它。别以为这条门是全覆盖。
     """
     go_src = (repo_root / GO_MAIN).read_text(encoding="utf-8")
-    py_src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8")
+    py_src = module_code_text(lmain)
     # 判据**只认 `.error("<小写事件名>")` 这个形状,不看接收者**:写死 `logger\.`
     # 会漏掉 `log.error(` / `plog.get().error(` 这些同样真实的写法(login/main.py
     # 第 189、219 行自己就是 `log = plog.get()`,995 行是 `plog.get().exception(...)`)。
@@ -447,10 +450,12 @@ def test_gate_order_matches_go() -> None:
     (main.go:70 config → :96 snowflake → :108/:113 auth → :120 mustBuildAccountRepo
     → :190 mustBuildRedisRepos → 四个客户端 → v2 → :243 session enforce → ds_auth)。
     """
-    # ★ 必须**去掉模块 docstring** 再比:头注释里也按同样顺序列了一遍闸,
-    # 连着 docstring 一起 index() 的话,命中的全是注释里的位置 ——
-    # 代码顺序改了、注释没改,这个用例照样绿(它验的是注释与注释一致)。
-    py_src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8").split('"""', 2)[2]
+    # ★ 必须**去掉注释与 docstring** 再比:头注释里也按同样顺序列了一遍闸,
+    # 连着它们一起 index() 的话，命中的全是注释里的位置 ——
+    # 代码顺序改了、注释没改，这个用例照样绿（它验的是注释与注释一致）。
+    # 原先只手工跳了模块 docstring，盖不住行内注释和函数 docstring；
+    # code_text 把两者都抹成等量空白，行列结构不变，index() 比较仍然成立。
+    py_src = module_code_text(lmain)
 
     ordered = [
         "config_load_failed",
@@ -480,7 +485,7 @@ def test_gate_order_matches_go() -> None:
 def test_background_loops_all_go_through_safego() -> None:
     """裸 create_task 的协程抛异常后异常只躺在 Task 里:进程照跑、health 照答
     SERVING、日志零行 —— 那条循环已经死了却没人知道。"""
-    src = pathlib.Path(lmain.__file__).read_text(encoding="utf-8")
+    src = module_code_text(lmain)
     for name in ("login_device_sweep", "login_player_no_sweep", "db_capacity_guard"):
         assert f'safego.loop("{name}"' in src or f'safego.run_once("{name}"' in src, name
     assert "asyncio.create_task(" not in src
@@ -491,19 +496,32 @@ def test_cancelled_error_is_never_swallowed() -> None:
 
     吞掉取消的后果:该停的停不下来,§9.16 的「先摘流量 → 再排空在途」失效;
     启动路径上则是 Ctrl-C 被翻译成某道闸的失败,报出假的失败原因。
+
+    ⚠️ **2026-08-21 改为委派**。原先这里自己判:取 `except BaseException` 前 8 行
+    做窗口,看窗口文本里有没有 `except asyncio.CancelledError`。它有两个问题:
+
+      1. **数文本**。把真的守卫删掉、留一句
+         `# 上面那条 except asyncio.CancelledError 改由 ... 处理`,窗口照样命中。
+         同一形状在 `test_service_layer_contract.py` 上已实测被变异骗过
+         (删掉 leaderboard 的守卫,238 个用例全绿)。
+      2. **结构性盲区**。窗口 8 行是拍的;裸 `except:` 与
+         `except (Foo, BaseException):` 两种同样吞取消的写法完全匹配不到。
+
+    `test_service_layer_contract.py` 的 AST 版按 `try` 节点结构判定,且扫的是
+    `services/*/*.py` —— login 的 main / service / rest / passwd 全在覆盖内。
+    所以这里不再维护第二份判据(两份判据必然漂移,弱的那份还会给人虚假的安心),
+    只保留一条**归属断言**:确认这四个模块确实落在那道门的扫描集合里。
     """
+    from tests.test_service_layer_contract import _service_files
+
+    covered = {p.resolve() for p in _service_files()}
     for mod in (lmain, lsvc, lrest, lpasswd):
-        src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
-        lines = src.splitlines()
-        for i, line in enumerate(lines):
-            if "except BaseException" not in line:
-                continue
-            # 窗口取 8 行:惯用写法是 `except asyncio.CancelledError:` +
-            # 几行"为什么必须穿透"的注释 + `raise`,注释行数不固定。
-            window = "\n".join(lines[max(0, i - 8) : i])
-            assert "except asyncio.CancelledError" in window, (
-                f"{mod.__name__}:{i + 1} 的 except BaseException 前面没有取消穿透"
-            )
+        assert mod.__file__ is not None
+        path = pathlib.Path(mod.__file__).resolve()
+        assert path in covered, (
+            f"{mod.__name__} 不在 test_service_layer_contract 的扫描集合里 —— "
+            f"取消穿透这道门对它失效了,要么把它挪回 services/ 下,要么在那边补覆盖。"
+        )
 
 
 # ── REST:JSON 口径必须与 Kratos 逐字一致 ────────────────────────────────────
@@ -715,34 +733,99 @@ async def test_get_register_no_delegates_to_get_player_no() -> None:
     assert res.register_no == 42
 
 
-async def test_issue_ds_ticket_hub_battle_is_fail_closed() -> None:
-    """未移植的路由必须 fail-closed,而不是"签一张票 + 空地址"顶替。
+async def test_issue_ds_ticket_hub_battle_routes_through_biz_authority() -> None:
+    """hub / battle 必须走 biz 的路由权威,**不能**落到通用 `issue_ds_ticket`。
 
-      hub    → 客户端拿到 allocator 没登记过的自签票,Hub DS 一律拒 = "登录成功进不去";
-      battle → 跳过 roster 权威门 = 谁报一个 match_id 谁就能拿到那局的进场票。
+      hub    → `resolve_hub_endpoint_from_match`(locator 租约 + match 三态门),
+               并把地址回给客户端;走通用签票 = 自签一张 allocator 没登记过的票,
+               Hub DS 一律拒 = "登录成功进不去"。
+      battle → `resolve_battle_endpoint`(roster 权威门);走通用签票 = 谁报一个
+               match_id 谁就能拿到那局的进场票。且 battle **不回地址**:客户端
+               此刻已连着那台 DS,回地址只会给它一个被旧值覆盖的机会。
     """
 
-    class _NoopGate:
+    generic_called = False
+
+    class _Gate:
         async def require_current_session_token(self, *_a: object) -> None:
             return None
 
-    called = False
+        async def resolve_hub_endpoint_from_match(
+            self, player_id: int, source_match_id: int, sess_jti: str
+        ):  # noqa: ANN202
+            assert (player_id, source_match_id) == (5, 1)
+            del sess_jti
+            return "hub-ds:7777", "hub-ticket", 0
+
+        async def resolve_battle_endpoint(
+            self, player_id: int, match_id: int, sess_jti: str
+        ):  # noqa: ANN202
+            assert (player_id, match_id) == (5, 1)
+            del sess_jti
+            return "battle-ds:8888", "battle-ticket", 0
 
     class _Ticket:
         async def issue_ds_ticket(self, *_a: object):  # noqa: ANN202
-            nonlocal called
-            called = True
+            nonlocal generic_called
+            generic_called = True
             return "t", 0
 
-    svc = lsvc.LoginService(_NoopGate(), _Ticket())
-    for ds_type in ("hub", "battle"):
+    svc = lsvc.LoginService(_Gate(), _Ticket())
+
+    hub = await svc.IssueDSTicket(
+        login_pb2.IssueDSTicketRequest(ds_type="hub", target_id=1),
+        _Ctx(**{"x_pandora_player_id": "5"}),
+    )
+    assert hub.code == errcode_pb2.OK
+    assert hub.ticket == "hub-ticket"
+    assert hub.hub_ds_addr == "hub-ds:7777"
+
+    battle = await svc.IssueDSTicket(
+        login_pb2.IssueDSTicketRequest(ds_type="battle", target_id=1),
+        _Ctx(**{"x_pandora_player_id": "5"}),
+    )
+    assert battle.code == errcode_pb2.OK
+    assert battle.ticket == "battle-ticket"
+    assert battle.hub_ds_addr == "", "battle 分支绝不回地址"
+
+    assert generic_called is False, "hub/battle 不得落到通用签票路径"
+
+
+async def test_issue_ds_ticket_delivery_fence_withholds_ticket() -> None:
+    """交付终检失败必须**扣留**已签的票 —— 三条分支都要有。
+
+    预检通过后、签票期间会话可能已被新登录轮换。票已签但从未离开服务端 =
+    旧在途请求未取得可用票据;漏掉这一步,被顶设备就拿到一张能进场的票。
+    """
+
+    class _Gate:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def require_current_session_token(self, *_a: object) -> None:
+            self.calls += 1
+            if self.calls > 1:  # 第一次是预检,第二次是交付终检
+                raise errcode.PandoraError(errcode.ErrUnauthorized, "session rotated")
+
+        async def resolve_hub_endpoint_from_match(self, *_a: object):  # noqa: ANN202
+            return "hub-ds:7777", "hub-ticket", 0
+
+        async def resolve_battle_endpoint(self, *_a: object):  # noqa: ANN202
+            return "battle-ds:8888", "battle-ticket", 0
+
+    class _Ticket:
+        async def issue_ds_ticket(self, *_a: object):  # noqa: ANN202
+            return "generic-ticket", 0
+
+    for ds_type in ("hub", "battle", "other"):
+        svc = lsvc.LoginService(_Gate(), _Ticket())
         resp = await svc.IssueDSTicket(
             login_pb2.IssueDSTicketRequest(ds_type=ds_type, target_id=1),
             _Ctx(**{"x_pandora_player_id": "5"}),
         )
-        assert resp.code == errcode_pb2.ERR_NOT_IMPLEMENTED
-        assert resp.ticket == ""
-    assert called is False, "fail-closed 分支不得走到签票"
+        assert resp.code == errcode_pb2.ERR_UNAUTHORIZED, ds_type
+        assert resp.ticket == "", ds_type
+        assert resp.hub_ds_addr == "", ds_type
 
 
 def test_login_response_double_writes_register_no_and_player_no(
@@ -752,7 +835,7 @@ def test_login_response_double_writes_register_no_and_player_no(
 
     排空前收缩任一个,对应客户端上编号直接变 0(永远显示"生成中"),而服务端零错误。
     """
-    src = pathlib.Path(lsvc.__file__).read_text(encoding="utf-8")
+    src = module_code_text(lsvc)
     assert "register_no=res.player_no" in src and "player_no=res.player_no" in src
     go_src = (repo_root / GO_SERVICE).read_text(encoding="utf-8")
     assert "RegisterNo: res.PlayerNo" in go_src and "PlayerNo:   res.PlayerNo" in go_src
@@ -913,6 +996,65 @@ async def test_ds_ticket_v2_is_refused_not_silently_downgraded(
     # jwks_file 为空 → 命中 Go 的第二道闸(signer 必须配 verifier)。
     assert "ds_ticket_v2_signer_requires_verifier" in names
     assert "service_ready" not in names
+
+
+async def test_ds_ticket_v2_assembles_then_requires_hub_allocator(
+    account_db: str, tmp_path: pathlib.Path
+) -> None:
+    """v2 真装配 —— 用真钥匙对跑完 verifier + signer,再命中 ㉗ hub_allocator 闸。
+
+    ★ 这条用例的价值在于**证明装配真的发生了**:
+      - `ds_ticket_v2_verifier_ready` 只有在 JWKS 解析 + revision/kid 对账都通过后才打;
+      - `ds_ticket_v2_requires_hub_allocator` 排在 `new_ds_ticket_signer_from_conf`
+        **之后**,所以它出现 = 私钥也真读进去并构造出了签发器。
+      两条都在 = 不可能是"配了就拒启"的旧桩顶替。
+    ★ 拒启的理由本身也是硬约束:v2 档下 login 回退自签的 HS256 hub 票会被 v2 DS
+      全拒,那是"启动日志全绿但全服进不去大厅"的半完成配置。
+    """
+    private_pem, pub, kid = pdsticket.generate_ds_ticket_key_pair()
+    key_path = tmp_path / "ds_ticket.pem"
+    key_path.write_bytes(private_pem)
+    jwks_path = tmp_path / "ds_ticket_jwks.json"
+    jwks_path.write_bytes(pdsticket.marshal_ds_ticket_jwks(7, kid, pub))
+
+    yaml_text = _boot_yaml(account_db) + (
+        "  ds_ticket:\n"
+        f'    private_key_file: "{key_path.as_posix()}"\n'
+        f'    jwks_file: "{jwks_path.as_posix()}"\n'
+        f'    active_kid: "{kid}"\n'
+        '    keyset_revision: "7"\n'
+    )
+    rc, names = await _run_async(yaml_text, tmp_path)
+    assert rc == 1
+    assert "ds_ticket_v2_verifier_ready" in names
+    assert "ds_ticket_v2_requires_hub_allocator" in names
+    assert "ds_ticket_v2_verifier_init_failed" not in names
+    assert "ds_ticket_v2_signer_init_failed" not in names
+    assert "service_ready" not in names
+
+
+async def test_ds_ticket_v2_keyset_revision_mismatch_is_refused(
+    account_db: str, tmp_path: pathlib.Path
+) -> None:
+    """配置写的 revision 与 JWKS 文件里的不一致 → 启动即失败。
+
+    挡的是"换了键没换文件"(或反过来)这类半完成发布 —— 它在运行期的表现是
+    随机一部分票验不过,而两边日志都正常。
+    """
+    _pem, pub, kid = pdsticket.generate_ds_ticket_key_pair()
+    jwks_path = tmp_path / "ds_ticket_jwks.json"
+    jwks_path.write_bytes(pdsticket.marshal_ds_ticket_jwks(7, kid, pub))
+
+    yaml_text = _boot_yaml(account_db) + (
+        "  ds_ticket:\n"
+        f'    jwks_file: "{jwks_path.as_posix()}"\n'
+        f'    active_kid: "{kid}"\n'
+        '    keyset_revision: "8"\n'
+    )
+    rc, names = await _run_async(yaml_text, tmp_path)
+    assert rc == 1
+    assert "ds_ticket_v2_verifier_init_failed" in names
+    assert "ds_ticket_v2_verifier_ready" not in names
 
 
 async def test_session_enforce_without_redis_is_refused(

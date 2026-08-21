@@ -198,6 +198,17 @@ class DSTicketConf(BaseModel):
     def verifier_enabled(self) -> bool:
         return self.jwks_file != ""
 
+    def ttl_td(self) -> _dt.timedelta:
+        """票据有效期。零值 = 由签发器取 DSTicketDefaultTTL(120s)。
+
+        ★ conf 层**不填默认**,与 Go 一致:默认值在 `dsticket.DSTicketSigner.new`
+        里。在这里替它填一个,会让「conf 层看到的 TTL」与「签发器实际用的 TTL」
+        在某次改动后悄悄分叉。
+        ⚠️ 别和 `JWTConf.ds_ticket_ttl`(legacy HS256,默认 5m)混:v2 生产档是
+        120s 默认 / 180s 硬上限(CLAUDE.md §9 不变量 3),按 5m 推安全窗口会错 2.5 倍。
+        """
+        return pconfig.parse_duration(self.ttl)
+
 
 class LocatorClientConf(BaseModel):
     """login → player_locator。留空仅允许 local/off 档。"""
@@ -269,6 +280,11 @@ class LoginConf(BaseModel):
     # fail-closed 拒绝，绝不因“仅内网”而裸奔。
     player_no_resolve_auth_secret: str = ""
     player_no_resolve_auth_audience: str = ""
+    # friend/guild 各持独立 caller key；不得复用上面的 team key。
+    friend_player_no_resolve_auth_secret: str = ""
+    friend_player_no_resolve_auth_audience: str = ""
+    guild_player_no_resolve_auth_secret: str = ""
+    guild_player_no_resolve_auth_audience: str = ""
     session_generation_enforce: bool = False
     require_ticket_sjti: bool = False
     require_hub_assignment_binding: bool = False
@@ -349,6 +365,16 @@ class Config(pconfig.BaseConf):
             and not lg.player_no_resolve_auth_audience
         ):
             lg.player_no_resolve_auth_audience = "login:player-no"
+        if (
+            lg.friend_player_no_resolve_auth_secret
+            and not lg.friend_player_no_resolve_auth_audience
+        ):
+            lg.friend_player_no_resolve_auth_audience = "login:player-no"
+        if (
+            lg.guild_player_no_resolve_auth_secret
+            and not lg.guild_player_no_resolve_auth_audience
+        ):
+            lg.guild_player_no_resolve_auth_audience = "login:player-no"
         if not lg.mock_hub_ds_addr:  # Go: == ""
             lg.mock_hub_ds_addr = DEFAULT_MOCK_HUB_DS_ADDR
         if lg.login_fail_limit == 0:  # Go: == 0(负值=显式关闭,必须保留)
@@ -380,27 +406,52 @@ class Config(pconfig.BaseConf):
         pydantic BaseModel 已经有同名的类方法语义,覆盖它会让模型校验行为漂移。
         """
         login = self.login
-        if login.player_no_resolve_auth_secret:
+        resolver_credentials = (
+            (
+                "team",
+                "player_no_resolve_auth",
+                login.player_no_resolve_auth_secret,
+                login.player_no_resolve_auth_audience,
+            ),
+            (
+                "friend",
+                "friend_player_no_resolve_auth",
+                login.friend_player_no_resolve_auth_secret,
+                login.friend_player_no_resolve_auth_audience,
+            ),
+            (
+                "guild",
+                "guild_player_no_resolve_auth",
+                login.guild_player_no_resolve_auth_secret,
+                login.guild_player_no_resolve_auth_audience,
+            ),
+        )
+        used_secrets: dict[str, str] = {}
+        for caller, label, secret, audience in resolver_credentials:
+            if not secret:
+                if audience:
+                    raise ValueError(
+                        f"login.{label}_audience requires {label}_secret"
+                    )
+                continue
             try:
-                internalrpcauth.validate_secret(
-                    login.player_no_resolve_auth_secret
-                )
+                internalrpcauth.validate_secret(secret)
+                internalrpcauth.validate_identity(audience)
             except ValueError as exc:
+                raise ValueError(f"login.{label}: {exc}") from exc
+            previous = used_secrets.get(secret)
+            if previous is not None:
                 raise ValueError(
-                    f"login.player_no_resolve_auth_secret: {exc}"
-                ) from exc
-            try:
-                internalrpcauth.validate_identity(
-                    login.player_no_resolve_auth_audience
+                    "login player_no resolver auth secret reused between "
+                    f"{previous} and {caller} callers"
                 )
-            except ValueError as exc:
-                raise ValueError(
-                    f"login.player_no_resolve_auth_audience: {exc}"
-                ) from exc
-        elif login.player_no_resolve_auth_audience:
+            used_secrets[secret] = caller
+        if used_secrets and not (
+            self.node.redis_client.host or self.node.redis_client.addrs
+        ):
             raise ValueError(
-                "login.player_no_resolve_auth_audience requires "
-                "player_no_resolve_auth_secret"
+                "login player_no resolver auth requires node.redis_client "
+                "replay authority"
             )
 
         ds_ticket = login.ds_ticket

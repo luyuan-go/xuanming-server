@@ -10,7 +10,7 @@ GetMMR 供 battle_result 当真实 MMRReader;GetLoadout / GetPlayerNames 供 DS 
     ①  abs_conf_path_failed                         -conf 解不成绝对路径
     ②  config_load_failed                           yaml 读不到
     ③  config_scan_failed                           yaml 结构对不上
-    ④  cellroute_init_failed                        cell_route 配了但 Python 只实现单 Cell
+    ④  cellroute_init_failed                        cell_route 段非法 / etcd 路由表建不起来
     ⑤  player_retention_mode_invalid                retention_mode 拼错
     ⑥  configtable_dir_required                     player 强依赖等级经验表,无 YAML 兜底
     ⑦  configtable_load_failed                      整批校验任一条不过
@@ -73,6 +73,7 @@ import asyncmy
 from pandora.config.v1 import configtable_pb2_grpc as cfggrpc
 from pandora.player.v1 import player_pb2_grpc as pgrpc
 
+from pandorapy import cellroute_etcd
 from pandorapy import dbguard
 from pandorapy import dsauth
 from pandorapy import internalrpcauth
@@ -330,9 +331,9 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         logger.error("config_load_failed", err=str(exc), path=str(conf_path))
         return 1
     except NotImplementedError as exc:
-        # ★ cell_route.mode 配了但 Python 侧只实现单 Cell(BaseConf 的 after 校验器抛的)。
-        #   对应 Go 的 etcdtable.WireRouter 失败分支,事件名保持一致 —— 继续启动会让所有
-        #   玩家静默落在单 Cell 上,与配置意图不符。
+        # ★ `cell_route.mode` 拿到了非法值(非 off/static/etcd),BaseConf 的 after
+        #   校验器在这里就拒了 —— 对应 Go 的 etcdtable 装配失败分支,事件名保持一致。
+        #   真正的 Router 装配在下面建完 usecase 之后,失败同样打这个事件名。
         logger.error("cellroute_init_failed", err=str(exc))
         return 1
     except Exception as exc:  # noqa: BLE001
@@ -350,7 +351,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         logger.error("player_retention_mode_invalid", err=str(exc))
         return 1
     try:
-        cfg.validate_player_name_resolver()
+        cfg.validate_player_name_resolvers()
     except ValueError as exc:
         logger.error("player_name_resolve_config_invalid", err=str(exc))
         return 1
@@ -429,6 +430,9 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
     dlq_producers: list = []
     consumers: list = []
     rdb = None
+    # ★ 必须在 try **之前**声明:它在 finally 里被读。写在 try 内部的话,
+    # 任何在赋值行之前失败的闸都会让 finally 抛 NameError,把真正的退出原因顶掉。
+    cell_watcher = None
     try:
         # ── ⑩ 严格模式断言(§9.24)────────────────────────────────────────
         # player_reward_claims.record 是 LONGBLOB,非严格模式下超长**静默截断**会让位图
@@ -510,6 +514,26 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         uc = pbiz.PlayerUsecase(repo, cfg.player)
         uc.set_config_tables(ct_store)
 
+        # ── cellroute 装配(位置与 Go 的 `etcdtable.WireRouter` 同在 usecase 建完之后)─
+        #
+        # off(mode 空,当前唯一形态)→ router 为 None,档案落点观测不执行,行为不变。
+        # static → 本地铺表;etcd → 连 etcd 全量 Get + watch 热更,watcher 在 finally 关。
+        # 非法 mode 在闸④(config_scan 阶段)就已经被拦下,走不到这里。
+        try:
+            router, cell_watcher = await cellroute_etcd.build_router(cfg.cell_route)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            logger.error("cellroute_init_failed", err=str(exc))
+            return 1
+        if router is not None:
+            uc.set_cell_router(router)
+            logger.info(
+                "cellroute_enabled",
+                self_region=cfg.cell_route.self_region,
+                self_cell=cfg.cell_route.self_cell,
+            )
+
         # 出战装备预设的精确实例归属校验器。未配 inventory_addr 时不接线 —— SetEquipment
         # 随即 fail-closed 拒绝,**不会退化成"不校验就放行"**,因此这里只警告不退出;
         # 真正的门在 loadout_customize_enabled。
@@ -582,10 +606,30 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         # ── gRPC / HTTP ──────────────────────────────────────────────────
         # auth_required=False 对应 Go 的 pmw.AuthOptional():调用方既有后端内部直连
         # (battle_result / login / DS)也有经 Envoy 的客户端,身份差异在 service 层判。
-        # Team 名称解析是独立内部信任域：精确 payload-bound HMAC
+        # team/friend/guild 名称解析使用各 caller 独立 key：精确 payload-bound HMAC
         # + 跨副本 Redis nonce 消费。不复用 DS callback 密钥或玩家 JWT。
         player_name_verifier = None
-        if cfg.player.player_name_resolve_auth_secret:
+        player_name_credentials = (
+            (
+                "team",
+                cfg.player.player_name_resolve_auth_secret,
+                cfg.player.player_name_resolve_auth_audience,
+            ),
+            (
+                "friend",
+                cfg.player.friend_player_name_resolve_auth_secret,
+                cfg.player.friend_player_name_resolve_auth_audience,
+            ),
+            (
+                "guild",
+                cfg.player.guild_player_name_resolve_auth_secret,
+                cfg.player.guild_player_name_resolve_auth_audience,
+            ),
+        )
+        enabled_player_name_credentials = [
+            item for item in player_name_credentials if item[1]
+        ]
+        if enabled_player_name_credentials:
             try:
                 if rdb is None:
                     raise ValueError(
@@ -598,12 +642,18 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
                 replay = internalrpcauth.RedisReplayStore(
                     rdb, PLAYER_NAME_RESOLVE_NONCE_PREFIX
                 )
-                player_name_verifier = internalrpcauth.Verifier(
-                    cfg.player.player_name_resolve_auth_secret,
-                    "team",
-                    cfg.player.player_name_resolve_auth_audience,
-                    PLAYER_NAME_RESOLVE_MAX_CLOCK_SKEW_SEC,
-                    replay,
+                verifiers = [
+                    internalrpcauth.Verifier(
+                        secret,
+                        caller,
+                        audience,
+                        PLAYER_NAME_RESOLVE_MAX_CLOCK_SKEW_SEC,
+                        replay,
+                    )
+                    for caller, secret, audience in enabled_player_name_credentials
+                ]
+                player_name_verifier = internalrpcauth.MultiCallerVerifier(
+                    *verifiers
                 )
             except asyncio.CancelledError:
                 raise
@@ -617,12 +667,13 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
                     ),
                 )
                 return 1
-            logger.info(
-                "player_name_resolve_verifier_ready",
-                caller="team",
-                audience=cfg.player.player_name_resolve_auth_audience,
-                max_batch=32,
-            )
+            for caller, _secret, audience in enabled_player_name_credentials:
+                logger.info(
+                    "player_name_resolve_verifier_ready",
+                    caller=caller,
+                    audience=audience,
+                    max_batch=32,
+                )
         player_internal_svc = psvc.PlayerInternalService(uc, player_name_verifier)
 
         grpc_server = pserver.build_grpc_server(
@@ -782,6 +833,9 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         if ownership_checker is not None:
             with contextlib.suppress(Exception):
                 await ownership_checker.close()
+        if cell_watcher is not None:
+            with contextlib.suppress(Exception):
+                await cell_watcher.close()
         if rdb is not None:
             with contextlib.suppress(Exception):
                 await rdb.aclose()

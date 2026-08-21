@@ -42,7 +42,7 @@ Write-Host '[1] 标准 Press any key 只能出现在真正成功分支' -Foregro
 $cmdCode = @($cmdText -split "`r?`n" | Where-Object { $_ -notmatch '^\s*(rem\b|::)' }) -join "`n"
 $standardPauseLines = @($cmdCode -split "`n" | Where-Object { $_ -match '\bpause\s*$' })
 Assert-True ($standardPauseLines.Count -eq 1) '整个入口只有一个会显示标准 Press any key 的裸 pause'
-Assert-True ($cmdCode -match '(?is)call\s+"%~dp0tools\\scripts\\bootstrap_pwsh\.cmd".*?if\s+errorlevel\s+1\s*\(.*?pause\s*>\s*nul.*?exit\s+/b\s+1\s*\)') `
+Assert-True ($cmdCode -match '(?is)call\s+"%~dp0tools\\scripts\\bootstrap_pwsh\.cmd".*?set\s+"_PANDORA_BOOTSTRAP_RC=%ERRORLEVEL%".*?if\s+not\s+"%_PANDORA_BOOTSTRAP_RC%"=="0"\s*\(.*?if\s+not\s+defined\s+PANDORA_NONINTERACTIVE\s+pause\s*>\s*nul.*?exit\s+/b\s+%_PANDORA_BOOTSTRAP_RC%\s*\)') `
     'PowerShell 自举失败只静默等确认并返回非零，不显示标准 Press any key'
 Assert-True ($cmdCode -match '(?is)set\s+"RC=%ERRORLEVEL%".*?if\s+not\s+"%RC%"=="0"\s*\(.*?pause\s*>\s*nul.*?exit\s+/b\s+%RC%\s*\).*?if\s+not\s+defined\s+PANDORA_NONINTERACTIVE\s+pause\s*\n\s*exit\s+/b\s+0') `
     'start 非零走静默失败确认；仅 RC=0 才执行标准 pause'

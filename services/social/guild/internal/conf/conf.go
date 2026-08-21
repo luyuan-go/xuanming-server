@@ -2,10 +2,12 @@
 package conf
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/luyuancpp/pandora/pkg/config"
 	"github.com/luyuancpp/pandora/pkg/dbguard"
+	"github.com/luyuancpp/pandora/pkg/internalrpcauth"
 )
 
 // Config 是 guild 服务的完整配置(公会 + 临时群同进程共用)。
@@ -58,6 +60,15 @@ type GuildConf struct {
 	// Redis 弱依赖:node.redis_client 未配 / Ping 失败则降级直连 MySQL(cache 关闭)。
 	CacheTTL config.Duration `yaml:"cache_ttl,omitempty" json:"cache_ttl,omitempty"`
 
+	// PlayerNameResolver* / PlayerNoResolver* 分别是 guild→player 与
+	// guild→login 的公开展示投影。两个 authority 使用独立 HMAC key。
+	PlayerNameResolverAddr         string `yaml:"player_name_resolver_addr,omitempty" json:"player_name_resolver_addr,omitempty"`
+	PlayerNameResolverAuthSecret   string `yaml:"player_name_resolver_auth_secret,omitempty" json:"player_name_resolver_auth_secret,omitempty"`
+	PlayerNameResolverAuthAudience string `yaml:"player_name_resolver_auth_audience,omitempty" json:"player_name_resolver_auth_audience,omitempty"`
+	PlayerNoResolverAddr           string `yaml:"player_no_resolver_addr,omitempty" json:"player_no_resolver_addr,omitempty"`
+	PlayerNoResolverAuthSecret     string `yaml:"player_no_resolver_auth_secret,omitempty" json:"player_no_resolver_auth_secret,omitempty"`
+	PlayerNoResolverAuthAudience   string `yaml:"player_no_resolver_auth_audience,omitempty" json:"player_no_resolver_auth_audience,omitempty"`
+
 	// ── 保留期清理(CLAUDE.md §9 不变量 24:只增表必须有界)──
 
 	// RequestRetentionDays 终态入会申请(approved/rejected)保留天数(默认 90)。
@@ -109,12 +120,54 @@ func (c *Config) Defaults() {
 	if c.Guild.SweepBatch <= 0 {
 		c.Guild.SweepBatch = 500
 	}
+	if c.Guild.PlayerNameResolverAddr != "" && c.Guild.PlayerNameResolverAuthAudience == "" {
+		c.Guild.PlayerNameResolverAuthAudience = "player:name"
+	}
+	if c.Guild.PlayerNoResolverAddr != "" && c.Guild.PlayerNoResolverAuthAudience == "" {
+		c.Guild.PlayerNoResolverAuthAudience = "login:player-no"
+	}
 	if c.Server.Grpc.Addr == "" {
 		c.Server.Grpc.Addr = ":20008"
 	}
 	if c.Server.Http.Addr == "" {
 		c.Server.Http.Addr = ":21008"
 	}
+}
+
+// ValidatePlayerDisplayResolvers 防止弱依赖配置不完整，导致运行时所有申请行静默降级。
+func (c *Config) ValidatePlayerDisplayResolvers() error {
+	if err := validateResolver("guild.player_name_resolver", c.Guild.PlayerNameResolverAddr,
+		c.Guild.PlayerNameResolverAuthSecret, c.Guild.PlayerNameResolverAuthAudience); err != nil {
+		return err
+	}
+	if err := validateResolver("guild.player_no_resolver", c.Guild.PlayerNoResolverAddr,
+		c.Guild.PlayerNoResolverAuthSecret, c.Guild.PlayerNoResolverAuthAudience); err != nil {
+		return err
+	}
+	if c.Guild.PlayerNameResolverAddr != "" && c.Guild.PlayerNoResolverAddr != "" &&
+		c.Guild.PlayerNameResolverAuthSecret == c.Guild.PlayerNoResolverAuthSecret {
+		return fmt.Errorf("guild.player_name_resolver_auth_secret must differ from guild.player_no_resolver_auth_secret")
+	}
+	return nil
+}
+
+func validateResolver(prefix, addr, secret, audience string) error {
+	if addr == "" {
+		if secret != "" {
+			return fmt.Errorf("%s_auth_secret requires %s_addr", prefix, prefix)
+		}
+		if audience != "" {
+			return fmt.Errorf("%s_auth_audience requires %s_addr", prefix, prefix)
+		}
+		return nil
+	}
+	if err := internalrpcauth.ValidateSecret(secret); err != nil {
+		return fmt.Errorf("%s_auth_secret: %w", prefix, err)
+	}
+	if err := internalrpcauth.ValidateIdentity(audience); err != nil {
+		return fmt.Errorf("%s_auth_audience: %w", prefix, err)
+	}
+	return nil
 }
 
 // RetentionMode 返回生效的保留期清理模式(默认 ModeReportOnly = 只报告不删)。

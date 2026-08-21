@@ -32,6 +32,7 @@ from typing import Any
 
 import grpc
 
+from pandorapy import bbr as pbbr
 from pandorapy import errcode
 from pandorapy import errcode_grpc
 from pandorapy import killswitch
@@ -303,6 +304,82 @@ class TraceInterceptor(grpc.aio.ServerInterceptor):
                 # contextvars 的 Token 必须逆序 reset,否则嵌套调用会串上下文。
                 for token in reversed(tokens):
                     token.var.reset(token)
+
+        return grpc.unary_unary_rpc_method_handler(
+            wrapper,
+            request_deserializer=handler.request_deserializer,
+            response_serializer=handler.response_serializer,
+        )
+
+
+class RateLimitInterceptor(grpc.aio.ServerInterceptor):
+    """BBR 自适应限流。对应 Go 侧 pkg/middleware.RateLimit()(底层 go-kratos/aegis)。
+
+    链上位置与 Go 逐条对齐(pkg/grpcserver/grpcserver.go:44):
+
+        Recovery → Trace → Logging → Metrics → [RateLimit] → KillSwitch → 业务
+
+    即**在可观测之内、关停之外**。放在 Metrics 内层是为了让被丢的请求照样计进
+    pandora_rpc_total —— 过载时"丢了多少"正是唯一要看的数,放外层就看不见了。
+
+    ★ 基础设施方法(grpc.health / reflection)必须豁免。丢健康检查的后果不是
+    "少答一个探针",是 k8s 判 Pod NotReady 把它摘掉 —— 过载时摘副本会把剩下的
+    副本压得更狠,自适应丢负载当场变成雪崩加速器。
+
+    与 Kill-Switch 的分工(同 Go 侧 ratelimit.go 头注释):
+        Kill-Switch = 人工临时关某个 RPC(运维决定关谁)
+        RateLimit   = 系统自动在过载时丢请求(没有阈值,机器自己判断)
+    """
+
+    __slots__ = ("_limiter",)
+
+    def __init__(self, limiter: pbbr.BBR | None = None) -> None:
+        self._limiter = limiter if limiter is not None else pbbr.BBR()
+
+    @property
+    def limiter(self) -> pbbr.BBR:
+        return self._limiter
+
+    async def intercept_service(
+        self,
+        continuation: Callable[[grpc.HandlerCallDetails], Awaitable[grpc.RpcMethodHandler]],
+        handler_call_details: grpc.HandlerCallDetails,
+    ) -> grpc.RpcMethodHandler:
+        if is_infrastructure_method(handler_call_details.method):
+            return await continuation(handler_call_details)
+
+        handler = await continuation(handler_call_details)
+        if handler is None:
+            return handler
+        if handler.request_streaming or handler.response_streaming:
+            # 与 Kill-Switch 同理:用 unary_unary_rpc_method_handler 重建会把流
+            # 重包成 unary,客户端收到协议级错误而不是"过载"。全项目唯一的流是
+            # push.Subscribe,它是长连接推送 —— 本来也不该按单次请求丢。
+            return handler
+
+        service, method = _split_method(handler_call_details.method)
+        short_service = metrics.short_service(service)
+        inner = handler.unary_unary
+        limiter = self._limiter
+
+        async def wrapper(request: Any, context: grpc.aio.ServicerContext) -> Any:
+            # ★ 判定必须在**每次调用**时做,不能在 intercept_service 里做一次就定死:
+            # 那样得到的是"这个方法首次被调用时过不过载",此后永远不变。
+            if limiter.should_drop():
+                metrics.RATELIMIT_DROPPED.labels(short_service, method).inc()
+                await errcode_grpc.abort_with(
+                    context,
+                    errcode.PandoraError(errcode.ErrRateLimited, "服务过载,请稍后重试"),
+                )
+                return None  # abort 不返回,这行只为让类型收敛
+            start = limiter.begin()
+            try:
+                return await _call_handler(inner, request, context)
+            finally:
+                # ★ 必须 finally:业务异常 / 客户端取消 / abort 都要归还 inflight。
+                # 漏归还会让 in_flight 单调上涨,几个请求后 `in_flight > maxInFlight`
+                # 恒成立 —— CPU 一到阈值就整片丢且永不恢复,而进程看起来完全正常。
+                limiter.end(start)
 
         return grpc.unary_unary_rpc_method_handler(
             wrapper,

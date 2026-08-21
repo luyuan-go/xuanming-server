@@ -13,7 +13,7 @@ battle 票。它带病上线的后果不是"匹配不好用",而是**同一玩�
     ①  abs_conf_path_failed                    fail-fast  -conf 解不成绝对路径
     ②  config_load_failed                      fail-fast  yaml 读不到 / 语法坏
     ③  config_scan_failed                      fail-fast  yaml 结构对不上
-        └ cellroute_init_failed                fail-fast  cell_route.mode 非空(位置比 Go 早,见下)
+        └ cellroute_init_failed                fail-fast  cell_route 配置非法 / 路由表装配失败
     ④  config_validation_failed                fail-fast  team_addr / 四把内部密钥的信任域校验
     ⑤  configtable_load_failed                 fail-fast  关卡表整批 fail-closed
         ├ configtable_load_warning             WARN       manifest 未列出的脏文件(不拒批次)
@@ -29,8 +29,14 @@ battle 票。它带病上线的后果不是"匹配不好用",而是**同一玩�
         ├ kafka_producer_ready                 INFO
         └ kafka_producer_disabled_dev_only     WARN       brokers 显式为空(纯轮询档)
     ⑪  session_gate_init_failed                fail-fast  require=true 时漏配端点拒启
-    ⑫  ds_allocator_not_implemented            fail-fast  ★ Python 专有,见下
-        └ ds_allocator_addr_empty              WARN       用 StubDSAllocator(本地骨架档)
+    ⑫  ds_allocator_requires_ds_ticket_v2     fail-fast  配了 addr 却没有任何签票档
+        ├ ds_ticket_profile_conflict          fail-fast  v2 与 local-off-v1 同时配(互斥)
+        ├ ds_ticket_v2_signer_init_failed     fail-fast  (+ ds_ticket_v2_signer_ready INFO)
+        ├ local_legacy_signer_init_failed     fail-fast  local-off-v1 档 jwt.secret 不合法
+        ├ ds_ticket_local_off_v1_legacy_signer WARN      本机联调档(生产绝不允许)
+        ├ allocation_abort_service_auth_init_failed fail-fast  abort 补偿的专用签名器
+        ├ ds_allocator_grpc_ready             INFO
+        └ ds_allocator_addr_empty             WARN       用 StubDSAllocator(本地骨架档)
     ⑬  locator_notifier_ready                  INFO
         └ locator_addr_empty                   WARN       不上报位置 + 在线闸整道关闭
     ⑭  entry_ratelimiter_ready                 INFO       进场侧限流参数
@@ -54,21 +60,19 @@ battle 票。它带病上线的后果不是"匹配不好用",而是**同一玩�
      READY / Battle 落点的**唯一通道**就是 pandora.match.progress 推送。以
      pusher=None 受理匹配后把整场进度静默丢弃,比不 Ready 严重得多。
 
-★ 两处与 Go 的**落点差异**(诚实标注,不是等价实现):
+★ 一处与 Go 的**落点差异**(诚实标注,不是等价实现):
 
-  1) 闸③ 的 cellroute_init_failed:Go 在装配链末尾调 `etcdtable.BuildRouter`,失败
-     os.Exit。Python 的 `cellroute` 只有静态表与路由算法、没有 BuildRouter 装配,
-     于是 `pandorapy.config.BaseConf` 的 pydantic 校验器在**加载配置时**就对
-     `cell_route.mode` 非空拒启。事件名保持不变(告警按事件名建),方向一致
-     (fail-fast,不会静默按单 Cell 跑);单 Cell(当前唯一形态)两边完全相同。
+  1) 闸③ 的 cellroute_init_failed 会在**两个位置**报:一是 `pandorapy.config.BaseConf`
+     的 pydantic 校验器在**加载配置时**跑与 Go `RouterConfig.Validate` 逐条同义的
+     校验(比 Go 早);二是装配链里调 `cellroute_etcd.build_router` 失败(与 Go
+     `etcdtable.BuildRouter` 同位)。事件名在两处保持一致(告警按事件名建),
+     方向一致(都是 fail-fast,不会静默按单 Cell 跑)。
 
-  2) 闸⑫ 的 ds_allocator_not_implemented:**Go 没有这道闸**。Python 侧尚未实现
-     真实分配链(缺 battle DSTicket 的签发:RS256 v2 与 local-off-v1 legacy 两档
-     都没有),而 `match.ds_allocator_addr` 非空却回落 StubDSAllocator 的后果是
-     **给玩家发 127.0.0.1:7777 的假地址和一张假票,服务端日志全绿** ——
-     没有任何一层能发现。所以这里 fail-fast 而不是降级。
-     ⚠️ 直接后果:**matchmaker-dev.yaml 配了 ds_allocator_addr,Python 版起不来**。
-     要跑 Python 版本地骨架,把 `match.ds_allocator_addr` 留空(其余不动)。
+     ★ 2026-08-21 补齐:本段原先写「Python 的 cellroute 只有静态表与路由算法、
+     没有 BuildRouter 装配,于是对 mode 非空一律拒启」—— 那已随 `cellroute_etcd`
+     补齐而失效。当时那道拒启闸又是 `matchloop` 声称「不存在配了却静默按单桶跑」
+     的**唯一**依据;闸改了而那句注释没改,中间就出现过一段真空期。
+     教训:**拆掉一道 fail-closed 闸时,必须 grep 完所有引用它做安全论据的注释**。
 
 ★ 后台循环只有一条:撮合主循环(`uc.run_match_loop`,内部含 start saga 推进 /
   装箱成局 / 分配推进 / 确认期超时 / 离线回收 6+2 个步骤)。
@@ -90,6 +94,7 @@ from __future__ import annotations
 # ★ 必须最先 import:Windows 控制台默认 cp1252,日志里的中文会抛 UnicodeEncodeError
 # 并把真正的启动错误顶掉(实测踩过多次)。见 pandorapy/_utf8.py。
 from pandorapy import _utf8  # noqa: F401  isort:skip
+from pandorapy import cellroute_etcd
 from pandorapy import config as pconfig
 
 import argparse
@@ -102,6 +107,7 @@ from pandora.config.v1 import configtable_pb2_grpc as cfggrpc
 from pandora.match.v1 import match_pb2_grpc as matchgrpc
 
 from pandorapy import etcdleader
+from pandorapy import godur
 from pandorapy import internalrpcauth
 from pandorapy import kafka_topics
 from pandorapy import kafkax
@@ -112,6 +118,8 @@ from pandorapy import server as pserver
 from pandorapy import sessiongate
 from pandorapy import snowflake
 from pandorapy import snowflake_etcd
+from pandorapy import dsticket as pdsticket
+from pandorapy.services.login import dsticket as ldsticket
 from pandorapy.services.matchmaker import biz as mbiz
 from pandorapy.services.matchmaker import catalog as mcat
 from pandorapy.services.matchmaker import clients as mclients
@@ -187,21 +195,23 @@ class KafkaMatchPusher:
 def _self_region(cfg: mconf.Config) -> int:
     """本副本的 region 编号 —— 只用于 leader 选举的分片键。
 
-    Python 侧 cell_route 段未建模(mode 非空时在加载配置阶段就拒启,见闸③),
-    所以从 `model_extra` 里读。读不到按 0,与 Go 单 Cell 部署的 SelfRegion 零值一致。
+    直接取 `cfg.cell_route.self_region`(`BaseConf` 的正式字段)。留空按 0,
+    与 Go 单 Cell 部署的 SelfRegion 零值一致。
 
     为什么分片键里要有 region:同一 (game_mode, region) 的副本才该竞争同一个 leader。
     少了 region,跨 region 部署会把所有副本挤到一个选举里 —— 另一个 region 的撮合
     直接停摆(它的副本永远选不上),而且没有任何错误日志。
+
+    ★ 2026-08-21 修:本函数原先从 `cfg.model_extra["cell_route"]` 读。那在
+    `cell_route` 还没建模时是对的,但同日 `BaseConf.cell_route` 建成**正式字段**后,
+    pydantic 就不再把它放进 `model_extra` —— 于是本函数**恒返回 0**,
+    `election` 恒为 `.../r0`,跨 region 部署的所有副本挤进同一个选举,
+    非 leader region 的撮合永久停摆且零错误日志(正是上面那段注释描述的事故)。
+    同一形状的缺陷 `services/auction/conf.py` 的「历史教训」段已记过一次:
+    **一旦某段从 model_extra 升级成正式字段,所有 `model_extra` 读取点都得跟着改**。
+    回归测试见 `tests/test_matchmaker_region_affinity.py::test_self_region_reads_modeled_cell_route`。
     """
-    extra = cfg.model_extra or {}
-    section = extra.get("cell_route") or {}
-    if not isinstance(section, dict):
-        return 0
-    try:
-        return int(section.get("self_region") or 0)
-    except (TypeError, ValueError):
-        return 0
+    return int(cfg.cell_route.self_region)
 
 
 async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912, PLR0915 —— 与 Go 同为线性启动闸
@@ -329,6 +339,10 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
     team_reader: mclients.GrpcTeamReader | None = None
     locator: mclients.GrpcLocationNotifier | None = None
     presence: offlinewatch.GrpcPresenceReader | None = None
+    ds_allocator: mclients.GrpcDSAllocator | None = None
+    # 在 try 之前声明:finally 里要读它。装配链中途报错时若还没赋值,
+    # finally 会撞 UnboundLocalError 并顶掉真正的退出原因。
+    cell_watcher = None
     try:
         # ── 闸⑧ Snowflake ────────────────────────────────────────────────
         #
@@ -459,25 +473,122 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
 
         # ── 闸⑫ DS allocator ──────────────────────────────────────────────
         #
-        # ★ 见模块头「落点差异 2」:Python 侧没有真实分配链(battle DSTicket 的两档
-        # 签发都还没有),而回落 StubDSAllocator 会给玩家发假地址 + 假票且日志全绿。
-        # 拒启是唯一诚实的姿态(§14:不能让配置声称有一条并不存在的链路)。
+        # battle DSTicket 的签发档由**显式配置**三选一,不做"有钥匙就用 v2"的推断:
+        #   ① ds_ticket.signer_enabled()  → RS256 v2(生产/灰度唯一形态)
+        #   ② match.ds_local_profile == local-off-v1 → HS256 legacy(Windows 本机联调)
+        #   ③ 都没配 → 拒启
+        # ①② **互斥**:两者同时配说明部署意图自相矛盾(同机 DS 只认其中一档),
+        # 猜任何一边都会产出"签得出、验不过"的票 —— 那时 DS 已经拉起来了。
         if cfg.match.ds_allocator_addr:
-            logger.error(
-                "ds_allocator_not_implemented",
-                ds_allocator_addr=cfg.match.ds_allocator_addr,
-                ds_local_profile=cfg.match.ds_local_profile,
-                hint="Python 版 matchmaker 尚未实现真实 DS 分配链(缺 battle DSTicket 签发);"
-                "回落 StubDSAllocator 会发出假 ds_addr + 假票且无任何错误信号。"
-                "要跑 Python 版请把 match.ds_allocator_addr 留空(骨架档),"
-                "需要真实分配请用 Go 版 matchmaker",
+            legacy_signer = None
+            v2_signer = None
+            if cfg.ds_ticket.signer_enabled():
+                if cfg.match.ds_local_profile:
+                    logger.error(
+                        "ds_ticket_profile_conflict",
+                        ds_local_profile=cfg.match.ds_local_profile,
+                        hint="ds_ticket.private_key_file 与 match.ds_local_profile 互斥,"
+                        "二选一",
+                    )
+                    return 1
+                try:
+                    v2_signer = pdsticket.new_ds_ticket_signer_from_conf(
+                        pdsticket.DSTicketConf(
+                            private_key_file=cfg.ds_ticket.private_key_file,
+                            active_kid=cfg.ds_ticket.active_kid,
+                            # 零值翻 None 交签发器取默认(同 hub_allocator 闸⑤):
+                            # 传 0 会被当成"显式要求 0 秒有效期"。
+                            ttl=cfg.ds_ticket.ttl_td() or None,
+                            jwks_file=cfg.ds_ticket.jwks_file,
+                            keyset_revision=cfg.ds_ticket.keyset_revision,
+                        )
+                    )
+                except pdsticket.DSTicketConfigError as exc:
+                    logger.error(
+                        "ds_ticket_v2_signer_init_failed",
+                        err=str(exc),
+                        hint="check ds_ticket.private_key_file / active_kid / ttl",
+                    )
+                    return 1
+                logger.info(
+                    "ds_ticket_v2_signer_ready",
+                    kid=v2_signer.kid(),
+                    ttl=godur.duration_string(v2_signer.ttl()),
+                )
+            elif cfg.match.ds_local_profile == mconf.DS_LOCAL_PROFILE_OFF_V1:
+                if len(cfg.jwt.secret) < 32:
+                    logger.error(
+                        "local_legacy_signer_init_failed",
+                        err="jwt.secret must be >= 32 bytes",
+                        hint="jwt.secret must be >=32 bytes and match login/envoy",
+                    )
+                    return 1
+                legacy_signer = ldsticket.DSTicketSigner(
+                    secret=cfg.jwt.secret,
+                    issuer=cfg.jwt.issuer,
+                    audience=cfg.jwt.audience,
+                    ttl=cfg.jwt.ds_ticket_ttl_td(),
+                    additional_secrets=tuple(cfg.jwt.additional_secrets),
+                )
+                logger.warning(
+                    "ds_ticket_local_off_v1_legacy_signer",
+                    profile=cfg.match.ds_local_profile,
+                    hint="Windows 本机联调专用:HS256 票无实例绑定 / 无灰度粘滞 / "
+                    "无 kid 吊销;生产与灰度绝不允许启用",
+                )
+            else:
+                logger.error(
+                    "ds_allocator_requires_ds_ticket_v2",
+                    ds_allocator_addr=cfg.match.ds_allocator_addr,
+                    hint="配置带版本的 ds_ticket.private_key_file + active_kid;"
+                    "Windows 本机联调设 match.ds_local_profile=local-off-v1;"
+                    "静默回落 legacy 是禁止的",
+                )
+                return 1
+            # 补偿签名器:破坏性 abort RPC 的专用密钥,**不复用**玩家 JWT / DS 回调密钥
+            # (那几把钥匙的持有者范围比"能拆一台 DS"宽得多)。
+            try:
+                abort_auth = internalrpcauth.Signer(
+                    cfg.match.allocation_abort_auth_secret,
+                    SERVICE_NAME,
+                    cfg.match.allocation_abort_auth_audience,
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                logger.error(
+                    "allocation_abort_service_auth_init_failed",
+                    err=str(exc),
+                    hint="check match.allocation_abort_auth_secret / _audience "
+                    "(必须与 ds_allocator 侧一致)",
+                )
+                return 1
+            grpc_allocator = mclients.GrpcDSAllocator(
+                cfg.match.ds_allocator_addr,
+                legacy_signer,
+                v2_signer,
+                abort_auth,
+                cfg.match.map_id,
+                cfg.match.game_mode,
+                cfg.match.ds_allocate_timeout_td().total_seconds(),
             )
-            return 1
-        allocator = mclients.StubDSAllocator("")
-        logger.warning(
-            "ds_allocator_addr_empty",
-            hint="using StubDSAllocator (mock ds_addr + mock tickets)",
-        )
+            grpc_allocator.set_session_gate(sess_gate)
+            if ct_store is not None:
+                grpc_allocator.set_config_tables(ct_store)
+            ds_allocator = grpc_allocator
+            allocator = grpc_allocator
+            logger.info(
+                "ds_allocator_grpc_ready",
+                ds_allocator_addr=cfg.match.ds_allocator_addr,
+                map_id=cfg.match.map_id,
+                game_mode=cfg.match.game_mode,
+            )
+        else:
+            allocator = mclients.StubDSAllocator("")
+            logger.warning(
+                "ds_allocator_addr_empty",
+                hint="using StubDSAllocator (mock ds_addr + mock tickets)",
+            )
 
         # ── 闸⑬ player_locator(弱依赖:留空 → 不上报位置)──────────────────
         # 撮合成局→MATCHING、全员确认就绪→BATTLE(不变量 §1)。
@@ -509,6 +620,29 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         uc.set_presence_reader(presence)
         if ct_store is not None:
             uc.set_config_tables(ct_store)
+
+        # ── cellroute 装配(对应 Go main.go 的 `etcdtable.BuildRouter` + SetCellRouter)──
+        # off(mode 空)→ router 为 None = 单 Cell,`_form_matches_in_pool` 走单桶贪心,
+        # 与 Go 侧 router 为 nil 完全一致;static / etcd → 真正建表并注入,撮合随即升级为
+        # 「region 内优先 + 跨 region 溢出」两级。非法 mode 在上面 config 加载阶段(闸③)
+        # 就已经打 cellroute_init_failed 拒启了,这里兜的是**装配期**失败(etcd 连不上等)。
+        try:
+            router, cell_watcher = await cellroute_etcd.build_router(cfg.cell_route)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            logger.error("cellroute_init_failed", err=str(exc))
+            return 1
+        # cell_watcher 已在 try 之前声明,由本函数末尾的 finally 统一关闭
+        # (关闭顺序与建立顺序相反)。
+        if router is not None:
+            uc.set_cell_router(router)
+            logger.info(
+                "cellroute_enabled",
+                mode=cfg.cell_route.mode,
+                self_region=cfg.cell_route.self_region,
+                self_cell=cfg.cell_route.self_cell,
+            )
 
         # ── 闸⑭ 进场侧限流(anti-abuse §6 第 2/3/7/8 项)────────────────────
         # StartMatch 冷却 + 成局级冷却 + 容量耗尽静默窗 + no-show 退避执行。
@@ -707,7 +841,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         if producer is not None:
             with contextlib.suppress(Exception):
                 await producer.close()
-        for closable in (team_reader, locator, presence):
+        for closable in (team_reader, locator, presence, ds_allocator, cell_watcher):
             if closable is not None:
                 with contextlib.suppress(Exception):
                     await closable.close()

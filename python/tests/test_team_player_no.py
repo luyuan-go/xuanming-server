@@ -432,12 +432,12 @@ async def test_mysql_account_repo_reads_player_nos_with_one_in_query() -> None:
 
 
 def test_python_main_wires_the_real_signed_rpc_chain() -> None:
-    import pathlib
-
     from pandorapy.services.login import conf as lconf
     from pandorapy.services.login import main as lmain
     from pandorapy.services.team import main as tmain
     from pandorapy.services.team import player_no_client
+
+    from tests.srcprobe import module_code_text
 
     team_cfg = tconf.Config()
     team_cfg.team.player_no_resolver_addr = "127.0.0.1:20001"
@@ -455,8 +455,9 @@ def test_python_main_wires_the_real_signed_rpc_chain() -> None:
         == "pandora:login:player-no-resolve:nonce:"
     )
 
-    team_main = pathlib.Path(tmain.__file__).read_text(encoding="utf-8")
-    login_main = pathlib.Path(lmain.__file__).read_text(encoding="utf-8")
+    # 只看代码：注释/docstring 里提到这些接线不算数（理由见 tests/srcprobe.py）
+    team_main = module_code_text(tmain)
+    login_main = module_code_text(lmain)
     assert "GrpcPlayerNoResolver" in team_main
     assert "uc.set_player_no_resolver(player_no_resolver)" in team_main
     assert "internalrpcauth.RedisReplayStore" in login_main

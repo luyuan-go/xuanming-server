@@ -42,6 +42,13 @@ trade:
   optimistic_retry: 3
   # max_items_per_order: 单订单最大物品条目数
   max_items_per_order: 20
+  # rate_quota_per_min: 下单/撤单的 per-player 每分钟频率配额(anti-abuse §6 第 6 项)。
+  #   与 max_orders_per_player 总量闸正交:总量限「同时挂多少」,本值限「刷多快」。
+  #   显式写出而不依赖代码默认值:Go 与 Python 两栈各持一份默认(20),
+  #   只改一侧会在灰度期造成同一玩家在两种副本上限额不同且两边日志都正常。
+  #   写进 yaml 后两栈读同一份配置,天然不会分叉。集群/-Prod 产物由
+  #   gen_cluster_config.ps1 从本文件逐字继承(它只改地址,不改业务旋钮)。
+  rate_quota_per_min: 60
   # inventory_addr: inventory 服务 gRPC 直连地址。配上 → 结算走真实 inventory P2P 原子对转
   #   (GrpcResourceLedger);留空 + allow_noop_ledger=true 才退回 Noop。dev 接真实结算时取消注释:
   # inventory_addr: "127.0.0.1:20015"

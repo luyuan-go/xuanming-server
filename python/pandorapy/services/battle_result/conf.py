@@ -88,10 +88,11 @@ TERMINAL_RELEASE_GRACE_MAX = _dt.timedelta(minutes=2)
 class DSAuthFenceConf(BaseModel):
     """对应 Go 的 `pkg/config.DSAuthFenceConf`(authority_mode=redis 的机械激活栅栏)。
 
-    Python 侧**没有**实现 fence 的获取与失租退出(见 main.py 的 authority_mode 闸),
-    但必须建模:落进 model_extra 会让 `ValidateRedisFence` 恒看不到 endpoints,
-    于是一份缺 fence 的非法配置在 Go 上拒启、在 Python 上放行 —— 两栈对同一份 yaml
-    结论不同,正是要避免的事。
+    main.py 的闸㉘ 会用这些字段调 `dsauthfence.acquire_runtime`,并挂失租守望
+    (失租即 fail-stop),与 Go 侧同语义。必须显式建模而不是靠 model_extra 兜:
+    落进 model_extra 会让 `ValidateRedisFence` 恒看不到 endpoints,于是一份缺 fence
+    的非法配置在 Go 上拒启、在 Python 上放行 —— 两栈对同一份 yaml 结论不同,
+    正是要避免的事。
     """
 
     model_config = {"extra": "allow"}

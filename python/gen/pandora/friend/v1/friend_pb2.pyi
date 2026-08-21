@@ -87,16 +87,18 @@ class RejectFriendResponse(_message.Message):
     def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ...) -> None: ...
 
 class FriendRequestInfo(_message.Message):
-    __slots__ = ("request_id", "from_player_id", "from_nickname", "created_ms")
+    __slots__ = ("request_id", "from_player_id", "from_nickname", "created_ms", "from_player_no")
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     FROM_PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
     FROM_NICKNAME_FIELD_NUMBER: _ClassVar[int]
     CREATED_MS_FIELD_NUMBER: _ClassVar[int]
+    FROM_PLAYER_NO_FIELD_NUMBER: _ClassVar[int]
     request_id: int
     from_player_id: int
     from_nickname: str
     created_ms: int
-    def __init__(self, request_id: _Optional[int] = ..., from_player_id: _Optional[int] = ..., from_nickname: _Optional[str] = ..., created_ms: _Optional[int] = ...) -> None: ...
+    from_player_no: int
+    def __init__(self, request_id: _Optional[int] = ..., from_player_id: _Optional[int] = ..., from_nickname: _Optional[str] = ..., created_ms: _Optional[int] = ..., from_player_no: _Optional[int] = ...) -> None: ...
 
 class ListFriendRequestsRequest(_message.Message):
     __slots__ = ()

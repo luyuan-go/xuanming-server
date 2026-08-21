@@ -84,12 +84,14 @@ message RejectFriendResponse {
 
 // FriendRequestInfo 是客户端可见的「收到的待处理好友请求」视图(CLAUDE.md §5.8)。
 // 只暴露 pending 状态的入站请求(target = 查询者);不暴露内部 status 枚举。
-// from_nickname 留空,由客户端按 from_player_id 向 player 服务解析显示名(§5.8 最小数据单位)。
+// from_nickname/from_player_no 在查询时分别从 player/login 权威批量投影，不写回申请表；
+// 两者只用于展示，接受/拒绝与身份判断仍只使用 request_id/from_player_id。
 message FriendRequestInfo {
   uint64 request_id     = 1;
   uint64 from_player_id = 2;  // 发起方(requester)
-  string from_nickname  = 3;
+  string from_nickname  = 3;  // player 权威角色名；空表示未设置或本次投影失败
   int64  created_ms     = 4;
+  uint64 from_player_no = 5;  // login/account 权威展示编号；0 表示补号中或本次投影失败
 }
 
 message ListFriendRequestsRequest {

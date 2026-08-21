@@ -76,12 +76,15 @@ message Guild {
 }
 
 // GuildJoinRequest 是客户端可见的「待处理加入申请」视图(给会长 / 官员看)。
+// from_nickname/from_player_no 在查询时分别从 player/login 权威批量投影，不写回申请表；
+// 两者只用于展示，审批与身份判断仍只使用 request_id/from_player_id。
 message GuildJoinRequest {
   uint64 request_id     = 1;
   uint64 guild_id       = 2;
   uint64 from_player_id = 3;
-  string from_nickname  = 4;  // 留空,客户端解析
+  string from_nickname  = 4;  // player 权威角色名；空表示未设置或本次投影失败
   int64  created_ms     = 5;
+  uint64 from_player_no = 6;  // login/account 权威展示编号；0 表示补号中或本次投影失败
 }
 
 message CreateGuildRequest {

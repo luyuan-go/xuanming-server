@@ -9,8 +9,9 @@ leaderboard 照着它抄，于是 `except BaseException` 吞掉 `CancelledError`
 
 from __future__ import annotations
 
+import ast
 import pathlib
-import re
+import textwrap
 
 import pytest
 
@@ -35,6 +36,65 @@ def test_there_are_service_files_to_check() -> None:
     assert _service_files(), f"没扫到任何服务源文件（{SERVICES_DIR}）"
 
 
+def _except_types(handler: ast.ExceptHandler) -> list[ast.expr]:
+    """这条 handler 声明捕获的异常类型（`except (A, B):` 摊平成 [A, B]）。"""
+    if handler.type is None:
+        return []
+    if isinstance(handler.type, ast.Tuple):
+        return list(handler.type.elts)
+    return [handler.type]
+
+
+def _catches_base_exception(handler: ast.ExceptHandler) -> bool:
+    """这条 handler 会不会抓住 `BaseException`（从而抓住 `CancelledError`）。
+
+    裸 `except:` 也算 —— 它抓一切。**正则版把裸 except 整个漏掉了**，
+    因为它只匹配字面量 `except BaseException`。
+    """
+    if handler.type is None:
+        return True
+    return any(isinstance(t, ast.Name) and t.id == "BaseException" for t in _except_types(handler))
+
+
+def _catches_cancelled(handler: ast.ExceptHandler) -> bool:
+    """这条 handler 是否显式点名 `CancelledError`（裸名或 `asyncio.CancelledError`）。"""
+    for t in _except_types(handler):
+        if isinstance(t, ast.Name) and t.id == "CancelledError":
+            return True
+        if isinstance(t, ast.Attribute) and t.attr == "CancelledError":
+            return True
+    return False
+
+
+def _reraises_unconditionally(handler: ast.ExceptHandler) -> bool:
+    """块体**顶层**有裸 `raise`。嵌在 `if` 里的是条件 re-raise，不算。"""
+    return any(isinstance(st, ast.Raise) and st.exc is None for st in handler.body)
+
+
+def _unguarded_broad_handlers(tree) -> list[int]:  # noqa: ANN001
+    """返回「会吞掉 `CancelledError` 的宽 except」的行号。
+
+    判据完全从 AST 推导：对每个 `try`，按**声明顺序**看它的 handler ——
+    宽 handler 之前若已有一条显式点名 `CancelledError` 的 handler，取消就
+    永远轮不到宽 handler，放行；宽 handler 自己无条件 re-raise 也放行。
+    """
+    bad: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        seen_cancelled = False
+        for handler in node.handlers:
+            if _catches_cancelled(handler):
+                seen_cancelled = True
+                continue
+            if not _catches_base_exception(handler):
+                continue  # `except Exception` 抓不到 CancelledError，安全
+            if seen_cancelled or _reraises_unconditionally(handler):
+                continue
+            bad.append(handler.lineno)
+    return sorted(bad)
+
+
 @pytest.mark.parametrize("path", _service_files(), ids=lambda p: f"{p.parent.name}/{p.name}")
 def test_cancelled_error_is_re_raised_before_any_broad_except(path: pathlib.Path) -> None:
     """★ `except BaseException` 之前必须先放行 `asyncio.CancelledError`。
@@ -53,50 +113,107 @@ def test_cancelled_error_is_re_raised_before_any_broad_except(path: pathlib.Path
 
     ⚠️ **不算违规的两种写法**（第一版检查在它们上面误报了 13 处）：
 
-      1. 前面已经有一条 `except asyncio.CancelledError: raise`；
+      1. 同一个 `try` 里，前面已经有一条 `except asyncio.CancelledError`；
       2. 这条宽 except **自己无条件 re-raise**（事务回滚的标准写法：
          `except BaseException: rollback(); raise`）—— 取消照样穿透出去，
          回滚本身是必须做的清理，不做才会留下悬挂事务。
 
     误报的检查会被 noqa 掉或整条删掉，最后什么都不剩，所以这两种必须放行。
+
+    ⚠️⚠️ **2026-08-21 重写为 AST**。原先是逐行正则，判据 ① 是
+    「前 12 行里出现过 `CancelledError` 这个字符串」—— **注释行照样算数**。
+    而本仓恰恰到处都是「★ 取消必须穿透:CancelledError 是 BaseException…」
+    这类说明性注释，于是：把真的 `except asyncio.CancelledError: raise`
+    删掉、只留那句注释，**238 个用例全绿**（已实测）。
+
+    这是同一个判据缺陷的第二处（第一处见 `_unreferenced_runner_defs`）：
+    **注释会抵消文本判据；能拿 AST 就别数文本。**
+
+    改成 AST 后顺带补上了正则版的两个结构性盲区：
+      - 裸 `except:`（同样抓 BaseException，正则匹配不到字面量所以整个漏掉）；
+      - `except (Foo, BaseException):` 这种元组形式；
+      - 「前 12 行」的窗口不再需要 —— handler 归属由 `try` 节点结构决定，
+        不再受行距、嵌套或中间插入的注释影响。
     """
-    lines = path.read_text(encoding="utf-8").split("\n")
-    offenders: list[int] = []
-    for i, ln in enumerate(lines):
-        m = re.match(r"^(\s*)except BaseException", ln)
-        if not m:
-            continue
-        # ① 前面已放行 CancelledError？
-        guarded = False
-        for prev in reversed(lines[max(0, i - 12) : i]):
-            if "CancelledError" in prev:
-                guarded = True
-                break
-            if re.match(r"^\s*(try:|async def |def )", prev):
-                break
-        if guarded:
-            continue
-        # ② 这条 except 自己无条件 re-raise？扫它的块体（缩进更深的连续行）
-        indent = len(m.group(1))
-        reraises = False
-        for nxt in lines[i + 1 :]:
-            if not nxt.strip():
-                continue
-            cur_indent = len(nxt) - len(nxt.lstrip())
-            if cur_indent <= indent:
-                break  # 块体结束
-            if re.match(r"^\s*raise\s*$", nxt) and cur_indent == indent + 4:
-                # 只认块体**顶层**的裸 raise：嵌在 if 里的是条件 re-raise，不算
-                reraises = True
-        if not reraises:
-            offenders.append(i + 1)
+    offenders = _unguarded_broad_handlers(ast.parse(path.read_text(encoding="utf-8")))
     assert not offenders, (
-        f"{path.parent.name}/{path.name} 第 {offenders} 行的 `except BaseException` "
+        f"{path.parent.name}/{path.name} 第 {offenders} 行的宽 except "
         f"没有先放行 CancelledError —— 优雅停机时会把取消吞成业务错误码。"
         f"在它前面加：\n"
         f"    except asyncio.CancelledError:\n"
         f"        raise"
     )
+
+
+def test_the_cancelled_error_check_is_not_vacuous() -> None:
+    """金丝雀：确认上面那条检查**确实在看东西**。
+
+    它现在是「全绿」的，而全绿有两种可能：真的没有违规，或者判据根本没生效
+    （正则写错、AST 节点类型选错、`_service_files()` 扫了个空目录）。
+    这条用例把两者区分开 —— 断言全仓确实存在**大量**被扫到的宽 except，
+    并且构造两个已知形状验证判据的正反两面。
+    """
+    total = 0
+    for path in _service_files():
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Try):
+                total += sum(1 for h in node.handlers if _catches_base_exception(h))
+    assert total >= 50, f"只扫到 {total} 个宽 except，判据可能已失效"
+
+    # 反面：注释里提到 CancelledError **不能**当放行证据（正则版就栽在这里）
+    defeated_by_comment = textwrap.dedent(
+        """
+        async def f():
+            try:
+                await g()
+            # 取消必须穿透:CancelledError 是 BaseException
+            except BaseException as exc:
+                log(exc)
+        """
+    )
+    assert _unguarded_broad_handlers(ast.parse(defeated_by_comment)), (
+        "注释提到 CancelledError 被当成了放行证据 —— 判据又退回数文本了"
+    )
+
+    # 正面：真的有守卫时不能误报
+    real_guard = textwrap.dedent(
+        """
+        async def f():
+            try:
+                await g()
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                log(exc)
+        """
+    )
+    assert not _unguarded_broad_handlers(ast.parse(real_guard))
+
+    # 正面：宽 except 自己无条件 re-raise（事务回滚的标准写法）
+    rollback = textwrap.dedent(
+        """
+        async def f():
+            try:
+                await g()
+            except BaseException:
+                await rollback()
+                raise
+        """
+    )
+    assert not _unguarded_broad_handlers(ast.parse(rollback))
+
+    # 反面：裸 `except:` 同样抓 BaseException —— 正则版整个漏掉了这种
+    bare = textwrap.dedent(
+        """
+        async def f():
+            try:
+                await g()
+            except:
+                log("oops")
+        """
+    )
+    assert _unguarded_broad_handlers(ast.parse(bare)), "裸 except: 没被认出来"
+
 
 
 # ── 刻意**没有**加的一条：R5「player_id 必须取自鉴权上下文」的机械检查 ──────
@@ -306,6 +423,90 @@ def test_the_background_check_still_recognizes_real_services() -> None:
     # 只覆盖一种时另一种就是盲区 —— 这正是上一版漏掉 9 处裸 lambda 的原因。
     for service in ("dialogue", "auction", "player"):
         assert service in recognized, f"{service} 的 background 没被认出来"
+
+
+# ── 后台作业定义了就必须接线 ────────────────────────────────────────────
+
+def _unreferenced_runner_defs(tree) -> list[tuple[str, int]]:  # noqa: ANN001
+    """找出"定义了但全文件没人引用"的 `_run_*` / `_*_loop` 顶层协程。
+
+    判据刻意宽松:只要函数名作为**标识符**在定义之外被读到过一次(被 append 进
+    background、被 safego.spawn、被别的函数调用),就算接上了。这样不会因为写法不同
+    误红,但"一次都没被读到"必然是漏接。
+
+    ⚠️ 第一版用 `re.findall(name, src)` 数出现次数 —— 而补接线时留的那句注释
+    「此前 `_run_bag_journal_sweep` 定义了但从未挂进 background」本身就含这个名字,
+    于是把接线拆掉后检查照样打绿。**注释会抵消文本判据**;能拿到 AST 就别数文本
+    (与上面 `_bare_lambda_lines` 那条同一个教训)。
+    """
+    import ast
+
+    defined: dict[str, int] = {}
+    for node in tree.body:
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) and (
+            node.name.startswith("_run") or node.name.endswith("_loop")
+        ):
+            defined[node.name] = node.lineno
+    if not defined:
+        return []
+    referenced = {
+        n.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in defined
+    }
+    return sorted((name, lineno) for name, lineno in defined.items() if name not in referenced)
+
+
+@pytest.mark.parametrize(
+    "path", [p for p in _service_files() if p.name == "main.py"],
+    ids=lambda p: p.parent.name,
+)
+def test_background_runners_are_actually_wired(path: pathlib.Path) -> None:
+    """★ main.py 里定义的 `_run_*` 后台作业必须真的被接进 `background`。
+
+    2026-08-21 实际缺陷:`inventory/main.py` 定义了 `_run_bag_journal_sweep`
+    (对应 Go `cmd/inventory/main.go` 的 `go runBagJournalSweep(...)`),但**从没被
+    append 进 background** —— `bag_journal` 表因此永远不清理,违反 §9.24。
+
+    为什么没有任何现成的闸能抓到它:
+      - ruff 的 F401/F841 只管 import 与局部变量,**模块级函数没人调用不是 lint 错**;
+      - 类型检查同理;
+      - 单测不会去调一个私有 `_run_*`;
+      - 服务照常启动、health 照答 SERVING、日志零行 —— 与"接上了但没到清理时间"
+        在可观测性上完全同形。
+
+    所以判据只能是结构性的:**定义了就必须在别处被引用**。移植 Go `main.go` 时的对应
+    动作是:把每一个 `go xxx(ctx, ...)` 都数出来,逐个确认有 Python 的 background 条目。
+    """
+    import ast
+
+    bad = _unreferenced_runner_defs(ast.parse(path.read_text(encoding="utf-8")))
+    assert not bad, (
+        f"{path.parent.name}/main.py 定义了后台作业却没人引用:{bad} —— "
+        f"这条循环永远不会跑,而服务照常 SERVING、日志零行。"
+        f"接进 server.run(background=[...]) 或删掉它(§14 不留半成品)。"
+    )
+
+
+def test_the_runner_wiring_check_is_not_vacuous() -> None:
+    """★ 金丝雀:上面那条必须真的扫到了 `_run_*` 定义。
+
+    命名约定一变(比如改叫 `_job_*`),判据会对所有服务平静地打绿 —— 与
+    `test_the_background_check_still_recognizes_real_services` 同一类空转风险。
+    """
+    import ast
+
+    mains = [p for p in _service_files() if p.name == "main.py"]
+    total = 0
+    for p in mains:
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        total += sum(
+            1
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
+            and (node.name.startswith("_run") or node.name.endswith("_loop"))
+        )
+    assert total >= 10, f"只扫到 {total} 个后台作业定义 —— 判据自己坏了,上面那条已空转"
 
 
 # ── kafka ProducerConf 只许有一个映射点 ────────────────────────────────

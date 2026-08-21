@@ -17,10 +17,10 @@
   **fail-fast 预检,不是权威**——权威判定在 repo 的守卫锁事务内重做一遍。
   删掉预检不会错(只是多开一次事务),把预检**当成**权威才会错。
 
-★ 分片观测(Go 的 SetCellRouter / logFriendshipSharding)在 Python 侧刻意没有:
-  `pandorapy.config.BaseConf` 对 `cell_route.mode` 非空**直接拒启**(Python 侧只实现
-  单 Cell),所以 Go 那条路径在 Python 能跑到的全部配置下 router 恒为 nil、恒不打日志。
-  照抄一个恒不执行的分支,等于给"以后可能扩展"提前搭架子(§15.3)。
+★ 分片观测(Go 的 SetCellRouter / logFriendshipSharding)已于 2026-08-20 补齐:
+  `cell_route` 装配层落地后,`mode: static` / `etcd` 会真正建出 Router 并经
+  `set_cell_router` 注入;`mode` 为空(单 Cell)时 router 恒为 None,整条不执行,
+  行为与迁移前逐字节相同。纯逻辑在 `sharding.py`。
 """
 
 from __future__ import annotations
@@ -34,8 +34,10 @@ from pandora.friend.v1 import friend_pb2
 from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy.protoenum import enum_name
+from pandorapy.services import player_display
 from pandorapy.services.friend import conf as fconf
 from pandorapy.services.friend import repo as frepo
+from pandorapy.services.friend import sharding as fshard
 
 
 def now_ms() -> int:
@@ -74,7 +76,17 @@ class ActionRateQuota(Protocol):
 class FriendUsecase:
     """friend 业务逻辑核心。对应 Go 的 biz.FriendUsecase。"""
 
-    __slots__ = ("_repo", "_pusher", "_online", "_cfg", "_quota", "_strategies")
+    __slots__ = (
+        "_repo",
+        "_pusher",
+        "_online",
+        "_cfg",
+        "_quota",
+        "_strategies",
+        "_router",
+        "_player_name_resolver",
+        "_player_no_resolver",
+    )
 
     def __init__(
         self,
@@ -88,6 +100,10 @@ class FriendUsecase:
         self._online = online  # 弱依赖,可为 None
         self._cfg = cfg
         self._quota: ActionRateQuota | None = None
+        self._player_name_resolver: player_display.PlayerNameResolver | None = None
+        self._player_no_resolver: player_display.PlayerNoResolver | None = None
+        # 分片部署时由 main 经 set_cell_router 注入;单 Cell 时恒 None(不打观测日志)。
+        self._router = None
         # 策略链:未知名忽略;全被忽略(或名单为空)→ 回落 [mutual, random]。
         # 与 Go 的 buildStrategies 逐条一致。
         known = {
@@ -100,6 +116,25 @@ class FriendUsecase:
     def set_rate_quota(self, quota: ActionRateQuota | None) -> None:
         """注入频率配额(可选;不注入 = 不限,dev 无 Redis 联调兼容)。"""
         self._quota = quota
+
+    def set_cell_router(self, router) -> None:
+        """注入确定性 region/cell 路由器(对应 Go 的 `SetCellRouter`)。
+
+        只用于分片落点**观测**:不注入 = 单 Cell,建边路径一字不改。
+        """
+        self._router = router
+
+    def set_player_name_resolver(
+        self, resolver: player_display.PlayerNameResolver | None
+    ) -> None:
+        """注入 player 角色昵称权威；未配置时仅省略该展示投影。"""
+        self._player_name_resolver = resolver
+
+    def set_player_no_resolver(
+        self, resolver: player_display.PlayerNoResolver | None
+    ) -> None:
+        """注入 login 玩家编号权威；未配置时仅省略该展示投影。"""
+        self._player_no_resolver = resolver
 
     # ── 频率配额门 ───────────────────────────────────────────────────────────
 
@@ -214,6 +249,10 @@ class FriendUsecase:
                 )
             raise
 
+        # 分片落点观测(router 未注入时整条不执行)。位置与 Go 一致:
+        # 建边事务**已提交**之后、推送之前。
+        fshard.log_friendship_sharding(self._router, request_id, requester_id, player_id)
+
         # 推送原则 2:接受通知发给**发起方** requester。
         await self._push_event(
             requester_id,
@@ -270,17 +309,27 @@ class FriendUsecase:
     async def list_friend_requests(self, player_id: int) -> list:
         """列"发给本人且仍 pending"的申请。离线玩家错过 kafka push 后靠它补拉。
 
-        from_nickname 留空,由客户端按 from_player_id 向 player 服务解析(§5.8
-        最小数据单位:friend 不持有昵称真源,避免跨库 join)。
+        friend 不持有昵称/编号真源；读取时分别向 player/login 有界批量投影。
+        任一权威失败只留空对应字段，客户端按 昵称 → player_no → player_id 回退。
         """
         if player_id == 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "player_id required")
         rows = await self._repo.list_incoming_requests(player_id)
+        names, numbers = await player_display.resolve_player_display(
+            [row[1] for row in rows],
+            self._player_name_resolver,
+            self._player_no_resolver,
+            service="friend",
+        )
         return [
             friend_pb2.FriendRequestInfo(
-                request_id=r[0], from_player_id=r[1], created_ms=r[2]
+                request_id=row[0],
+                from_player_id=row[1],
+                from_nickname=names.get(row[1], ""),
+                created_ms=row[2],
+                from_player_no=numbers.get(row[1], 0),
             )
-            for r in rows
+            for row in rows
         ]
 
     async def list_friends(self, player_id: int) -> list:

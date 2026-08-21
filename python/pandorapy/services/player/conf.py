@@ -192,6 +192,11 @@ class PlayerConf(BaseModel):
     # request-bound internalrpcauth 身份。
     player_name_resolve_auth_secret: str = ""
     player_name_resolve_auth_audience: str = ""
+    # friend/guild 各持独立 caller key；不得复用上面的 team key。
+    friend_player_name_resolve_auth_secret: str = ""
+    friend_player_name_resolve_auth_audience: str = ""
+    guild_player_name_resolve_auth_secret: str = ""
+    guild_player_name_resolve_auth_audience: str = ""
     hero_selection_enabled: bool = False
     loadout_customize_enabled: bool = False
     inventory_addr: str = ""
@@ -323,6 +328,20 @@ class Config(pconfig.BaseConf):
             p.player_name_resolve_auth_audience = (
                 DEFAULT_PLAYER_NAME_RESOLVE_AUTH_AUDIENCE
             )
+        if (
+            p.friend_player_name_resolve_auth_secret
+            and not p.friend_player_name_resolve_auth_audience
+        ):
+            p.friend_player_name_resolve_auth_audience = (
+                DEFAULT_PLAYER_NAME_RESOLVE_AUTH_AUDIENCE
+            )
+        if (
+            p.guild_player_name_resolve_auth_secret
+            and not p.guild_player_name_resolve_auth_audience
+        ):
+            p.guild_player_name_resolve_auth_audience = (
+                DEFAULT_PLAYER_NAME_RESOLVE_AUTH_AUDIENCE
+            )
         if not p.consume_topics:
             p.consume_topics = [kafka_topics.TOPIC_PLAYER_UPDATE]
         if not self.server.grpc.addr:
@@ -331,27 +350,59 @@ class Config(pconfig.BaseConf):
             self.server.http.addr = DEFAULT_HTTP_ADDR
 
     def validate_player_name_resolver(self) -> None:
-        """内部名称解析验签凭据必须成对，配错在启动期拒绝。"""
+        """兼容既有调用点；完整校验由复数版本统一执行。"""
+        self.validate_player_name_resolvers()
+
+    def validate_player_name_resolvers(self) -> None:
+        """三个 caller 的名称解析凭据必须成对且 key 两两独立。"""
         p = self.player
-        if not p.player_name_resolve_auth_secret:
-            if p.player_name_resolve_auth_audience:
+        resolver_credentials = (
+            (
+                "team",
+                "player_name_resolve_auth",
+                p.player_name_resolve_auth_secret,
+                p.player_name_resolve_auth_audience,
+            ),
+            (
+                "friend",
+                "friend_player_name_resolve_auth",
+                p.friend_player_name_resolve_auth_secret,
+                p.friend_player_name_resolve_auth_audience,
+            ),
+            (
+                "guild",
+                "guild_player_name_resolve_auth",
+                p.guild_player_name_resolve_auth_secret,
+                p.guild_player_name_resolve_auth_audience,
+            ),
+        )
+        used_secrets: dict[str, str] = {}
+        for caller, label, secret, audience in resolver_credentials:
+            if not secret:
+                if audience:
+                    raise ValueError(
+                        f"player.{label}_audience requires {label}_secret"
+                    )
+                continue
+            try:
+                internalrpcauth.validate_secret(secret)
+                internalrpcauth.validate_identity(audience)
+            except ValueError as exc:
+                raise ValueError(f"player.{label}: {exc}") from exc
+            previous = used_secrets.get(secret)
+            if previous is not None:
                 raise ValueError(
-                    "player.player_name_resolve_auth_audience requires "
-                    "player_name_resolve_auth_secret"
+                    "player name resolver auth secret reused between "
+                    f"{previous} and {caller} callers"
                 )
-            return
-        try:
-            internalrpcauth.validate_secret(p.player_name_resolve_auth_secret)
-        except ValueError as exc:
+            used_secrets[secret] = caller
+        if used_secrets and not (
+            self.node.redis_client.host or self.node.redis_client.addrs
+        ):
             raise ValueError(
-                f"player.player_name_resolve_auth_secret: {exc}"
-            ) from exc
-        try:
-            internalrpcauth.validate_identity(p.player_name_resolve_auth_audience)
-        except ValueError as exc:
-            raise ValueError(
-                f"player.player_name_resolve_auth_audience: {exc}"
-            ) from exc
+                "player name resolver auth requires node.redis_client "
+                "replay authority"
+            )
 
     @classmethod
     def load(cls, path: str) -> "Config":

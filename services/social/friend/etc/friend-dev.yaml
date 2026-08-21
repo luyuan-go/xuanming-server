@@ -40,8 +40,21 @@ kafka:
 friend:
   # max_friends: 单玩家好友数量上限(默认 200)
   max_friends: 200
+  # rate_quota_per_min: 好友申请的 per-player 每分钟频率配额(anti-abuse §6 第 6 项)。
+  #   与 max_incoming_requests 总量闸正交:总量限「对方收件箱能堆多少」,本值限「刷多快」。
+  #   ① 判据是 `== 0` 不是 `<= 0`——负值 = 显式关闭配额,不要写成 -1 来「恢复默认」。
+  #   ② 显式写出而不依赖代码默认值:Go 与 Python 两栈各持一份默认(10),只改一侧
+  #      会在灰度期让同一玩家在两种副本上限额不同且两边日志都正常。
+  rate_quota_per_min: 60
   # locator_addr: player_locator gRPC 地址;空 → ListFriends 不查在线状态(弱依赖)
   locator_addr: "127.0.0.1:20006"
+  # 申请列表展示投影：两条 authority 使用 friend caller 的独立 request-bound HMAC。
+  player_name_resolver_addr: "127.0.0.1:20002"
+  player_name_resolver_auth_secret: "pandora-dev-friend-player-name-auth-key-v1!"
+  player_name_resolver_auth_audience: "player:name"
+  player_no_resolver_addr: "127.0.0.1:20001"
+  player_no_resolver_auth_secret: "pandora-dev-friend-player-no-auth-key-v1!"
+  player_no_resolver_auth_audience: "login:player-no"
   # recommend_limit: 单次推荐好友数量(默认 10,硬上限 20,超界收敛到 20)
   recommend_limit: 10
   # recommend_strategies: 推荐策略链,按序召回直到凑够数量;空 → ["mutual","random"]

@@ -48,8 +48,20 @@ guild:
   max_group_members: 50
   # max_name_len: 公会 / 群名最大长度(utf8 rune,默认 24)
   max_name_len: 24
+  # rate_quota_per_min: 入会申请的 per-player 每分钟频率配额(anti-abuse §6 第 6 项)。
+  #   与 max_pending_requests_per_guild 总量闸正交,挡「申满 → 撤 → 再申」写放大循环。
+  #   显式写出而不依赖代码默认值:Go 与 Python 两栈各持一份默认(10),只改一侧
+  #   会在灰度期让同一玩家在两种副本上限额不同且两边日志都正常。
+  rate_quota_per_min: 60
   # cache_ttl: 公会资料读缓存条目 TTL(默认 60s);写后删 + 短 TTL 兜底(read-cache-strategy.md §4)
   cache_ttl: "60s"
+  # 入会申请列表展示投影：两条 authority 使用 guild caller 的独立 HMAC。
+  player_name_resolver_addr: "127.0.0.1:20002"
+  player_name_resolver_auth_secret: "pandora-dev-guild-player-name-auth-key-v1!"
+  player_name_resolver_auth_audience: "player:name"
+  player_no_resolver_addr: "127.0.0.1:20001"
+  player_no_resolver_auth_secret: "pandora-dev-guild-player-no-auth-key-v1!"
+  player_no_resolver_auth_audience: "login:player-no"
 
 # 会话现行性门(R5 复审 P0-1,INC-20260722-004):校验客户端面请求 jti == login 会话权威
 # (pandora:sess,node.redis_client 指向的共享 Redis)当前一代,顶号后旧 JWT 立即失效。

@@ -84,6 +84,8 @@ function Invoke-PandoraPlannerInfraBatch {
         [Parameter(Mandatory)][scriptblock]$OnFailure,
         [Parameter(Mandatory)][scriptblock]$Sleep,
         [Parameter(Mandatory)][scriptblock]$GetElapsedMilliseconds,
+        [scriptblock]$OnReady,
+        [switch]$StopOnFirstFailure,
         [ValidateRange(1, 10000)][int]$PollMilliseconds = 100
     )
     # 本函数会在自己的动态子作用域调用 local_infra.ps1 的既有 launcher。不能在这里
@@ -100,24 +102,107 @@ function Invoke-PandoraPlannerInfraBatch {
     }
     if ($states.Count -eq 0) { return @() }
 
+    $invokeReadyCallback = {
+        param($State, [int64]$Now)
+        if ($null -eq $OnReady) { return $true }
+        try {
+            $null = & $OnReady $State
+            return $true
+        } catch {
+            $State.Failure = 'ready-callback-failed'
+            if ($State.PSObject.Properties['FailureException']) {
+                $State.FailureException = $_
+            } else {
+                $State | Add-Member -NotePropertyName FailureException -NotePropertyValue $_
+            }
+            if ($State.PSObject.Properties['FinishedAtMilliseconds']) {
+                if ([int64]$State.FinishedAtMilliseconds -le 0) {
+                    $State.FinishedAtMilliseconds = $Now
+                }
+            } else {
+                $State | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $Now
+            }
+            $null = & $OnFailure $State $State.Failure
+            return $false
+        }
+    }
+
+    # 复用分支在 launcher 内已经完成 exact listener 归属校验并标为 Ready；它们也必须
+    # 经过同一协议探活/上层通知 callback，不能因为无需轮询就漏掉 MySQL→migration 边。
+    $failedBeforePolling = $false
+    foreach ($state in @($states | Where-Object { $_.Ready -and -not $_.Failure })) {
+        $now = [int64](& $GetElapsedMilliseconds)
+        if (-not [bool](& $invokeReadyCallback $state $now)) { $failedBeforePolling = $true }
+    }
+    if ($StopOnFirstFailure -and $failedBeforePolling) {
+        $now = [int64](& $GetElapsedMilliseconds)
+        foreach ($state in @($states | Where-Object { -not $_.Ready -and -not $_.Failure })) {
+            $state.Failure = 'batch-aborted'
+            if ($state.PSObject.Properties['FinishedAtMilliseconds']) {
+                $state.FinishedAtMilliseconds = $now
+            } else {
+                $state | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $now
+            }
+        }
+        return $states.ToArray()
+    }
+
     while (@($states | Where-Object { -not $_.Ready -and -not $_.Failure }).Count -gt 0) {
         # 一轮只抓一份 listener 快照。异常直接向上传播，不能把 netstat 失败冒充“尚未 ready”。
         $listeners = @(& $GetListenerRecords)
         $now = [int64](& $GetElapsedMilliseconds)
+        $failedThisRound = $false
         foreach ($state in @($states | Where-Object { -not $_.Ready -and -not $_.Failure })) {
             if ([bool](& $TestProcessExited $state)) {
                 $state.Failure = 'process-exited'
+                if ($state.PSObject.Properties['FinishedAtMilliseconds']) {
+                    $state.FinishedAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $now
+                }
                 $null = & $OnFailure $state $state.Failure
+                $failedThisRound = $true
                 continue
             }
             if ([bool](& $TestStateReady $state $listeners)) {
                 $state.Ready = $true
+                if ($state.PSObject.Properties['ReadyAtMilliseconds']) {
+                    $state.ReadyAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName ReadyAtMilliseconds -NotePropertyValue $now
+                }
+                if ($state.PSObject.Properties['FinishedAtMilliseconds']) {
+                    $state.FinishedAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $now
+                }
+                if (-not [bool](& $invokeReadyCallback $state $now)) {
+                    $failedThisRound = $true
+                }
                 continue
             }
             if (($now - [int64]$state.StartedAtMilliseconds) -ge [int64]$state.TimeoutMilliseconds) {
                 $state.Failure = 'ready-timeout'
+                if ($state.PSObject.Properties['FinishedAtMilliseconds']) {
+                    $state.FinishedAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $now
+                }
                 $null = & $OnFailure $state $state.Failure
+                $failedThisRound = $true
             }
+        }
+
+        if ($StopOnFirstFailure -and $failedThisRound) {
+            foreach ($state in @($states | Where-Object { -not $_.Ready -and -not $_.Failure })) {
+                $state.Failure = 'batch-aborted'
+                if ($state.PSObject.Properties['FinishedAtMilliseconds']) {
+                    $state.FinishedAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $now
+                }
+            }
+            break
         }
 
         if (@($states | Where-Object { -not $_.Ready -and -not $_.Failure }).Count -gt 0) {

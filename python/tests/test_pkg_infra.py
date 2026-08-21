@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 
@@ -297,6 +298,108 @@ async def test_sweep_delete_short_batch_is_not_truncated() -> None:
     assert out.truncated is False
 
 
+# ── dbguard.check_columns:列级字节巡检 ───────────────────────────────────────
+#
+# 这一组钉的是"列级与表级是两条独立的信号"。表级 avg_row_bytes 只能告诉你"行普遍
+# 变胖了",定位不到是哪一列;而列级 MAX(LENGTH) 是全表扫描,不能挂周期 ticker。
+# 混淆两者的后果分别是"查不出来"和"把生产库扫死"。
+
+
+class _ColumnCursor:
+    """够 check_columns / top_large_rows 用的最小 cursor。
+
+    `rows` 是按 execute 顺序弹出的返回值;`fail_on` 里的子串命中就抛 —— 用来验
+    "单列扫描失败只 WARN 并继续下一列",而不是整轮哑掉。
+    """
+
+    def __init__(self, rows: list[object], fail_on: str = "") -> None:
+        self._rows = list(rows)
+        self._fail_on = fail_on
+        self.executed: list[tuple[str, object]] = []
+
+    async def __aenter__(self) -> "_ColumnCursor":
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def execute(self, sql: str, params: object = None) -> None:
+        self.executed.append((sql, params))
+        if self._fail_on and self._fail_on in sql:
+            raise RuntimeError("boom")
+
+    async def fetchone(self) -> object:
+        return self._rows.pop(0)
+
+    async def fetchall(self) -> object:
+        return self._rows.pop(0)
+
+
+async def test_check_columns_rejects_identifier_injection_before_sql() -> None:
+    """列名要拼进 SQL(标识符位置用不了占位符),所以必须先过白名单。"""
+    cur = _ColumnCursor([])
+    with pytest.raises(ValueError, match="column"):
+        await dbguard.check_columns(
+            _FakeConn(cur),
+            "db",
+            [dbguard.ColumnBudget(table="t", column="payload`),(1,1)--", max_bytes=1)],
+        )
+    assert cur.executed == []
+
+
+async def test_check_columns_flags_only_over_budget() -> None:
+    """超预算才进 violations;等于预算不算超(与 Go 的 `maxLen > MaxBytes` 同为严格大于)。"""
+    cur = _ColumnCursor([(769, 100), (1536, 200)])
+    out = await dbguard.check_columns(
+        _FakeConn(cur),
+        "pandora_battle",
+        [
+            dbguard.ColumnBudget(table="match_release_outbox", column="payload", max_bytes=768),
+            dbguard.ColumnBudget(
+                table="battle_exit_proof_outbox", column="payload", max_bytes=1536
+            ),
+        ],
+    )
+    assert out.checked == 2
+    assert [(v.table, v.column, v.kind, v.actual, v.budget) for v in out.violations] == [
+        ("match_release_outbox", "payload", "column_bytes", 769, 768)
+    ]
+
+
+async def test_check_columns_zero_budget_never_flags() -> None:
+    """max_bytes<=0 = 只采指标不设阈值(与 Go 同)。否则默认值 0 会让每一列都告警。"""
+    cur = _ColumnCursor([(999_999, 1)])
+    out = await dbguard.check_columns(
+        _FakeConn(cur), "db", [dbguard.ColumnBudget(table="t", column="payload")]
+    )
+    assert out.checked == 1
+    assert out.violations == []
+
+
+async def test_check_columns_one_failing_column_does_not_abort_the_round() -> None:
+    """★ 一列扫不动不该让整轮哑掉 —— 否则第一张大表就吃掉了后面所有列的可见性。"""
+    cur = _ColumnCursor([(2000, 1)], fail_on="`bad`")
+    out = await dbguard.check_columns(
+        _FakeConn(cur),
+        "db",
+        [
+            dbguard.ColumnBudget(table="t", column="bad", max_bytes=1),
+            dbguard.ColumnBudget(table="t", column="payload", max_bytes=1),
+        ],
+    )
+    # 失败那列不计入 checked,但后一列照常扫出并告警。
+    assert out.checked == 1
+    assert [v.column for v in out.violations] == ["payload"]
+
+
+async def test_top_large_rows_clamps_limit() -> None:
+    """limit 越界回落 20(与 Go 同):一次拉太多会把排查工具自己拖垮。"""
+    cur = _ColumnCursor([[(7, 900), (8, 800)]])
+    out = await dbguard.top_large_rows(_FakeConn(cur), "t", "id", "payload", limit=10_000)
+    assert cur.executed[0][1] == (20,)
+    assert [(r.pk, r.size_bytes) for r in out] == [("7", 900), ("8", 800)]
+
+
 @pytest.mark.parametrize("rowcount", [0, 1, 500, 999, 1000])
 async def test_sweep_delete_matched_always_equals_deleted(rowcount: int) -> None:
     """★ DELETE 档 matched == deleted **恒成立**,所以 truncated 无法从两者推回来。
@@ -439,6 +542,169 @@ def test_check_payload_skips_when_no_budget_configured(repo_root: pathlib.Path) 
 
     dbguard.check_payload("unbudgeted", b"x" * 10_000, max_bytes=0)
     dbguard.check_payload("unbudgeted", b"x" * 10_000, max_bytes=-1)
+
+
+# ── ★ 写入侧 payload 的两个 Prometheus 指标(跨栈对账) ──────────────────────
+#
+# 背景:这两个指标 Python 侧原先**完全缺失**,只有日志。日志进 Loki、指标进
+# Prometheus,而容量告警规则建在后者上 —— 于是"某张表的写入一直被 fail-closed
+# 拒掉"在 Python 副本上是 NoData 而不是告警,灰度期同一块 Grafana 面板只反映
+# Go 副本。这一组测试就是防它再掉。
+
+
+def _go_payload_src(repo_root: pathlib.Path) -> str:
+    return (repo_root / "pkg" / "dbguard" / "payload.go").read_text(encoding="utf-8")
+
+
+def test_payload_metric_names_match_go(repo_root: pathlib.Path) -> None:
+    """指标名逐字取自 Go 源码,不是硬编码在测试里。
+
+    ★ 判据来自 Go 而非常量,所以 Go 改名 / 删指标时这里会红,而不是两栈各自漂移。
+    """
+    src = _go_payload_src(repo_root)
+    go_names = set(re.findall(r'Name:\s*"(pandora_db_payload_[a-z_]+)"', src))
+    assert go_names, "没能从 Go payload.go 解析出任何指标名 —— 解析规则该跟着 Go 改"
+    assert go_names == {"pandora_db_payload_bytes", "pandora_db_payload_rejected_total"}
+
+    # Python 侧比对**暴露出去的样本名**(运维实际看到的东西),而不是构造参数:
+    # prometheus_client 内部会把 Counter 的 `_total` 后缀剥掉,只看 `._name` 会
+    # 得到 `pandora_db_payload_rejected`,那就成了自说自话的断言。
+    from prometheus_client import REGISTRY
+
+    dbguard.check_payload("pandora_probe.t_names.c", b"x" * 10, max_bytes=0)
+    exposed = {
+        s.name
+        for metric in REGISTRY.collect()
+        for s in metric.samples
+        if s.name.startswith("pandora_db_payload_")
+    }
+    for go_name in go_names:
+        assert any(s == go_name or s.startswith(go_name + "_") for s in exposed), (
+            f"Go 有 {go_name},Python 注册表里没有对应样本 —— "
+            f"灰度期这条曲线在 Python 副本上是 NoData 而不是告警"
+        )
+
+
+def test_payload_metric_labels_match_go(repo_root: pathlib.Path) -> None:
+    """label 集合必须与 Go 一致 —— 少一个 label,两栈就是两条不相干的曲线。"""
+    src = _go_payload_src(repo_root)
+    assert '[]string{"db", "table", "column"}' in src, "Go 侧 payload 指标的 label 变了?"
+    assert dbguard.PAYLOAD_BYTES._labelnames == ("db", "table", "column")
+    assert dbguard.PAYLOAD_REJECTED._labelnames == ("db", "table", "column")
+
+
+def test_payload_histogram_buckets_match_go(repo_root: pathlib.Path) -> None:
+    """桶边界必须与 Go 逐个相同,否则 histogram_quantile 的结果不可比。
+
+    Go:`prometheus.ExponentialBuckets(64, 2, 11)` = 64,128,...,65536。
+    """
+    src = _go_payload_src(repo_root)
+    assert "ExponentialBuckets(64, 2, 11)" in src, "Go 的桶参数变了?请同步 Python 侧"
+    assert dbguard.PAYLOAD_BUCKETS == (
+        64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0,
+        4096.0, 8192.0, 16384.0, 32768.0, 65536.0,
+    )
+
+
+def _bucket_count(db: str, table: str, column: str) -> float:
+    from prometheus_client import REGISTRY
+
+    v = REGISTRY.get_sample_value(
+        "pandora_db_payload_bytes_count", {"db": db, "table": table, "column": column}
+    )
+    return 0.0 if v is None else v
+
+
+def _reject_count(db: str, table: str, column: str) -> float:
+    from prometheus_client import REGISTRY
+
+    v = REGISTRY.get_sample_value(
+        "pandora_db_payload_rejected_total", {"db": db, "table": table, "column": column}
+    )
+    return 0.0 if v is None else v
+
+
+def test_payload_bytes_is_observed_even_when_no_budget_configured() -> None:
+    """★ observe 在 `max<=0` 提前返回**之前**(与 Go payload.go 同序)。
+
+    还没定阈值的列正是最需要看分布的:先有 histogram 才能拿 p99 把阈值定出来。
+    反过来就成了"没阈值所以不观测,不观测所以定不出阈值"的死循环。
+    """
+    labels = ("pandora_probe", "t_nobudget", "c")
+    before = _bucket_count(*labels)
+    dbguard.check_payload("pandora_probe.t_nobudget.c", b"x" * 10, max_bytes=0)
+    assert _bucket_count(*labels) == before + 1
+
+
+def test_reject_counter_increments_on_fail_closed_write() -> None:
+    """拒写必须留下**指标**信号,不能只有异常和日志。
+
+    用增量而不是绝对值:注册表是进程级全局的,同一条时间序列会被别的用例碰到。
+    """
+    labels = ("pandora_probe", "t_reject", "c")
+    before_rej = _reject_count(*labels)
+    before_obs = _bucket_count(*labels)
+    with pytest.raises(dbguard.PayloadTooLargeError):
+        dbguard.check_payload("pandora_probe.t_reject.c", b"x" * 100, max_bytes=100)
+    assert _reject_count(*labels) == before_rej + 1
+    # 被拒的那次也要进 histogram —— 否则 p99 会系统性低估(最胖的样本恰好被剔掉)。
+    assert _bucket_count(*labels) == before_obs + 1
+
+
+def test_reject_counter_does_not_move_on_allowed_write() -> None:
+    """反向断言:放行时计数器不动。少了这条,上一个用例可能只是在数"调用次数"。"""
+    labels = ("pandora_probe", "t_allow", "c")
+    before = _reject_count(*labels)
+    dbguard.check_payload("pandora_probe.t_allow.c", b"x" * 10, max_bytes=100)
+    assert _reject_count(*labels) == before
+
+
+def test_payload_labels_splits_dotted_name() -> None:
+    """点分名字还原成 Go 的三个 label;段数不足时向左补空而不是抛异常。
+
+    ★ 这个函数在写路径上 —— 为了一个观测标签把玩家的写入打挂,等于把可观测性
+    问题升级成可用性事故。
+    """
+    assert dbguard._payload_labels("pandora_social.player_mail.payload") == (
+        "pandora_social", "player_mail", "payload",
+    )
+    assert dbguard._payload_labels("t.c") == ("", "t", "c")
+    assert dbguard._payload_labels("c") == ("", "", "c")
+    # 多于 3 段:多余的并进 column,label 数量恒为 3(prometheus 对不上会抛)。
+    assert dbguard._payload_labels("a.b.c.d") == ("a", "b", "c.d")
+
+
+def test_every_check_payload_call_site_uses_a_three_segment_name(
+    repo_root: pathlib.Path,
+) -> None:
+    """★ 所有调用点的名字都必须是 `<db>.<table>.<column>` 三段。
+
+    这是让 Python 的时间序列与 Go 落在同一条曲线上的前提。历史上 mission 的三处
+    只写了两段(缺 db),那三条曲线在 Grafana 上 db 标签为空,按 db 过滤的面板
+    直接看不到它们。
+
+    判据走 AST 而不是正则数文本:注释里出现一个两段名字不该让这条闸失效
+    (`tests/srcprobe` 那一类缺陷)。
+    """
+    root = repo_root / "python" / "pandorapy"
+    checked: list[tuple[str, str]] = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+            if name != "check_payload" or not node.args:
+                continue
+            first = node.args[0]
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+                continue  # 非字面量(变量/常量引用)另有下面的常量断言兜
+            checked.append((str(path.relative_to(root)), first.value))
+
+    assert checked, "一个 check_payload 调用点都没扫到 —— AST 匹配规则失效了"
+    bad = [(f, n) for f, n in checked if len(n.split(".")) != 3]
+    assert not bad, f"这些 check_payload 名字不是三段 <db>.<table>.<column>: {bad}"
 
 
 # ── ★ configtable manifest 的三道结构闸 ────────────────────────────────────

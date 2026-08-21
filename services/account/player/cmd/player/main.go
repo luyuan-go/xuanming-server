@@ -244,8 +244,23 @@ func main() {
 		defer func() { _ = closeCell() }()
 	}
 	svc := service.NewPlayerService(uc)
-	var playerNameVerifier *internalrpcauth.Verifier
-	if cfg.Player.PlayerNameResolveAuthSecret != "" {
+	var playerNameVerifier *internalrpcauth.MultiCallerVerifier
+	playerNameCredentials := []struct {
+		caller   string
+		secret   string
+		audience string
+	}{
+		{"team", cfg.Player.PlayerNameResolveAuthSecret, cfg.Player.PlayerNameResolveAuthAudience},
+		{"friend", cfg.Player.FriendPlayerNameResolveAuthSecret, cfg.Player.FriendPlayerNameResolveAuthAudience},
+		{"guild", cfg.Player.GuildPlayerNameResolveAuthSecret, cfg.Player.GuildPlayerNameResolveAuthAudience},
+	}
+	playerNameCallerCount := 0
+	for _, credential := range playerNameCredentials {
+		if credential.secret != "" {
+			playerNameCallerCount++
+		}
+	}
+	if playerNameCallerCount != 0 {
 		authRDB := redisx.NewUniversalClient(cfg.Node.RedisClient)
 		defer func() { _ = authRDB.Close() }()
 		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -262,15 +277,26 @@ func main() {
 			helper.Errorw("msg", "player_name_resolve_verifier_init_failed", "err", replayErr)
 			os.Exit(1)
 		}
-		verifier, verifyErr := internalrpcauth.NewVerifier(cfg.Player.PlayerNameResolveAuthSecret, "team",
-			cfg.Player.PlayerNameResolveAuthAudience, 30*time.Second, replay)
-		if verifyErr != nil {
-			helper.Errorw("msg", "player_name_resolve_verifier_init_failed", "err", verifyErr)
+		verifiers := make([]*internalrpcauth.Verifier, 0, playerNameCallerCount)
+		for _, credential := range playerNameCredentials {
+			if credential.secret == "" {
+				continue
+			}
+			verifier, verifyErr := internalrpcauth.NewVerifier(credential.secret, credential.caller,
+				credential.audience, 30*time.Second, replay)
+			if verifyErr != nil {
+				helper.Errorw("msg", "player_name_resolve_verifier_init_failed", "caller", credential.caller, "err", verifyErr)
+				os.Exit(1)
+			}
+			verifiers = append(verifiers, verifier)
+			helper.Infow("msg", "player_name_resolve_verifier_ready", "caller", credential.caller,
+				"audience", credential.audience, "max_batch", playername.ResolveBatchLimit)
+		}
+		playerNameVerifier, replayErr = internalrpcauth.NewMultiCallerVerifier(verifiers...)
+		if replayErr != nil {
+			helper.Errorw("msg", "player_name_resolve_verifier_init_failed", "err", replayErr)
 			os.Exit(1)
 		}
-		playerNameVerifier = verifier
-		helper.Infow("msg", "player_name_resolve_verifier_ready", "caller", "team",
-			"audience", cfg.Player.PlayerNameResolveAuthAudience, "max_batch", playername.ResolveBatchLimit)
 	}
 	internalSvc := service.NewPlayerInternalService(uc, playerNameVerifier)
 

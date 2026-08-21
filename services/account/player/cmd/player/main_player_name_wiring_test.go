@@ -16,7 +16,10 @@ func TestMainWiresPlayerInternalNameAuthorityIndependentlyFromDSAuth(t *testing.
 		"cfg.ValidatePlayerNameResolver()",
 		"internalrpcauth.NewRedisReplayStore",
 		"pandora:player:name-resolve:nonce:",
-		"internalrpcauth.NewVerifier(cfg.Player.PlayerNameResolveAuthSecret, \"team\"",
+		"internalrpcauth.NewVerifier(credential.secret, credential.caller",
+		"cfg.Player.FriendPlayerNameResolveAuthSecret",
+		"cfg.Player.GuildPlayerNameResolveAuthSecret",
+		"internalrpcauth.NewMultiCallerVerifier",
 		"service.NewPlayerInternalService(uc, playerNameVerifier)",
 		"server.NewGRPCServer(&cfg, svc, internalSvc, ctAdmin, sessGate)",
 	} {

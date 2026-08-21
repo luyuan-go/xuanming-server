@@ -1,7 +1,8 @@
 """battle_result 的下游 gRPC 客户端 —— 对应 Go 侧 internal/data 的
-mmr_reader.go / inventory_client.go / mail_client.go / match_releaser.go。
+mmr_reader.go / inventory_client.go / mail_client.go / match_releaser.go /
+terminal_releaser.go。
 
-四个客户端全部**内网 insecure 直连、不带 JWT**(系统接口,对齐 trade / auction / mail)。
+全部**内网 insecure 直连、不带 JWT**(系统接口,对齐 trade / auction / mail)。
 
 ★ 幂等键一律由 biz 生成并传入,下游按键去重 —— **不要**在本文件里再加一层
   "记住发过了"的缓存:那份缓存进程重启就没了,而真正的幂等权威在下游的流水表里。
@@ -20,6 +21,8 @@ import dataclasses
 
 import grpc
 from pandora.common.v1 import errcode_pb2
+from pandora.ds.v1 import allocator_pb2 as dspb
+from pandora.ds.v1 import allocator_pb2_grpc as dsgrpc
 from pandora.inventory.v1 import inventory_pb2 as inv_pb
 from pandora.inventory.v1 import inventory_pb2_grpc as inv_grpc
 from pandora.mail.v1 import mail_pb2 as mail_pb
@@ -325,6 +328,58 @@ class GrpcMatchReleaser:
             match_pb.ReleaseMatchRequest(match_id=match_id, player_ids=player_ids)
         )
         _raise_on_code(resp.code, f"matchmaker.ReleaseMatch match={match_id}")
+
+
+class GrpcTerminalReleaseRelay:
+    """把 MySQL 持久证明交给 ds_allocator 内部控制面。对应 Go 的 data.GrpcTerminalReleaseRelay。
+
+    ReleaseBattle 不暴露在 DS :8444;Redis-authority 服务端还会机械要求完整
+    expected tuple —— 所以这里必须把出箱行里的**每一个** auth 字段原样带上,
+    少一个就会被服务端判成凭据不符而拒绝(表现是 DS pod 永远不回收)。
+
+    两个方法差别只有 reason,但语义完全不同,**不能互换**:
+      release_terminal   "completed"          → 永久 terminal + UID-precondition delete(不可逆)
+      finalize_terminal  "completed-finalize" → 只恢复同 proof 的 Redis 墓碑 TTL,绝不碰 K8s
+    """
+
+    __slots__ = ("_channel", "_stub")
+
+    def __init__(self, addr: str) -> None:
+        self._channel = grpc.aio.insecure_channel(addr)
+        self._stub = dsgrpc.DSAllocatorServiceStub(self._channel)
+
+    async def close(self) -> None:
+        await self._channel.close()
+
+    async def release_terminal(self, rec) -> None:  # noqa: ANN001 —— repo.TerminalReleaseRecord
+        await self._release_terminal(rec, "completed")
+
+    async def finalize_terminal(self, rec) -> None:  # noqa: ANN001
+        await self._release_terminal(rec, "completed-finalize")
+
+    async def _release_terminal(self, rec, reason: str) -> None:  # noqa: ANN001
+        resp = await self._stub.ReleaseBattle(
+            dspb.ReleaseBattleRequest(
+                match_id=rec.match_id,
+                reason=reason,
+                allocation_id=rec.allocation_id,
+                ds_pod_name=rec.ds_pod_name,
+                gameserver_uid=rec.gameserver_uid,
+                instance_epoch=rec.instance_epoch,
+                auth_gen=rec.auth_gen,
+                auth_jti=rec.auth_jti,
+                auth_exp_ms=rec.auth_exp_ms,
+                auth_kid=rec.auth_kid,
+                auth_token_sha256=rec.auth_token_sha256,
+                auth_writer_epoch=rec.auth_writer_epoch,
+                authorized_at_ms=rec.authorized_at_ms,
+            ),
+            timeout=GRPC_DEFAULT_TIMEOUT_SEC,
+        )
+        _raise_on_code(
+            resp.code,
+            f"ds_allocator.ReleaseBattle match={rec.match_id} allocation={rec.allocation_id}",
+        )
 
 
 class StaticMMRReader:

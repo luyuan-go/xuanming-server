@@ -33,9 +33,9 @@
         Go 会 fail-fast 拒启,**不会**静默回落 report_only:运维以为开了清理、
         实际一行没删,库继续无界增长且启动期毫无痕迹。
 
-★ cell_route 段在 auction 上是**有实现**的(market_self / market_peers 走 HRW
-  市场归属路由),但 `cell_route.mode`(玩家分片路由)Python 侧仍未实现。
-  见 Config.assert_unsupported_sections —— 那道闸必须在这里重新接上,理由写在函数里。
+★ cell_route 段在 auction 上有两层含义:market_self / market_peers 走 HRW 市场归属
+  路由(auction 独有),`mode` / `cells` / `etcd_*` 走玩家分片路由(全局共用)。
+  两者都已实现;`mode` 的合法性校验统一走 `cellroute.RouterConfig.validate_mode`。
 
 端口默认值(20016/21016)同样是契约:Envoy 的 cluster、run_services.ps1 的端口
 占用检查、K8s Service 都钉在这两个数上。
@@ -47,6 +47,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from pandorapy import cellroute
 from pandorapy import config as pconfig
 from pandorapy import dbguard
 
@@ -122,7 +123,6 @@ class CellRouteConf(BaseModel):
 
     model_config = {"extra": "allow"}
 
-    # mode 是**玩家分片路由**的开关,Python 侧仍未实现,见 Config.assert_unsupported_sections。
     mode: str = ""
     self_region: int = 0
     self_cell: int = 0
@@ -153,6 +153,18 @@ class CellRouteConf(BaseModel):
         if self_id and self_id not in seen:
             out.append(self_id)
         return out
+
+    def validate_mode(self) -> None:
+        """转发给基类的同一份判据 —— **不得在这里另写一套**。
+
+        基类 `BaseConf` 的校验器调的就是本方法。auction 为了读 market_* 把
+        cell_route 建成了自己的类型,如果这里不提供 `validate_mode`,
+        那道全局闸会变成 AttributeError 而不是校验 —— "给模型加一个字段就
+        意外关掉一道全局闸"的典型形状。判据本体只能有一份(在 cellroute)。
+        """
+        cellroute.RouterConfig.model_validate(
+            self.model_dump(exclude_none=True)
+        ).validate_mode()
 
 
 class AuctionConf(BaseModel):
@@ -234,27 +246,18 @@ class Config(pconfig.BaseConf):
     cell_route: CellRouteConf = Field(default_factory=CellRouteConf)
 
     def assert_unsupported_sections(self) -> None:
-        """★ 必须重写:cell_route 一旦被本类**建模**,基类那道闸就查不到它了。
+        """★ 保留重写只为一件事:让 auction 自定义的 `CellRouteConf` 走到基类同一道闸。
 
-        基类 `BaseConf.assert_unsupported_sections` 读的是 `self.model_extra`
-        —— 未建模字段才落在那里。auction 为了读 market_self / market_peers 把
-        cell_route 建成了正式字段,于是 `model_extra["cell_route"]` 恒为空,
-        基类的 `mode` 检查**静默变成空操作**:配了 `cell_route.mode: static`
-        的部署会照常启动、所有玩家落在单 Cell 上,而 yaml 看起来一切正常。
+        基类 `BaseConf` 的校验器调 `self.cell_route.validate_mode()`。auction 为了读
+        market_self / market_peers 把 cell_route 换成了自己的类型 —— 那个类型的
+        `validate_mode` 直接转发给 `cellroute.RouterConfig`,判据只有一份。
 
-        这是"给模型加一个字段就意外关掉一道全局闸"的典型形状,只能靠在这里
-        显式接回来。判据仍是 **mode 非空**(不是"这一段存不存在"):
-        Go 的关闭态就是 mode 为空,按"段存在"判会把合法的单 Cell 配置也拒掉。
+        历史教训(保留在此):基类那道闸曾经读 `model_extra`,而 auction 一建模
+        cell_route 就把它变成了**静默空操作** —— 配了 `mode: static` 的部署照常启动、
+        所有玩家落在单 Cell 上,而 yaml 看起来一切正常。现在改成读**字段**,
+        字段被覆盖也仍然走同一道校验。
         """
         super().assert_unsupported_sections()
-        mode = (self.cell_route.mode or "").strip()
-        if mode:
-            raise NotImplementedError(
-                f"配置要求 cell_route.mode={mode!r},但 Python 侧只实现了单 Cell"
-                "(pandorapy/cellroute.py 有静态表与路由算法,缺 BuildRouter 装配 / "
-                "keyspace 分片 / 表热更)。auction 的 market_self / market_peers "
-                "(HRW 市场归属)不受此限,可以照常配。"
-            )
 
     def apply_defaults(self) -> None:
         """填默认值 —— 对应 Go 的 Defaults(),**逐条同序同判据**。"""

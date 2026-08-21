@@ -29,10 +29,12 @@ import (
 	"github.com/go-kratos/kratos/v2/config/file"
 
 	"github.com/luyuancpp/pandora/pkg/dbguard"
+	"github.com/luyuancpp/pandora/pkg/internalrpcauth"
 	"github.com/luyuancpp/pandora/pkg/kafkax"
 	plog "github.com/luyuancpp/pandora/pkg/log"
 	"github.com/luyuancpp/pandora/pkg/middleware"
 	"github.com/luyuancpp/pandora/pkg/mysqlx"
+	"github.com/luyuancpp/pandora/pkg/playerdisplay"
 	"github.com/luyuancpp/pandora/pkg/redisx"
 	"github.com/luyuancpp/pandora/pkg/safego"
 	"github.com/luyuancpp/pandora/pkg/sessiongate"
@@ -83,6 +85,10 @@ func main() {
 		os.Exit(1)
 	}
 	cfg.Defaults()
+	if err := cfg.ValidatePlayerDisplayResolvers(); err != nil {
+		helper.Errorw("msg", "player_display_resolver_config_invalid", "err", err)
+		os.Exit(1)
+	}
 	// 保留期清理模式必须能被识别(§9.24 fail-fast):拼错的值会静默回落 report_only,
 	// 运维以为开了清理、实际一行没删,库继续无界增长且启动期毫无痕迹。
 	if err := cfg.Guild.ValidateRetentionMode(); err != nil {
@@ -177,6 +183,36 @@ func main() {
 	guildRepo := data.NewMySQLGuildRepo(db)
 	groupRepo := data.NewMySQLGroupRepo(db)
 	guildUC := biz.NewGuildUsecase(guildRepo, guildCache, pusher, cfg.Guild)
+	if cfg.Guild.PlayerNameResolverAddr != "" {
+		playerNameSigner, signErr := internalrpcauth.NewSigner(cfg.Guild.PlayerNameResolverAuthSecret,
+			"guild", cfg.Guild.PlayerNameResolverAuthAudience)
+		if signErr != nil {
+			helper.Errorw("msg", "player_display_resolver_config_invalid", "dependency", "player_name", "err", signErr)
+			os.Exit(1)
+		}
+		playerNameResolver := playerdisplay.NewGrpcPlayerNameResolver(cfg.Guild.PlayerNameResolverAddr, playerNameSigner)
+		defer func() { _ = playerNameResolver.Close() }()
+		guildUC.SetPlayerNameResolver(playerNameResolver)
+		helper.Infow("msg", "player_name_resolver_ready", "addr", cfg.Guild.PlayerNameResolverAddr,
+			"caller", "guild", "audience", cfg.Guild.PlayerNameResolverAuthAudience)
+	} else {
+		helper.Warnw("msg", "player_name_resolver_disabled", "hint", "guild join request nickname projection disabled")
+	}
+	if cfg.Guild.PlayerNoResolverAddr != "" {
+		playerNoSigner, signErr := internalrpcauth.NewSigner(cfg.Guild.PlayerNoResolverAuthSecret,
+			"guild", cfg.Guild.PlayerNoResolverAuthAudience)
+		if signErr != nil {
+			helper.Errorw("msg", "player_display_resolver_config_invalid", "dependency", "player_no", "err", signErr)
+			os.Exit(1)
+		}
+		playerNoResolver := playerdisplay.NewGrpcPlayerNoResolver(cfg.Guild.PlayerNoResolverAddr, playerNoSigner)
+		defer func() { _ = playerNoResolver.Close() }()
+		guildUC.SetPlayerNoResolver(playerNoResolver)
+		helper.Infow("msg", "player_no_resolver_ready", "addr", cfg.Guild.PlayerNoResolverAddr,
+			"caller", "guild", "audience", cfg.Guild.PlayerNoResolverAuthAudience)
+	} else {
+		helper.Warnw("msg", "player_no_resolver_disabled", "hint", "guild join request player_no projection disabled")
+	}
 	// 入会申请频率配额(anti-abuse §6 第 6 项):Redis 健康时启用,否则不限(fail-open 边界)。
 	if quotaRdb != nil {
 		guildUC.SetRateQuota(&redisx.ActionQuota{

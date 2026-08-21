@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import pathlib
 from types import SimpleNamespace
 
 import pytest
@@ -394,9 +393,21 @@ def test_player_name_resolver_config_defaults_and_fails_closed() -> None:
 
     player_cfg = pconf.Config()
     player_cfg.player.player_name_resolve_auth_secret = AUTH_SECRET
+    # ★ 配了内部 RPC 鉴权就必须有 Redis 重放权威 —— 验签靠 nonce 去重挡重放,
+    # 没有共享 Redis 时多副本各记各的,同一个签名在别的副本上照样能重放一次。
+    # 这条在 conf.validate_player_name_resolver 里是 fail-closed 的,所以最小可用
+    # 配置**必须**含 redis;不给就等于在测一个真实跑不起来的组合。
+    player_cfg.node.redis_client.host = "127.0.0.1:6379"
     player_cfg.apply_defaults()
     player_cfg.validate_player_name_resolver()
     assert player_cfg.player.player_name_resolve_auth_audience == "player:name"
+
+    # 反向钉住上面那条规则本身:有鉴权、没 Redis → 必须拒。
+    no_replay = pconf.Config()
+    no_replay.player.player_name_resolve_auth_secret = AUTH_SECRET
+    no_replay.apply_defaults()
+    with pytest.raises(ValueError, match="replay authority"):
+        no_replay.validate_player_name_resolver()
 
     dangling_team = tconf.Config()
     dangling_team.team.player_name_resolver_auth_audience = "player:name"
@@ -415,8 +426,11 @@ def test_python_mains_wire_signed_player_name_rpc_and_shared_replay() -> None:
     from pandorapy.services.player import main as pmain
     from pandorapy.services.team import main as tmain
 
-    team_source = pathlib.Path(tmain.__file__).read_text(encoding="utf-8")
-    player_source = pathlib.Path(pmain.__file__).read_text(encoding="utf-8")
+    from tests.srcprobe import module_code_text
+
+    # 只看代码：注释/docstring 里提到这些接线不算数（理由见 tests/srcprobe.py）
+    team_source = module_code_text(tmain)
+    player_source = module_code_text(pmain)
 
     assert "GrpcPlayerNameResolver(" in team_source
     assert "uc.set_player_name_resolver(player_name_resolver)" in team_source

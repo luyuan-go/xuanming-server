@@ -138,6 +138,15 @@ class DSTicketConf(BaseModel):
         """本服务是否启用 v2 签发。对应 Go 的 SignerEnabled()。"""
         return self.private_key_file != ""
 
+    def ttl_td(self) -> _dt.timedelta:
+        """票据有效期。零值 = 由签发器取 DSTicketDefaultTTL(120s)。
+
+        ★ conf 层**不填默认**,与 Go 一致:默认值在 `auth.NewDSTicketSigner` 里。
+        在这里替它填一个,会让「conf 层看到的 TTL」与「签发器实际用的 TTL」
+        在某次改动后悄悄分叉。
+        """
+        return pconfig.parse_duration(self.ttl)
+
 
 class JWTConf(BaseModel):
     """对应 Go 的 conf.JWTConf —— 签发 battle DSTicket 的 JWT 参数(镜像 login)。
@@ -153,6 +162,14 @@ class JWTConf(BaseModel):
     additional_secrets: list[str] = Field(default_factory=list)
     session_ttl: str = ""
     ds_ticket_ttl: str = ""
+
+    def ds_ticket_ttl_td(self) -> _dt.timedelta:
+        """legacy HS256 battle 票的有效期。**只属 local-off-v1 本机联调档**。
+
+        ★ 不要拿它去推算 v2 的安全窗:v2 生产档 TTL 默认 120s / 硬上限 180s
+        (CLAUDE.md §9 不变量 3),与本字段无关。
+        """
+        return pconfig.parse_duration(self.ds_ticket_ttl)
 
 
 class LeaderConf(BaseModel):

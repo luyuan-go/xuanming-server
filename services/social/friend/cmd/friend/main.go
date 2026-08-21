@@ -31,9 +31,11 @@ import (
 	"github.com/luyuancpp/pandora/pkg/cellroute/etcdtable"
 	"github.com/luyuancpp/pandora/pkg/dbguard"
 	"github.com/luyuancpp/pandora/pkg/grpcclient"
+	"github.com/luyuancpp/pandora/pkg/internalrpcauth"
 	"github.com/luyuancpp/pandora/pkg/kafkax"
 	plog "github.com/luyuancpp/pandora/pkg/log"
 	"github.com/luyuancpp/pandora/pkg/mysqlx"
+	"github.com/luyuancpp/pandora/pkg/playerdisplay"
 	"github.com/luyuancpp/pandora/pkg/redisx"
 	"github.com/luyuancpp/pandora/pkg/safego"
 	"github.com/luyuancpp/pandora/pkg/sessiongate"
@@ -83,6 +85,10 @@ func main() {
 		os.Exit(1)
 	}
 	cfg.Defaults()
+	if err := cfg.ValidatePlayerDisplayResolvers(); err != nil {
+		helper.Errorw("msg", "player_display_resolver_config_invalid", "err", err)
+		os.Exit(1)
+	}
 	// 保留期清理模式必须能被识别(§9.24 fail-fast):拼错的值会静默回落 report_only,
 	// 运维以为开了清理、实际一行没删,库继续无界增长且启动期毫无痕迹。
 	if err := cfg.Friend.ValidateRetentionMode(); err != nil {
@@ -162,6 +168,36 @@ func main() {
 	// 7. 装配链
 	repo := data.NewMySQLFriendRepo(db)
 	uc := biz.NewFriendUsecase(repo, pusher, online, cfg.Friend)
+	if cfg.Friend.PlayerNameResolverAddr != "" {
+		playerNameSigner, signErr := internalrpcauth.NewSigner(cfg.Friend.PlayerNameResolverAuthSecret,
+			"friend", cfg.Friend.PlayerNameResolverAuthAudience)
+		if signErr != nil {
+			helper.Errorw("msg", "player_display_resolver_config_invalid", "dependency", "player_name", "err", signErr)
+			os.Exit(1)
+		}
+		playerNameResolver := playerdisplay.NewGrpcPlayerNameResolver(cfg.Friend.PlayerNameResolverAddr, playerNameSigner)
+		defer func() { _ = playerNameResolver.Close() }()
+		uc.SetPlayerNameResolver(playerNameResolver)
+		helper.Infow("msg", "player_name_resolver_ready", "addr", cfg.Friend.PlayerNameResolverAddr,
+			"caller", "friend", "audience", cfg.Friend.PlayerNameResolverAuthAudience)
+	} else {
+		helper.Warnw("msg", "player_name_resolver_disabled", "hint", "friend request nickname projection disabled")
+	}
+	if cfg.Friend.PlayerNoResolverAddr != "" {
+		playerNoSigner, signErr := internalrpcauth.NewSigner(cfg.Friend.PlayerNoResolverAuthSecret,
+			"friend", cfg.Friend.PlayerNoResolverAuthAudience)
+		if signErr != nil {
+			helper.Errorw("msg", "player_display_resolver_config_invalid", "dependency", "player_no", "err", signErr)
+			os.Exit(1)
+		}
+		playerNoResolver := playerdisplay.NewGrpcPlayerNoResolver(cfg.Friend.PlayerNoResolverAddr, playerNoSigner)
+		defer func() { _ = playerNoResolver.Close() }()
+		uc.SetPlayerNoResolver(playerNoResolver)
+		helper.Infow("msg", "player_no_resolver_ready", "addr", cfg.Friend.PlayerNoResolverAddr,
+			"caller", "friend", "audience", cfg.Friend.PlayerNoResolverAuthAudience)
+	} else {
+		helper.Warnw("msg", "player_no_resolver_disabled", "hint", "friend request player_no projection disabled")
+	}
 	// 好友申请频率配额(anti-abuse §6 第 6 项):复用 node.redis_client。
 	// 未配 Redis(纯 MySQL 骨架联调)不限流,与 chat 的弱依赖边界一致。
 	if rc := cfg.Node.RedisClient; rc.Host != "" || len(rc.Addrs) > 0 {

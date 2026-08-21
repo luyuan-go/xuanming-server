@@ -36,7 +36,7 @@ from pandorapy import mysqlx
 # ★ 名字与 label 必须与 Go 侧 pkg/dbguard **逐字相同**。Grafana 的容量面板与告警
 # 规则按这些名字建；Python 副本不写它们的后果不是"少一块图"，而是**同一块面板在
 # 灰度期只反映 Go 副本**，容量问题在 Python 这边完全不可见（NoData 而非告警）。
-from prometheus_client import Counter, Gauge  # noqa: E402
+from prometheus_client import Counter, Gauge, Histogram  # noqa: E402
 
 TABLE_ROWS = Gauge(
     "pandora_db_table_rows", "表行数(information_schema 估算)。", ["db", "table"]
@@ -54,6 +54,11 @@ AVG_ROW_BYTES = Gauge(
     "表平均行字节数。排查大字段最灵敏的信号:突增 = 单行变胖 = blob 内部无界增长。",
     ["db", "table"],
 )
+COLUMN_MAX_BYTES = Gauge(
+    "pandora_db_column_max_bytes",
+    "单列最大字节数(全表扫描,低频)。label 只有 db/table/column(低基数)。",
+    ["db", "table", "column"],
+)
 BUDGET_VIOLATIONS = Counter(
     "pandora_db_budget_violations_total",
     "容量预算超限次数。kind=rows|bytes|avg_row_bytes|column_bytes。",
@@ -69,6 +74,44 @@ RETENTION_DELETED = Counter(
     "保留期清理实际删除的行数(仅 delete 模式非零)。",
     ["db", "table"],
 )
+# ★ 写入侧 payload 的两个指标(对应 Go pkg/dbguard/payload.go 的 payloadBytes /
+# payloadRejects)。Python 侧此前**只打日志不记指标**:
+#   · 日志进 Loki,指标进 Prometheus —— 告警规则建在后者上,所以"某张表的写入
+#     一直被 fail-closed 拒掉"在 Python 副本上是 NoData 而不是告警;
+#   · histogram 更是完全没有替代品。Go 的注释专门写了为什么必须看 p99 而不是 max:
+#     p99 正常 + max 爆 = 个别玩家数据畸形;p99 一起涨 = 设计性无界增长(§9.24 的
+#     "深度"方向)。只有日志的话,这个区分做不出来。
+# 桶与 Go 的 prometheus.ExponentialBuckets(64, 2, 11) 逐个相同 —— 桶边界不一致时
+# 两栈的 histogram_quantile 结果不可比,灰度期同一块面板会自相矛盾。
+PAYLOAD_BUCKETS = tuple(float(64 * (2**i)) for i in range(11))
+PAYLOAD_BYTES = Histogram(
+    "pandora_db_payload_bytes",
+    "写入 payload 字节分布。看 p99 而非 max:p99 正常+max 爆=个别数据畸形;p99 一起涨=设计性无界增长。",
+    ["db", "table", "column"],
+    buckets=PAYLOAD_BUCKETS,
+)
+PAYLOAD_REJECTED = Counter(
+    "pandora_db_payload_rejected_total",
+    "因超过字节上限被拒绝的写入次数(fail-closed)。非零即需人工排查。",
+    ["db", "table", "column"],
+)
+
+
+def _payload_labels(name: str) -> tuple[str, str, str]:
+    """把 `"<db>.<table>.<column>"` 拆成 Go 侧那三个 label。
+
+    Go 的 `PayloadLimit` 是三个独立字段,Python 侧为了调用点简洁收成了一个点分名字。
+    这里做还原,好让两栈的时间序列**能落在同一条曲线上** —— label 少一个或名字
+    对不上,灰度期就是两条互不相干的线,面板上看着像流量掉了一半。
+
+    段数不足时**向左补空**而不是抛异常:这个函数在写路径上,为了一个观测标签
+    把玩家的写入打挂,方向就反了(把可观测性事故升级成可用性事故)。
+    """
+    parts = name.split(".")
+    if len(parts) >= 3:
+        # 多于 3 段时把多余的并进 column,避免 label 数量对不上导致 prometheus 抛错。
+        return parts[0], parts[1], ".".join(parts[2:])
+    return ("", *(["", *parts][-2:]))  # type: ignore[return-value]
 
 
 # 与 Go 侧 strictModeProbeTimeout 一致:够慢网络一次往返,又不会把启动挂死。
@@ -151,15 +194,35 @@ class TableBudget:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class ColumnBudget:
+    """单个大字段的字节预算(列级检查)—— 对应 Go 的 `dbguard.ColumnBudget`。
+
+    ★ 与 `TableBudget` 的区别不只是粒度,而是**成本与触发时机**:
+    表级走 information_schema(毫秒级、不锁表),可以挂周期 ticker;
+    列级是 `MAX(LENGTH(col))` **全表扫描**,放进周期路径会把生产库扫死。
+    所以 `check_columns` 只在两种场景调:①表级 avg_row_bytes 告警后人工 / 工具触发定位;
+    ②天级低频巡检。**不要把它接到 sweep ticker 上。**
+    """
+
+    table: str
+    column: str
+    max_bytes: int = 0
+    # note 同 TableBudget:超限时打进日志的排查方向。
+    note: str = ""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class Violation:
     table: str
-    # kind 取值与 Go 逐字一致:rows / bytes / avg_row_bytes。
+    # kind 取值与 Go 逐字一致:rows / bytes / avg_row_bytes / column_bytes。
     # ⚠️ 曾经写成 avg_row_length,和 Go 的 avg_row_bytes 对不上 ——
     # Grafana 上按 kind 分组的面板会凭空多出一个分类、旧分类查不到 Python 服务。
     kind: str
     actual: int
     budget: int
     note: str = ""
+    # 只有列级检查(kind=column_bytes)才有值—— 与 Go `Violation.Column` 同语义。
+    column: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -256,6 +319,122 @@ def log_violations(result: CheckResult, db: str = "") -> None:
             note=v.note,
             hint=BUDGET_HINT,
         )
+
+
+# 与 Go 侧 CheckColumns 的 hint 逐字一致。
+COLUMN_HINT = (
+    "用 dbguard.TopLargeRows 或 dbcheck -top-rows 定位到具体主键,"
+    "再反序列化看是哪个字段爆了"
+)
+
+
+async def check_columns(conn, schema: str, budgets: list[ColumnBudget]) -> CheckResult:  # noqa: ANN001
+    """跑一轮**列级**字节巡检 —— 对应 Go `Guard.CheckColumns`。超预算只告警不阻断。
+
+    ⚠️ `MAX(LENGTH(col))` 是**全表扫描**,成本远高于表级巡检。
+    只在「表级 avg_row_bytes 告警后人工定位」或「天级低频巡检」时调,
+    **不要挂到 sweep ticker 上**。
+
+    单列扫描失败只 WARN 并继续下一列(与 Go 同):一列扫不动不该让整轮巡检哑掉,
+    而巡检本身只是告警,失败不影响正确性。
+    """
+    if not budgets:
+        return CheckResult(checked=0, violations=[])
+    logger = plog.get()
+    violations: list[Violation] = []
+    checked = 0
+    for budget in budgets:
+        # 表名 / 列名要拼进 SQL(标识符位置用不了占位符),所以必须先过白名单校验。
+        # 它们全部来自各服务 budgets.py 的代码常量,不接受外部输入。
+        table = mysqlx.require_mysql_identifier(budget.table, kind="table")
+        column = mysqlx.require_mysql_identifier(budget.column, kind="column")
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"SELECT MAX(LENGTH(`{column}`)), AVG(LENGTH(`{column}`)) "  # noqa: S608 —— 标识符已过白名单校验
+                    f"FROM `{table}`"
+                )
+                row = await cur.fetchone()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 —— 扫不动只是少一列指标,不阻断整轮
+            logger.warning(
+                "dbguard_column_scan_failed",
+                db=schema,
+                table=budget.table,
+                column=budget.column,
+                err=str(exc),
+            )
+            continue
+
+        checked += 1
+        max_len = int(row[0] or 0) if row else 0
+        avg_len = int(row[1] or 0) if row else 0
+        COLUMN_MAX_BYTES.labels(schema, budget.table, budget.column).set(max_len)
+        if budget.max_bytes <= 0 or max_len <= budget.max_bytes:
+            continue
+
+        BUDGET_VIOLATIONS.labels(schema, budget.table, "column_bytes").inc()
+        violations.append(
+            Violation(
+                table=budget.table,
+                kind="column_bytes",
+                actual=max_len,
+                budget=budget.max_bytes,
+                note=budget.note,
+                column=budget.column,
+            )
+        )
+        # ★ 列级超限**在这里直接打**,不走 log_violations —— 与 Go 同:
+        # 它带 column / avg_bytes 两个表级日志没有的字段,合并成一个函数
+        # 就得给表级路径塞空字段,反而让 Loki 上两类告警长得一样。
+        logger.error(
+            "db_column_size_budget_exceeded",
+            db=schema,
+            table=budget.table,
+            column=budget.column,
+            max_bytes=max_len,
+            avg_bytes=avg_len,
+            budget=budget.max_bytes,
+            note=budget.note,
+            hint=COLUMN_HINT,
+        )
+    return CheckResult(checked=checked, violations=violations)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class LargeRow:
+    """一条大行定位结果(主键 + 该列字节数)—— 对应 Go 的 `dbguard.LargeRow`。"""
+
+    pk: str
+    size_bytes: int
+
+
+async def top_large_rows(  # noqa: ANN001
+    conn, table: str, pk_col: str, column: str, limit: int = 20
+) -> list[LargeRow]:
+    """定位某列最大的 N 行,返回主键与字节数 —— **排查大字段的第一步落点**。
+
+    拿到主键后的标准下一步:把该行的 blob dump 出来反序列化(proto / JSON),
+    看是哪个 repeated 字段元素数异常,再回到写入路径找为什么没有上限。
+
+    `table` / `pk_col` / `column` 必须是调用方硬编码的标识符(不接受外部输入):
+    标识符位置用不了参数化占位符,这里靠白名单校验兜底。
+    limit 有界(1..100,越界回落 20)防一次拉太多。
+    """
+    table = mysqlx.require_mysql_identifier(table, kind="table")
+    pk_col = mysqlx.require_mysql_identifier(pk_col, kind="column")
+    column = mysqlx.require_mysql_identifier(column, kind="column")
+    if limit <= 0 or limit > 100:
+        limit = 20
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"SELECT `{pk_col}`, LENGTH(`{column}`) AS n "  # noqa: S608 —— 标识符已过白名单校验
+            f"FROM `{table}` ORDER BY n DESC LIMIT %s",
+            (limit,),
+        )
+        rows = await cur.fetchall()
+    return [LargeRow(pk=str(pk), size_bytes=int(n or 0)) for pk, n in rows]
 
 
 # ── 保留期清理(§9.24)──────────────────────────────────────────────────────
@@ -415,6 +594,11 @@ def check_payload(name: str, payload: bytes, max_bytes: int) -> None:
     attrs 条数(深度无闸);rewardclaim 管住单条位图大小却没管位图条目数(广度无闸)。
     """
     size = len(payload)
+    db, table, column = _payload_labels(name)
+    # ★ 无条件 observe,且在 `max_bytes <= 0` 提前返回**之前** —— 与 Go 同序
+    # (payload.go:78-81)。还没定阈值的列正是最需要看分布的:先有 histogram
+    # 才能拿 p99 把阈值定出来,反过来就成了"没阈值所以不观测,不观测所以定不出阈值"。
+    PAYLOAD_BYTES.labels(db, table, column).observe(size)
     # ★ 未设预算 = 不校验(与 Go 的 `if limit.Max <= 0 { return nil }` 一致)。
     # 少这一分支的话,任何还没定阈值的列都会因为 max_bytes=0 而**拒掉一切写入** ——
     # 一个容量守护把正常业务全挡了,方向反了。
@@ -429,6 +613,7 @@ def check_payload(name: str, payload: bytes, max_bytes: int) -> None:
         # (pkg/dbguard/payload.go:81-87),Python 侧原先只抛异常 ——
         # 异常会被调用方按业务错误处理掉,于是"某个玩家的数据一直写不进去"
         # 在运维视角上**完全不可见**:没有日志、没有指标,只有客服工单。
+        PAYLOAD_REJECTED.labels(db, table, column).inc()
         plog.get().error(
             "db_payload_too_large_rejected",
             name=name,
