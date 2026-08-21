@@ -25,6 +25,7 @@ from __future__ import annotations
 from pandorapy import dbguard
 from pandorapy import errcode
 from pandorapy import mysqlx
+from pandorapy.services.inventory import bag_migration as bmig
 from pandorapy.services.inventory import fingerprint as fp
 from pandorapy.services.inventory import repo_sql as rsql
 from pandorapy.services.inventory.models import (
@@ -194,7 +195,7 @@ async def _consume_gold_escrow_tx(cur, player_id: int, order_id: int, gold: int)
         ) from exc
 
 
-class MySQLInventoryRepo(InstanceRepoMixin, TransferRepoMixin):
+class MySQLInventoryRepo(InstanceRepoMixin, TransferRepoMixin, bmig.LegacyBagSourceMixin):
     """基于 asyncmy 连接池的 inventory 仓储。对应 Go 的 MySQLInventoryRepo。
 
     ★ 池必须以 **autocommit=True** 建(见 main.py):与 Go 的 database/sql 默认语义一致。

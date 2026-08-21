@@ -77,6 +77,7 @@ from pandorapy import server as pserver
 from pandorapy import sessiongate
 from pandorapy import snowflake_etcd as psnowflake_etcd
 from pandorapy.services.inventory import bag_biz as bbiz
+from pandorapy.services.inventory import bag_migrate as bmigrate
 from pandorapy.services.inventory import bag_owner as bowner
 from pandorapy.services.inventory import bag_repo as brepo
 from pandorapy.services.inventory import bag_service as bsvc
@@ -188,7 +189,7 @@ async def _setup_bag_domain(  # noqa: C901 —— 与 Go 同为一串线性启�
     cfg: iconf.Config,
     inv_repo: irepo.MySQLInventoryRepo,
     closables: list,
-) -> tuple[bsvc.BagService, bbiz.BagUsecase, object, str] | None:
+) -> tuple[bsvc.BagService, bbiz.BagUsecase, object, str, brepo.MySQLBagRepo] | None:
     """装配背包域(pandora.bag.v1,bag-domain.md phase 1 由本进程承载)。
 
     对应 Go 侧 main.go 的 `if cfg.Bag.DSN != ""` 整段,闸的**先后次序与 Go 相同**
@@ -203,7 +204,10 @@ async def _setup_bag_domain(  # noqa: C901 —— 与 Go 同为一串线性启�
         ds_auth_guard_init_failed       fail-fast  mode=permissive/enforce 但缺 secret
         bag_ds_guard_ready              INFO       五要件① 已装配
 
-    返回 (bag_service, bag_usecase, bag_pool, bag_schema);失败返回 None(调用方 exit 1)。
+    返回 (bag_service, bag_usecase, bag_pool, bag_schema, bag_repo);失败返回 None(调用方 exit 1)。
+
+    ★ bag_repo 也要交出去:D5 存量迁移直说仓库段落位(不走 journal),它不是
+      BagUsecase 的能力;为此给 BagUsecase 开一个 public repo 反而把内部仓储漏给全部调用方。
     """
     conn_cfg = mysqlx.parse_go_dsn(cfg.bag.dsn, default_db=BAG_DB)
     bag_client_conf = cfg.bag.mysql_client_conf()
@@ -288,7 +292,7 @@ async def _setup_bag_domain(  # noqa: C901 —— 与 Go 同为一串线性启�
         bag_svc.set_ds_guard(ds_guard)
         logger.info("bag_ds_guard_ready", mode=ds_guard.mode.value)
 
-    return bag_svc, bag_uc, bag_pool, bag_schema
+    return bag_svc, bag_uc, bag_pool, bag_schema, bag_repo
 
 
 class _PoolCloser:
@@ -580,23 +584,20 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         bag_uc = None
         bag_pool = None
         bag_schema = ""
+        bag_mig_uc = None
         if cfg.bag.dsn:
-            # ⚠️ 存量迁移作业(D5)在 Python 侧没有对应实现:它读 legacy trade 表快照
-            # 再往 bag 库落位,是一次性数据搬运,不属于 BagService 请求链。
-            # 静默跳过的后果是运维以为迁移在跑、实际一行没搬,contract 阶段冻结旧写路径后
-            # 玩家的存量道具凭空消失 —— 所以配了就拒启,而不是打个 WARN 放行。
-            if cfg.bag.legacy_migration_enabled:
-                logger.error(
-                    "bag_legacy_migration_unsupported",
-                    hint="bag.legacy_migration_enabled=true 需要一次性存量迁移作业;"
-                    "本进程不提供该作业,静默跳过会让存量道具搬不过去。"
-                    "请用 Go 版跑完迁移后把该开关置回 false,再用本进程承载 BagService",
-                )
-                return 1
             bag_parts = await _setup_bag_domain(logger, cfg, repo, closables)
             if bag_parts is None:
                 return 1
-            bag_svc, bag_uc, bag_pool, bag_schema = bag_parts
+            bag_svc, bag_uc, bag_pool, bag_schema, bag_repo = bag_parts
+            # 存量迁移(D5,decision-revisit-bag-replay-semantics.md):默认关;contract 阶段
+            # 旧写路径冻结后开启,一次性幂等作业(重跑 no-op,多副本并发安全)。
+            if cfg.bag.legacy_migration_enabled:
+                bag_mig_uc = bmigrate.BagMigrationUsecase(repo, bag_repo, cfg.bag)
+                logger.warning(
+                    "bag_legacy_migration_enabled",
+                    hint="只准在旧写路径(GrantItems/UseItem/SellItem/escrow)冻结后运行(D5 时序纪律)",
+                )
             logger.info(
                 "bag_domain_enabled",
                 dsn=mysqlx.mask_dsn(cfg.bag.dsn),
@@ -719,6 +720,24 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                         bag_pool, bag_schema, sweep_interval, ibudgets.bag_budgets()
                     ),
                 )
+            )
+            # ★ bag_journal 保留期清理(§9.24 只增表):对应 Go main.go 的
+            #   `go runBagJournalSweep(...)`。2026-08-21 补接 —— 此前 `_run_bag_journal_sweep`
+            #   在本文件**定义了但从未挂进 background**,等于背包流水表永不清理,
+            #   而 ruff 的 F401 / F841 都盯不住"模块级函数没人调"这种漏接线。
+            background.append(
+                (
+                    "bag_journal_sweep",
+                    lambda: _run_bag_journal_sweep(
+                        bag_uc, sweep_interval, cfg.inventory.sweep_batch
+                    ),
+                )
+            )
+        if bag_mig_uc is not None:
+            # 一次性作业(不是循环):跑完即返回,失败玩家逐个告警不阻断整轮。
+            # safego.spawn 已经是 panic 兜底,这里不再套 run_once(双层包装只会多一层噪声)。
+            background.append(
+                ("bag_legacy_migration", lambda: bmigrate.run_legacy_bag_migration(bag_mig_uc))
             )
 
         await pserver.run(

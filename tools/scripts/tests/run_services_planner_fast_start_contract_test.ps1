@@ -136,6 +136,21 @@ Assert-True ($firstPlanIndex -ge 0 -and $stageIndex -gt $firstPlanIndex -and
 Assert-True ($fastFunctionText -match '-ConfigTableChanged:\$ConfigTableChanged' -and
     $fastFunctionText -match '(?s)\$finalListenerRecords.*?Write-PandoraPlannerAppliedReceipt') `
     '表变化参与统一动作计划，applied receipt 只在最终 exact-ready 后写入'
+$runtimeAppliedFunction = $runAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-PlannerRuntimeAppliedFingerprint'
+    }, $true) | Select-Object -First 1
+$runtimeAppliedText = if ($runtimeAppliedFunction) { $runtimeAppliedFunction.Extent.Text } else { '' }
+Assert-True ($runtimeAppliedText -match '\$svc\.Conf' -and
+    $runtimeAppliedText -match 'Get-PandoraPlannerRuntimeEnvironmentNames') `
+    'applied runtime 指纹绑定最终所选源 YAML 与集中维护的非 secret process env 映射'
+$finalReadyIndex = $fastFunctionText.IndexOf('$finalListenerRecords', [StringComparison]::Ordinal)
+$buildReceiptWriteIndex = $fastFunctionText.LastIndexOf('Write-PandoraPlannerBuildReceipt', [StringComparison]::Ordinal)
+$preparedManifestDeleteIndex = $fastFunctionText.LastIndexOf('$pendingPreparedManifestPath', [StringComparison]::Ordinal)
+Assert-True ($finalReadyIndex -ge 0 -and $buildReceiptWriteIndex -gt $finalReadyIndex -and
+    $preparedManifestDeleteIndex -gt $finalReadyIndex) `
+    'build receipt 与 prepared manifest 都只在全服务最终 exact-ready 后提交/删除'
 
 Write-Host '[2] 批量 readiness 的虚拟时间只随最慢服务增长' -ForegroundColor Cyan
 if (-not (Test-Path -LiteralPath $FastLib -PathType Leaf)) {
@@ -148,6 +163,101 @@ $strictLeakOutput = @(& pwsh -NoProfile -EncodedCommand $strictLeakEncoded 2>&1)
 Assert-True ($LASTEXITCODE -eq 0 -and $strictLeakOutput.Count -gt 0 -and $strictLeakOutput[-1] -eq 'STRICT_NOT_LEAKED') `
     'dot-source fast helper 不得向普通 run_services 泄漏 StrictMode'
 . $FastLib
+
+Write-Host '[2-env] runtime applied env 映射必须覆盖真实非测试 Go import 闭包' -ForegroundColor Cyan
+function Get-ContractGoPackageInfo([string]$RelativePackage, [hashtable]$Cache) {
+    if ($Cache.ContainsKey($RelativePackage)) { return $Cache[$RelativePackage] }
+    $directory = Join-Path $ProjectRoot $RelativePackage
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+        throw "runtime env 契约解析到不存在的仓内 package:$RelativePackage"
+    }
+    $imports = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $environments = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $allText = [Text.StringBuilder]::new()
+    foreach ($goFile in Get-ChildItem -LiteralPath $directory -File -Filter '*.go') {
+        if ($goFile.Name.EndsWith('_test.go', [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $text = [IO.File]::ReadAllText($goFile.FullName)
+        $null = $allText.AppendLine($text)
+        foreach ($match in [regex]::Matches($text,
+                '"github\.com/luyuancpp/pandora/(?<path>(?:pkg|services)/[^"\s]+)"')) {
+            $null = $imports.Add("$($match.Groups['path'].Value)")
+        }
+        foreach ($match in [regex]::Matches($text,
+                '\bos\.(?:Getenv|LookupEnv)\(\s*"(?<name>[A-Z][A-Z0-9_]*)"\s*\)')) {
+            $null = $environments.Add("$($match.Groups['name'].Value)")
+        }
+    }
+    $packageText = $allText.ToString()
+    if ($packageText -match '\bos\.(?:Getenv|LookupEnv)\(') {
+        # 同 package 的 env 常量可能经 helper（如 strictBoolEnv）间接传给 os.Getenv。
+        foreach ($match in [regex]::Matches($packageText,
+                '(?m)^\s*(?:const\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*"(?<name>(?:PANDORA|KUBERNETES|LOG|GRPC)_[A-Z0-9_]+)"')) {
+            $null = $environments.Add("$($match.Groups['name'].Value)")
+        }
+    }
+    $info = [pscustomobject]@{
+        Imports = @($imports)
+        Environments = @($environments)
+        UsesAcquireRuntime = ($packageText -match '\bdsauthfence\.AcquireRuntime\s*\(')
+    }
+    $Cache[$RelativePackage] = $info
+    return $info
+}
+
+function Get-ContractRuntimeEnvironmentNames($Definition, [hashtable]$Cache) {
+    $queue = [Collections.Generic.Queue[string]]::new()
+    $queue.Enqueue("$($Definition.Dir)/cmd/$($Definition.Cmd)")
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $environments = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $usesAcquireRuntime = $false
+    while ($queue.Count -gt 0) {
+        $package = $queue.Dequeue()
+        if (-not $seen.Add($package)) { continue }
+        $info = Get-ContractGoPackageInfo -RelativePackage $package -Cache $Cache
+        if ($info.UsesAcquireRuntime) { $usesAcquireRuntime = $true }
+        foreach ($name in $info.Environments) { $null = $environments.Add("$name") }
+        foreach ($import in $info.Imports) { $queue.Enqueue("$import") }
+    }
+    # writerlease 依赖整个 dsauthfence package，但只有显式 AcquireRuntime 的进程调用
+    # fence.go 中的 Pod UID/image 读取；避免把“被链接”误报成“实际使用”。
+    if (-not $usesAcquireRuntime) {
+        $null = $environments.Remove('PANDORA_POD_UID')
+        $null = $environments.Remove('PANDORA_IMAGE_DIGEST')
+    }
+    $secretPattern = '(?i)(PASSWORD|PASSWD|TOKEN|SECRET|CREDENTIAL|PRIVATE|API[_-]?KEY|DSN|USERNAME|(?:^|_)USER(?:_|$)|(?:^|_)KEY(?:_|$))'
+    return @($environments | Where-Object { $_ -notmatch $secretPattern } | Sort-Object)
+}
+
+$runtimeEnvCommand = Get-Command Get-PandoraPlannerRuntimeEnvironmentNames -ErrorAction SilentlyContinue
+Assert-True ($null -ne $runtimeEnvCommand) 'fast helper 暴露逐 runtime 非 secret process env 映射'
+if ($runtimeEnvCommand) {
+    $serviceDefinitionMatches = [regex]::Matches($runText,
+        "@\{\s*Name\s*=\s*'(?<name>[^']+)'\s*;\s*Dir\s*=\s*'(?<dir>services/[^']+)'\s*;\s*Cmd\s*=\s*'(?<cmd>[^']+)'")
+    $runtimeDefinitions = @($serviceDefinitionMatches | ForEach-Object {
+            [pscustomobject]@{
+                Name = $_.Groups['name'].Value
+                Dir = $_.Groups['dir'].Value
+                Cmd = $_.Groups['cmd'].Value
+            }
+        })
+    $packageInfoCache = @{}
+    $runtimeEnvDrift = [Collections.Generic.List[string]]::new()
+    foreach ($definition in $runtimeDefinitions) {
+        $fromSource = @(Get-ContractRuntimeEnvironmentNames -Definition $definition -Cache $packageInfoCache)
+        $declared = @(Get-PandoraPlannerRuntimeEnvironmentNames -RuntimeName $definition.Name | Sort-Object)
+        if (($fromSource -join "`0") -cne ($declared -join "`0")) {
+            $runtimeEnvDrift.Add("$($definition.Name):source=$($fromSource -join ',');declared=$($declared -join ',')")
+        }
+    }
+    $runtimeEnvDriftDetail = if ($runtimeEnvDrift.Count -gt 0) { ':' + ($runtimeEnvDrift -join ' | ') } else { '' }
+    Assert-True ($runtimeDefinitions.Count -eq 22 -and $runtimeEnvDrift.Count -eq 0) `
+        "22 个 runtime 的 env 映射与非测试 Go import 闭包完全一致$runtimeEnvDriftDetail"
+    $grpcStatsConsumers = @($runtimeDefinitions | Where-Object {
+            (Get-ContractRuntimeEnvironmentNames -Definition $_ -Cache $packageInfoCache) -contains 'GRPC_TRAFFIC_STATS_ENABLED'
+        })
+    Assert-True ($grpcStatsConsumers.Count -eq 0) `
+        'pkg/grpcstats 当前不在任何业务 main 依赖闭包，不把未实际使用的 GRPC env 写入 receipt'
+}
 
 Write-Host '[2a] 表变化通过公开 switch 精确映射到真实消费者' -ForegroundColor Cyan
 $configTableParameter = @($runAst.ParamBlock.Parameters | Where-Object {
@@ -166,6 +276,27 @@ if ($tableConsumerCommand) {
     ) | Sort-Object
     Assert-True (($actualTableConsumers -join ',') -ceq ($expectedTableConsumers -join ',')) `
         '表变化只重启 player/battle_result/ds_allocator/inventory/dialogue/mission/两个 matchmaker 实例'
+
+    # 防止以后新服务接入 pkg/configtable 后只改 Go wiring、忘记同步策划快速启动重启集合。
+    # 只统计非测试 Go 中同时存在 canonical import 与实际 configtable. 使用的服务模块；
+    # services/<domain>/<service> 映射到 runtime，matchmaker 二进制映射两个运行实例。
+    $servicesRoot = Join-Path $ProjectRoot 'services'
+    $wiredTableConsumers = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($goFile in Get-ChildItem -LiteralPath $servicesRoot -Recurse -File -Filter '*.go') {
+        if ($goFile.Name.EndsWith('_test.go', [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $goText = [IO.File]::ReadAllText($goFile.FullName)
+        if ($goText -notmatch '(?m)^\s*"github\.com/luyuancpp/pandora/pkg/configtable"\s*$' -or
+            $goText -notmatch '\bconfigtable\.') { continue }
+        $relative = [IO.Path]::GetRelativePath($servicesRoot, $goFile.FullName).Replace('\', '/')
+        $parts = $relative.Split('/')
+        if ($parts.Count -lt 3) { continue }
+        $runtimeName = $parts[1]
+        $null = $wiredTableConsumers.Add($runtimeName)
+        if ($runtimeName -ceq 'matchmaker') { $null = $wiredTableConsumers.Add('matchmaker_pve') }
+    }
+    $wiredTableConsumerNames = @($wiredTableConsumers | Sort-Object)
+    Assert-True (($actualTableConsumers -join ',') -ceq ($wiredTableConsumerNames -join ',')) `
+        '配置表消费者清单与 services 非测试 Go 的真实 pkg/configtable wiring 完全一致'
 }
 
 Write-Host '[2b] artifact 逐 build-target 指纹，matchmaker 两实例共享一个目标' -ForegroundColor Cyan
@@ -212,6 +343,60 @@ if ($buildTargetsCommand -and $artifactPlanCommand) {
     try { $null = @(Get-PandoraPlannerArtifactTargetPlan -BuildTargets $targetFixtures -Manifest $splitManifest) }
     catch { $splitBlocked = $_.Exception.Message -match '混版|不一致' }
     Assert-True $splitBlocked '共享 build target 的两个 artifact entry 不一致时 fail-closed，禁止混版'
+}
+
+Write-Host '[2e] prepared manifest 必须精确覆盖每个 target/runtime pair' -ForegroundColor Cyan
+$preparedPairCommand = Get-Command Assert-PandoraPlannerPreparedStagePairs -ErrorAction SilentlyContinue
+Assert-True ($null -ne $preparedPairCommand) 'fast helper 暴露 prepared stage pair 完整性 seam'
+$readPreparedFunction = $runAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Read-PlannerPreparedBuildManifest'
+    }, $true) | Select-Object -First 1
+$readPreparedText = if ($readPreparedFunction) { $readPreparedFunction.Extent.Text } else { '' }
+$preparedReadIndex = $fastFunctionText.IndexOf('Read-PlannerPreparedBuildManifest', [StringComparison]::Ordinal)
+Assert-True ($readPreparedText -match 'Assert-PandoraPlannerPreparedStagePairs' -and
+    $preparedReadIndex -ge 0 -and $preparedReadIndex -lt $stopReplacementIndex) `
+    '消费 prepared manifest 时先做 pair 完整性校验，再进入任何 exact stop/publish/receipt'
+if ($preparedPairCommand) {
+    $preparedPairPlans = @(
+        [pscustomobject]@{
+            Name = 'matchmaker'
+            Target = [pscustomobject]@{ Services = @(
+                    [pscustomobject]@{ Name = 'matchmaker' },
+                    [pscustomobject]@{ Name = 'matchmaker_pve' }
+                ) }
+        }
+    )
+    $completePairStages = @(
+        [pscustomobject]@{ target_name = 'matchmaker'; runtime_name = 'matchmaker' },
+        [pscustomobject]@{ target_name = 'matchmaker'; runtime_name = 'matchmaker_pve' }
+    )
+    Assert-True (Assert-PandoraPlannerPreparedStagePairs -DesiredPlans $preparedPairPlans `
+            -ExpectedTargetNames @('matchmaker') -StageEntries $completePairStages) `
+        '共享 build target 的两个 runtime stage 一一对应时通过'
+    $missingPairRejected = $false
+    try {
+        $null = Assert-PandoraPlannerPreparedStagePairs -DesiredPlans $preparedPairPlans `
+            -ExpectedTargetNames @('matchmaker') -StageEntries @($completePairStages[0])
+    } catch { $missingPairRejected = $_.Exception.Message -match '缺少.*matchmaker/matchmaker_pve' }
+    Assert-True $missingPairRejected `
+        'matchmaker prepared manifest 少 matchmaker_pve stage 的 mutant 在 activation 前 fail-closed'
+    $duplicatePairRejected = $false
+    try {
+        $null = Assert-PandoraPlannerPreparedStagePairs -DesiredPlans $preparedPairPlans `
+            -ExpectedTargetNames @('matchmaker') -StageEntries @($completePairStages[0], $completePairStages[0])
+    } catch { $duplicatePairRejected = $_.Exception.Message -match '重复' }
+    Assert-True $duplicatePairRejected 'prepared manifest 重复 target/runtime pair 必须拒绝'
+    $extraPairRejected = $false
+    try {
+        $null = Assert-PandoraPlannerPreparedStagePairs -DesiredPlans $preparedPairPlans `
+            -ExpectedTargetNames @('matchmaker') -StageEntries @(
+                $completePairStages[0], $completePairStages[1],
+                [pscustomobject]@{ target_name = 'matchmaker'; runtime_name = 'login' }
+            )
+    } catch { $extraPairRejected = $_.Exception.Message -match '额外' }
+    Assert-True $extraPairRejected 'prepared manifest 额外 target/runtime pair 必须拒绝'
 }
 
 Write-Host '[2c] exact Process 回收必须有界并由 Refresh/HasExited 证明' -ForegroundColor Cyan
@@ -438,6 +623,47 @@ try {
                     -BinaryPath $binary -Process $replacementProcess)) `
             'PID 复用但 StartTime 不同不能冒充已应用目标版本'
 
+        $runtimeFingerprintCommand = Get-Command Get-PandoraPlannerRuntimeInputFingerprint -ErrorAction SilentlyContinue
+        Assert-True ($null -ne $runtimeFingerprintCommand) 'fast helper 暴露非 secret YAML/env runtime 指纹 seam'
+        $runtimeYaml = Join-Path $tmp 'runtime-source.yaml'
+        [IO.File]::WriteAllText($runtimeYaml, "server:`n  addr: 127.0.0.1:1`n", [Text.UTF8Encoding]::new($false))
+        $runtimeEnv = @{ PANDORA_DS_LAUNCHER = 'packaged'; PANDORA_DS_EXE = 'server-a.exe' }
+        $getRuntimeEnv = { param([string]$Name) $runtimeEnv[$Name] }.GetNewClosure()
+        $runtimeFingerprintA = Get-PandoraPlannerRuntimeInputFingerprint -TargetFingerprint 'target-a' `
+            -SourceConfigPath $runtimeYaml -EnvironmentNames @('PANDORA_DS_LAUNCHER', 'PANDORA_DS_EXE') `
+            -GetEnvironmentValue $getRuntimeEnv
+        Write-PandoraPlannerAppliedReceipt -ReceiptPath $appliedReceipt -Fingerprint $runtimeFingerprintA `
+            -BinaryPath $binary -Process $fakeAppliedProcess
+        [IO.File]::WriteAllText($runtimeYaml, "server:`n  addr: 127.0.0.1:2`n", [Text.UTF8Encoding]::new($false))
+        $runtimeFingerprintYamlChanged = Get-PandoraPlannerRuntimeInputFingerprint -TargetFingerprint 'target-a' `
+            -SourceConfigPath $runtimeYaml -EnvironmentNames @('PANDORA_DS_LAUNCHER', 'PANDORA_DS_EXE') `
+            -GetEnvironmentValue $getRuntimeEnv
+        Assert-True ($runtimeFingerprintA -cne $runtimeFingerprintYamlChanged -and
+            -not (Test-PandoraPlannerAppliedReceipt -ReceiptPath $appliedReceipt `
+                -Fingerprint $runtimeFingerprintYamlChanged -BinaryPath $binary -Process $fakeAppliedProcess)) `
+            '只改最终所选非 secret 源 YAML 也必须使 AppliedCurrent=false'
+        $runtimeEnv.PANDORA_DS_LAUNCHER = 'editor'
+        $runtimeFingerprintEnvChanged = Get-PandoraPlannerRuntimeInputFingerprint -TargetFingerprint 'target-a' `
+            -SourceConfigPath $runtimeYaml -EnvironmentNames @('PANDORA_DS_LAUNCHER', 'PANDORA_DS_EXE') `
+            -GetEnvironmentValue $getRuntimeEnv
+        Assert-True ($runtimeFingerprintYamlChanged -cne $runtimeFingerprintEnvChanged) `
+            'DS launcher/exe 等实际使用 env 变化必须使 runtime 指纹失效'
+        $rejectedSecretEnvironments = [Collections.Generic.List[string]]::new()
+        foreach ($secretEnvironment in @(
+                'PANDORA_DB_PASSWORD', 'PANDORA_DS_AUTH_ETCD_KEY_FILE',
+                'PANDORA_POD_UID_PREFLIGHT_REDIS_USERNAME'
+            )) {
+            try {
+                $null = Get-PandoraPlannerRuntimeInputFingerprint -TargetFingerprint 'target-a' `
+                    -SourceConfigPath $runtimeYaml -EnvironmentNames @($secretEnvironment) `
+                    -GetEnvironmentValue { param($Name) 'must-not-enter-receipt' }
+            } catch {
+                if ($_.Exception.Message -match 'secret') { $rejectedSecretEnvironments.Add($secretEnvironment) }
+            }
+        }
+        Assert-True ($rejectedSecretEnvironments.Count -eq 3) `
+            'password/key/username 等 secret env 内容禁止进入 applied receipt 指纹'
+
         $planTargets = @(Get-PandoraPlannerBuildTargets -Services @(
                 [pscustomobject]@{ Name = 'player'; Dir = 'services/account/player'; Cmd = 'player' },
                 [pscustomobject]@{ Name = 'matchmaker'; Dir = 'services/matchmaking/matchmaker'; Cmd = 'matchmaker'; BuildTarget = 'matchmaker' },
@@ -509,9 +735,16 @@ try {
         $stageA = Join-Path $publishDir '.a.stage.exe'; $stageB = Join-Path $publishDir '.b.stage.exe'
         [IO.File]::WriteAllText($finalA, 'old-a'); [IO.File]::WriteAllText($finalB, 'old-b')
         [IO.File]::WriteAllText($stageA, 'new-a'); [IO.File]::WriteAllText($stageB, 'new-b')
+        function New-PublishFixtureRecord([string]$StagePath, [string]$DestinationPath) {
+            $item = Get-Item -LiteralPath $StagePath
+            return [pscustomobject]@{
+                StagePath = $StagePath; DestinationPath = $DestinationPath; Length = [int64]$item.Length
+                Sha256 = (Get-FileHash -LiteralPath $StagePath -Algorithm SHA256).Hash
+            }
+        }
         $publishRecords = @(
-            [pscustomobject]@{ StagePath = $stageA; DestinationPath = $finalA },
-            [pscustomobject]@{ StagePath = $stageB; DestinationPath = $finalB }
+            New-PublishFixtureRecord $stageA $finalA
+            New-PublishFixtureRecord $stageB $finalB
         )
         Publish-PandoraPlannerStagedFiles -Records $publishRecords
         Assert-True (([IO.File]::ReadAllText($finalA)) -ceq 'new-a' -and
@@ -519,7 +752,55 @@ try {
             -not (Test-Path -LiteralPath $stageA) -and -not (Test-Path -LiteralPath $stageB)) `
             '成功时两个目标均从 staging 原子切换且不残留 staging'
 
+        [IO.File]::WriteAllText($stageA, 'checked-a'); [IO.File]::WriteAllText($stageB, 'checked-b')
+        $tamperRecords = @(
+            New-PublishFixtureRecord $stageA $finalA
+            New-PublishFixtureRecord $stageB $finalB
+        )
+        [IO.File]::WriteAllText($stageB, 'tampered-after-plan')
+        $tamperMoveState = @{ Count = 0 }
+        $observeMove = {
+            param([string]$Source, [string]$Destination, [bool]$Overwrite)
+            $tamperMoveState.Count++
+            [IO.File]::Move($Source, $Destination, $Overwrite)
+        }.GetNewClosure()
+        $tamperRejected = $false
+        try { Publish-PandoraPlannerStagedFiles -Records $tamperRecords -MoveFile $observeMove }
+        catch { $tamperRejected = $_.Exception.Message -match '发布前已变化' }
+        Assert-True ($tamperRejected -and $tamperMoveState.Count -eq 0 -and
+            ([IO.File]::ReadAllText($finalA)) -ceq 'new-a' -and ([IO.File]::ReadAllText($finalB)) -ceq 'new-b') `
+            'stage 在计划后被篡改时，必须在任何 backup/覆盖 mutation 前失败'
+        Remove-Item -LiteralPath $stageA, $stageB -Force -ErrorAction SilentlyContinue
+
+        [IO.File]::WriteAllText($stageA, 'post-check-a'); [IO.File]::WriteAllText($stageB, 'post-check-b')
+        $postPublishTamperRecords = @(
+            New-PublishFixtureRecord $stageA $finalA
+            New-PublishFixtureRecord $stageB $finalB
+        )
+        $tamperEarlierDestinationAfterSecondMove = {
+            param([string]$Source, [string]$Destination, [bool]$Overwrite)
+            [IO.File]::Move($Source, $Destination, $Overwrite)
+            if ([string]::Equals([IO.Path]::GetFullPath($Source), [IO.Path]::GetFullPath($stageB),
+                    [StringComparison]::OrdinalIgnoreCase)) {
+                # A 已通过逐项 post-move 校验；移动 B 后再篡改 A，只有整批最终复核能发现。
+                [IO.File]::WriteAllText($finalA, 'tampered-after-a-post-check')
+            }
+        }.GetNewClosure()
+        $postPublishTamperRejected = $false
+        try {
+            Publish-PandoraPlannerStagedFiles -Records $postPublishTamperRecords `
+                -MoveFile $tamperEarlierDestinationAfterSecondMove
+        } catch { $postPublishTamperRejected = $_.Exception.Message -match '最终复核失败' }
+        Assert-True ($postPublishTamperRejected -and
+            ([IO.File]::ReadAllText($finalA)) -ceq 'new-a' -and
+            ([IO.File]::ReadAllText($finalB)) -ceq 'new-b') `
+            '第二个 move 后篡改先前 destination，整批 post-publish 复核发现并恢复全部旧 exe'
+
         [IO.File]::WriteAllText($stageA, 'next-a'); [IO.File]::WriteAllText($stageB, 'next-b')
+        $publishRecords = @(
+            New-PublishFixtureRecord $stageA $finalA
+            New-PublishFixtureRecord $stageB $finalB
+        )
         $moveCount = 0
         $injectSecondPublishFailure = {
             param([string]$Source, [string]$Destination, [bool]$Overwrite)
@@ -534,6 +815,78 @@ try {
         Assert-True ($publishFailed -and ([IO.File]::ReadAllText($finalA)) -ceq 'new-a' -and
             ([IO.File]::ReadAllText($finalB)) -ceq 'new-b') `
             '任一发布失败会恢复全部旧二进制，不留下混版'
+    }
+
+    Write-Host '[5c] activation 的 stop/publish 任一步失败都恢复此前已停旧服务' -ForegroundColor Cyan
+    $activationCommand = Get-Command Invoke-PandoraPlannerActivationReplacement -ErrorAction SilentlyContinue
+    Assert-True ($null -ne $activationCommand) 'fast helper 暴露可注入的 activation replacement seam'
+    $restoreFunction = $runAst.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Restore-PlannerStoppedRuntimeSet'
+        }, $true) | Select-Object -First 1
+    $restoreFunctionText = if ($restoreFunction) { $restoreFunction.Extent.Text } else { '' }
+    Assert-True ($fastFunctionText -match '(?s)Get-PlannerActivationRunningRecords.*?Invoke-PandoraPlannerActivationReplacement.*?-Restart \$restartOld' -and
+        $fastFunctionText -match '\$restartOld\s*=\s*\{.*?Restore-PlannerStoppedRuntimeSet' -and
+        $restoreFunctionText -match '\$NoBuild\s*=\s*\$true' -and
+        $restoreFunctionText -match 'BinaryLength' -and $restoreFunctionText -match 'BinarySha256' -and
+        $restoreFunctionText -match 'Start-Service \$record\.Service') `
+        '生产 activation 冻结旧 exe/exact running 集合，失败后只复用旧字节并走有界 exact-ready 启动'
+    if ($activationCommand) {
+        $activationRecords = @(
+            [pscustomobject]@{ Name = 'a' },
+            [pscustomobject]@{ Name = 'b' },
+            [pscustomobject]@{ Name = 'c' }
+        )
+        $secondStopState = @{
+            StopAttempts = [Collections.Generic.List[string]]::new()
+            Restarts = [Collections.Generic.List[string]]::new()
+            PublishCalls = 0
+        }
+        $stopOnSecond = {
+            param($record)
+            $secondStopState.StopAttempts.Add("$($record.Name)")
+            if ($record.Name -ceq 'b') { throw 'fixture second stop failure' }
+        }.GetNewClosure()
+        $mustNotPublish = { $secondStopState.PublishCalls++ }.GetNewClosure()
+        $captureSecondStopRecovery = {
+            param([object[]]$records)
+            foreach ($record in $records) { $secondStopState.Restarts.Add("$($record.Name)") }
+        }.GetNewClosure()
+        $secondStopFailed = $false
+        try {
+            $null = Invoke-PandoraPlannerActivationReplacement -RunningRecords $activationRecords `
+                -Stop $stopOnSecond -Publish $mustNotPublish -Restart $captureSecondStopRecovery
+        } catch { $secondStopFailed = $_.Exception.Message -match 'fixture second stop failure' }
+        Assert-True ($secondStopFailed -and ($secondStopState.StopAttempts -join ',') -ceq 'a,b' -and
+            $secondStopState.PublishCalls -eq 0 -and ($secondStopState.Restarts -join ',') -ceq 'a') `
+            '第二个 exact stop 失败时不发布，并恢复此前已经确认停止的旧服务'
+
+        $publishFailureState = @{
+            Stops = [Collections.Generic.List[string]]::new()
+            Restarts = [Collections.Generic.List[string]]::new()
+            PublishCalls = 0
+        }
+        $captureStop = {
+            param($record)
+            $publishFailureState.Stops.Add("$($record.Name)")
+        }.GetNewClosure()
+        $failPublish = {
+            $publishFailureState.PublishCalls++
+            throw 'fixture activation publish failure'
+        }.GetNewClosure()
+        $capturePublishRecovery = {
+            param([object[]]$records)
+            foreach ($record in $records) { $publishFailureState.Restarts.Add("$($record.Name)") }
+        }.GetNewClosure()
+        $activationPublishFailed = $false
+        try {
+            $null = Invoke-PandoraPlannerActivationReplacement -RunningRecords $activationRecords `
+                -Stop $captureStop -Publish $failPublish -Restart $capturePublishRecovery
+        } catch { $activationPublishFailed = $_.Exception.Message -match 'fixture activation publish failure' }
+        Assert-True ($activationPublishFailed -and ($publishFailureState.Stops -join ',') -ceq 'a,b,c' -and
+            $publishFailureState.PublishCalls -eq 1 -and ($publishFailureState.Restarts -join ',') -ceq 'a,b,c') `
+            '发布 helper 回滚旧文件后，activation 再恢复全部已停旧服务'
     }
 
     Write-Host '[6] workspace/toolchain 变化必须使构建收据失效，cleanup 必须尽力完成' -ForegroundColor Cyan

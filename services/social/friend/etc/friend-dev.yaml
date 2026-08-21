@@ -40,7 +40,7 @@ kafka:
 friend:
   # max_friends: 单玩家好友数量上限(默认 200)
   max_friends: 200
-  # rate_quota_per_min: 好友申请的 per-player 每分钟频率配额(anti-abuse §6 筬 6 项)。
+  # rate_quota_per_min: 好友申请的 per-player 每分钟频率配额(anti-abuse §6 第 6 项)。
   #   与 max_incoming_requests 总量闸正交:总量限「对方收件箱能堆多少」,本值限「刷多快」。
   #   ① 判据是 `== 0` 不是 `<= 0`——负值 = 显式关闭配额,不要写成 -1 来「恢复默认」。
   #   ② 显式写出而不依赖代码默认值:Go 与 Python 两栈各持一份默认(10),只改一侧

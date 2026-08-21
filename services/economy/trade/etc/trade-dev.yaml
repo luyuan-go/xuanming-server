@@ -42,7 +42,7 @@ trade:
   optimistic_retry: 3
   # max_items_per_order: 单订单最大物品条目数
   max_items_per_order: 20
-  # rate_quota_per_min: 下单/撤单的 per-player 每分钟频率配额(anti-abuse §6 筬 6 项)。
+  # rate_quota_per_min: 下单/撤单的 per-player 每分钟频率配额(anti-abuse §6 第 6 项)。
   #   与 max_orders_per_player 总量闸正交:总量限「同时挂多少」,本值限「刷多快」。
   #   显式写出而不依赖代码默认值:Go 与 Python 两栈各持一份默认(20),
   #   只改一侧会在灰度期造成同一玩家在两种副本上限额不同且两边日志都正常。

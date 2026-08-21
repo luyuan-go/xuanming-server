@@ -308,6 +308,90 @@ def test_the_background_check_still_recognizes_real_services() -> None:
         assert service in recognized, f"{service} 的 background 没被认出来"
 
 
+# ── 后台作业定义了就必须接线 ────────────────────────────────────────────
+
+def _unreferenced_runner_defs(tree) -> list[tuple[str, int]]:  # noqa: ANN001
+    """找出"定义了但全文件没人引用"的 `_run_*` / `_*_loop` 顶层协程。
+
+    判据刻意宽松:只要函数名作为**标识符**在定义之外被读到过一次(被 append 进
+    background、被 safego.spawn、被别的函数调用),就算接上了。这样不会因为写法不同
+    误红,但"一次都没被读到"必然是漏接。
+
+    ⚠️ 第一版用 `re.findall(name, src)` 数出现次数 —— 而补接线时留的那句注释
+    「此前 `_run_bag_journal_sweep` 定义了但从未挂进 background」本身就含这个名字,
+    于是把接线拆掉后检查照样打绿。**注释会抵消文本判据**;能拿到 AST 就别数文本
+    (与上面 `_bare_lambda_lines` 那条同一个教训)。
+    """
+    import ast
+
+    defined: dict[str, int] = {}
+    for node in tree.body:
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) and (
+            node.name.startswith("_run") or node.name.endswith("_loop")
+        ):
+            defined[node.name] = node.lineno
+    if not defined:
+        return []
+    referenced = {
+        n.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in defined
+    }
+    return sorted((name, lineno) for name, lineno in defined.items() if name not in referenced)
+
+
+@pytest.mark.parametrize(
+    "path", [p for p in _service_files() if p.name == "main.py"],
+    ids=lambda p: p.parent.name,
+)
+def test_background_runners_are_actually_wired(path: pathlib.Path) -> None:
+    """★ main.py 里定义的 `_run_*` 后台作业必须真的被接进 `background`。
+
+    2026-08-21 实际缺陷:`inventory/main.py` 定义了 `_run_bag_journal_sweep`
+    (对应 Go `cmd/inventory/main.go` 的 `go runBagJournalSweep(...)`),但**从没被
+    append 进 background** —— `bag_journal` 表因此永远不清理,违反 §9.24。
+
+    为什么没有任何现成的闸能抓到它:
+      - ruff 的 F401/F841 只管 import 与局部变量,**模块级函数没人调用不是 lint 错**;
+      - 类型检查同理;
+      - 单测不会去调一个私有 `_run_*`;
+      - 服务照常启动、health 照答 SERVING、日志零行 —— 与"接上了但没到清理时间"
+        在可观测性上完全同形。
+
+    所以判据只能是结构性的:**定义了就必须在别处被引用**。移植 Go `main.go` 时的对应
+    动作是:把每一个 `go xxx(ctx, ...)` 都数出来,逐个确认有 Python 的 background 条目。
+    """
+    import ast
+
+    bad = _unreferenced_runner_defs(ast.parse(path.read_text(encoding="utf-8")))
+    assert not bad, (
+        f"{path.parent.name}/main.py 定义了后台作业却没人引用:{bad} —— "
+        f"这条循环永远不会跑,而服务照常 SERVING、日志零行。"
+        f"接进 server.run(background=[...]) 或删掉它(§14 不留半成品)。"
+    )
+
+
+def test_the_runner_wiring_check_is_not_vacuous() -> None:
+    """★ 金丝雀:上面那条必须真的扫到了 `_run_*` 定义。
+
+    命名约定一变(比如改叫 `_job_*`),判据会对所有服务平静地打绿 —— 与
+    `test_the_background_check_still_recognizes_real_services` 同一类空转风险。
+    """
+    import ast
+
+    mains = [p for p in _service_files() if p.name == "main.py"]
+    total = 0
+    for p in mains:
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        total += sum(
+            1
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
+            and (node.name.startswith("_run") or node.name.endswith("_loop"))
+        )
+    assert total >= 10, f"只扫到 {total} 个后台作业定义 —— 判据自己坏了,上面那条已空转"
+
+
 # ── kafka ProducerConf 只许有一个映射点 ────────────────────────────────
 
 @pytest.mark.parametrize(

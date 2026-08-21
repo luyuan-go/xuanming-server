@@ -18,7 +18,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"os"
@@ -188,19 +187,14 @@ func main() {
 		for name, raw := range bitFiles {
 			files[name] = raw
 		}
-		changed := 0
-		for name, raw := range files {
-			path := filepath.Join(*goOut, name)
-			if prev, err := os.ReadFile(path); err == nil && bytes.Equal(prev, raw) {
-				continue
-			}
-			if err := os.WriteFile(path, raw, 0o644); err != nil {
-				fatalf("写 %s 失败: %v", path, err)
-			}
-			changed++
-			fmt.Printf("[GEN] %s\n", path)
+		changed, err := writeGeneratedFiles(*goOut, files)
+		if err != nil {
+			fatalf("写 Go 表代码失败: %v", err)
 		}
-		if changed == 0 {
+		for _, name := range changed {
+			fmt.Printf("[GEN] %s\n", filepath.Join(*goOut, name))
+		}
+		if len(changed) == 0 {
 			fmt.Printf("Go 表代码无变化(%s,%d 个文件)\n", *goOut, len(files))
 		}
 	}

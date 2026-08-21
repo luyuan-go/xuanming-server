@@ -25,13 +25,16 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 
 from pandora.match.v1 import match_pb2 as matchpb
 
+from pandorapy import cellroute
 from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy import safego
 from pandorapy.services.matchmaker import helpers as h
+from pandorapy.services.matchmaker import region_affinity
 
 START_OPERATION_LEASE_MS = 15_000
 CANONICAL_RECONCILE_EVERY_SEC = 5.0
@@ -532,12 +535,16 @@ class MatchLoopMixin:
     async def _form_matches_in_pool(
         self, tickets: list[matchpb.MatchTicketStorageRecord], now: int
     ) -> None:
-        """在「同一副本(map_id)」的票据组内做单桶贪心。
+        """在「同一副本(map_id)」的票据组内撮合。
 
-        Go 侧还有一层「多 Region 两级撮合」(region 内优先 + 跨 region 溢出),
-        Python 侧未实现 —— 但那条路只在 cell_route.mode 非空时才生效,而
-        pandorapy.config 的 BaseConf 校验器对非空 mode 一律拒启,
-        所以这里不存在"配了却静默按单桶跑"的窗口。
+        单 Cell / dev(router 未注入)走单桶贪心;多 Region 走两级
+        (region 内优先 + 跨 region 溢出兜底)。与 Go 的 `formMatchesInPool` 同构。
+
+        ★ 2026-08-21 补齐:本函数原先**只有**单桶贪心,靠一句
+        「cell_route.mode 非空一律拒启」的注释声称不存在"配了却静默按单桶跑"的窗口。
+        但同日 `pandorapy.config` 补齐 cellroute 装配后那道拒启闸已改成只校验 mode
+        合法性 —— 于是配了多 Region 的部署会**静默退化成单桶**,跨 region 玩家被
+        随意凑进同一局(无比例上限)、久等票据也拿不到溢出兜底,且零错误日志。
         """
         pool_map_id = tickets[0].map_id if tickets else 0
         team_size = self.team_size_for_map(pool_map_id)
@@ -545,6 +552,136 @@ class MatchLoopMixin:
         need = side_count * team_size
         used: set[int] = set()
 
+        # 单 Cell / dev / 阶段 1~2(router 未配)→ 单桶贪心(历史行为,零分区开销)。
+        if self.router is None:
+            await self._greedy_form_matches(tickets, used, now, team_size, side_count, None)
+            return
+
+        # 多 Region(阶段 3)两级撮合(scale-cellular-20m.md §4.4):
+        #  ① region 内优先:按 owner region 分桶,各桶内独立贪心(绝大多数对局同 region)。
+        #  ② 跨 region 溢出:本 region 凑不齐且等待超阈值的剩余票据,进跨 region 兜底贪心,
+        #     且每局受"跨 region 玩家比例软上限"约束(_within_cross_region_cap)。
+        buckets, order = region_affinity.partition_tickets_by_region(tickets, self._ticket_region)
+        for region in order:
+            await self._greedy_form_matches(
+                buckets[region], used, now, team_size, side_count, None
+            )
+
+        # 收集本 region 内未成局的剩余票据(保持 MMR 升序),挑出可溢出者跨 region 兜底撮合。
+        leftover = [t for t in tickets if t.ticket_id not in used]
+        # 本地候选是否充足须基于 region 内撮合**后**的 leftover、按 (region, MMR 桶) 细分判定:
+        # region 总人数足够但本轮同段位/MMR 窗口剩余不足时,久等票据仍应放开跨 region(§2.2)。
+        leftover_totals = region_affinity.leftover_region_bucket_totals(
+            leftover, self._ticket_region, self._ticket_mmr_bucket
+        )
+        overflow = region_affinity.select_overflow_tickets(
+            leftover,
+            self._ticket_region,
+            leftover_totals,
+            self._ticket_mmr_bucket,
+            need,
+            self.region_policy,
+            self._ticket_tier,
+            now,
+        )
+        if overflow:
+            await self._greedy_form_matches(
+                overflow, used, now, team_size, side_count, self._within_cross_region_cap
+            )
+
+    # ── 两级撮合的票据属性解析(router 未配时全部退化为单桶口径)──────────────
+
+    def _ticket_region(self, t: matchpb.MatchTicketStorageRecord) -> int:
+        """一张票据的 owner region(以队长 captain_id 为 owner 锚点)。
+
+        router 为 None(单 Cell / dev)或 route 报错 → 返回 0(未知 / 单桶),不阻断撮合。
+        这里**刻意**不 fail-closed:撮合是可降级的(退化成不分区仍能成局),
+        而 §9.22 要求 fail-closed 的是"玩家数据写到哪个 region"那类权威判定。
+        """
+        if self.router is None or t is None:
+            return 0
+        try:
+            return self.router.route(t.captain_id).region_id
+        except cellroute.CellRouteError:
+            return 0
+
+    def _ticket_tier(self, t: matchpb.MatchTicketStorageRecord) -> int:
+        """票据的段位档(以 avg_mmr 经 region_policy.mmr_tier 计算)。
+
+        高分段档位更高 → 溢出阈值更短(高分段人稀,早点跨 region)。
+        """
+        if t is None:
+            return 0
+        return self.region_policy.mmr_tier(t.avg_mmr)
+
+    def _ticket_mmr_bucket(self, t: matchpb.MatchTicketStorageRecord) -> int:
+        """票据的 MMR 桶(判 local_enough 的分组口径,§2.3)。
+
+        同 region 内须落同一 MMR 桶才算彼此可成局的本地候选。
+        """
+        if t is None:
+            return 0
+        return self.region_policy.mmr_bucket(t.avg_mmr)
+
+    def _within_cross_region_cap(
+        self, group: list[matchpb.MatchTicketStorageRecord]
+    ) -> bool:
+        """跨 region 溢出贪心的成局守卫:一局玩家的 region 分布须满足比例软上限。
+
+        ★ 按**人数**展开(每张票据的 region 重复 len(members) 次)而不是按票数:
+        一张 5 人队和一个单排在比例里的权重必须不同,否则"1 张 5 人本区票 + 1 张
+        单排外区票"会被算成 50% 跨区而误拒。与 Go 的 `withinCrossRegionCap` 同口径。
+        """
+        regions: list[int] = []
+        for t in group:
+            r = self._ticket_region(t)
+            regions.extend([r] * len(t.members))
+        return self.region_policy.within_cross_region_cap(regions)
+
+    def _battle_placement(
+        self, player_ids: list[int]
+    ) -> tuple[region_affinity.CellLocation, bool]:
+        """battle DS 应落的 (region, cell):参战玩家多数所在落点。
+
+        scale-cellular-20m.md §4.4/§5 —— 让多数玩家就近连入。
+        router 为 None(单 Cell / dev)或全部玩家路由失败时返回 ok=False,
+        调用方退化为不带放置提示(由 ds_allocator 默认选 Cell)。绝不阻断成局。
+
+        ★ 单个玩家路由失败只跳过该玩家(continue),不是整体失败:多数派判定本就
+        容忍缺样本,而让一个查不到的 logical_cell 抹掉整局的就近落点是过度 fail-closed。
+        """
+        if self.router is None:
+            return region_affinity.CellLocation(region_id=0, cell_id=0), False
+        locs: list[region_affinity.CellLocation] = []
+        for pid in player_ids:
+            try:
+                loc = self.router.route(pid)
+            except cellroute.CellRouteError:
+                continue
+            locs.append(
+                region_affinity.CellLocation(region_id=loc.region_id, cell_id=loc.cell_id)
+            )
+        return region_affinity.majority_cell_location(locs)
+
+    async def _greedy_form_matches(
+        self,
+        tickets: list[matchpb.MatchTicketStorageRecord],
+        used: set[int],
+        now: int,
+        team_size: int,
+        side_count: int,
+        validate: Callable[[list[matchpb.MatchTicketStorageRecord]], bool] | None,
+    ) -> None:
+        """在给定票据切片(已按 MMR 升序)上做"按 MMR 窗口贪心装箱凑 need"撮合。
+
+        成局即 form_match 并把票据标记进 used。`validate` 非 None 时,装箱成功后还须
+        通过该守卫才成局(跨 region 溢出用它做比例上限校验);None 表示无额外约束
+        (单桶 / region 内)。对应 Go 的 `greedyFormMatches`。
+
+        need 是一局所需**总人数** = 方数 × 每方人数;凑局按人数累加(见下方 total),
+        因此「3 人队 + 2 人散排」与「5 个单排」都能凑满一方,无需额外的拼队机制。
+        """
+        need = side_count * team_size
         for start in range(len(tickets)):
             if tickets[start].ticket_id in used:
                 continue
@@ -572,6 +709,8 @@ class MatchLoopMixin:
             sides, ok = h.bin_pack(group, team_size, side_count)
             if not ok:
                 continue
+            if validate is not None and not validate(group):
+                continue  # 跨 region 比例超上限等约束未过,放弃该组合
             try:
                 await self.form_match(sides)
             except errcode.PandoraError as exc:
@@ -1240,6 +1379,21 @@ class MatchLoopMixin:
                 if failed is not None:
                     await self.fail_match(failed, _failed_match_classifier(failed))
                 return
+
+        # 两级撮合放置(scale-cellular-20m.md §4.4):算出"参战玩家多数所在 region/cell",
+        # 让 battle DS 就近落到该 Cell。当前先作为放置提示落日志(多 region RTT 排障 / 观测);
+        # 把它透传进 AllocateBattleRequest(region_id/cell_id)由 ds_allocator 按 Cell 选 k8s,
+        # 属 proto + 跨服务改动,与 Go 侧同样留待跟进(见 PROGRESS 落地记录)。
+        # router 为 None(单 Cell / dev)时 ok=False,不打印、行为不变。
+        place, place_ok = self._battle_placement(player_ids)
+        if place_ok:
+            plog.get().debug(
+                "battle_placement",
+                match_id=job.match_id,
+                region_id=place.region_id,
+                cell_id=place.cell_id,
+                players=len(player_ids),
+            )
 
         allocation, checkpointed = h.allocation_from_match(job)
         if job.HasField("battle_target") and not checkpointed:

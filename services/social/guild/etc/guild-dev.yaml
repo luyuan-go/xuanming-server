@@ -48,7 +48,7 @@ guild:
   max_group_members: 50
   # max_name_len: 公会 / 群名最大长度(utf8 rune,默认 24)
   max_name_len: 24
-  # rate_quota_per_min: 入会申请的 per-player 每分钟频率配额(anti-abuse §6 筬 6 项)。
+  # rate_quota_per_min: 入会申请的 per-player 每分钟频率配额(anti-abuse §6 第 6 项)。
   #   与 max_pending_requests_per_guild 总量闸正交,挡「申满 → 撤 → 再申」写放大循环。
   #   显式写出而不依赖代码默认值:Go 与 Python 两栈各持一份默认(10),只改一侧
   #   会在灰度期让同一玩家在两种副本上限额不同且两边日志都正常。

@@ -40,6 +40,9 @@ team:
   active_ttl: "60m"
   max_members: 5
   optimistic_retry: 3
+  # 申请/邀请 per-player 每分钟频率配额。与 team-dev.yaml 保持一致;
+  # 判据是 `== 0`(负值 = 显式关闭),删掉本行会退回代码默认 12。
+  rate_quota_per_min: 60
   # 离队/踢人联动撤销匹配票据(弱依赖,留空则不联动)
   matchmaker_addr: "matchmaker.pandora.svc.cluster.local:20011"
   # team→login 内部批量解析角色展示编号；密钥须与 login 入站配置一致且独立随机。

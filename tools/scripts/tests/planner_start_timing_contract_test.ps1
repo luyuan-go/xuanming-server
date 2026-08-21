@@ -26,7 +26,7 @@ $summary = $lines -join "`n"
 Assert-Contains $summary '^策划一键启动耗时汇总' '汇总必须有稳定标题'
 Assert-Contains $summary '(?m)^\[耗时\]\s+环境检查\s+1\.23 秒\s+完成\s*$' '成功步骤应换算成两位小数秒'
 Assert-Contains $summary '(?m)^\[耗时\]\s+基础设施·Kafka\s+9\.88 秒\s+失败\s+listener timeout\s*$' '失败步骤也必须保留耗时与原因'
-Assert-Contains $summary '基础设施组件是并行启动，单项耗时不可相加' '汇总必须说明并行明细不可相加'
+Assert-Contains $summary '导表、staging build、基础设施以及部分迁移会重叠' '汇总必须说明并行明细不可相加'
 Assert-Contains $summary '(?m)^\[耗时\]\s+总计\s+11\.11 秒\s*$' '汇总必须包含总耗时'
 
 Stop-PandoraPlannerTimingSession

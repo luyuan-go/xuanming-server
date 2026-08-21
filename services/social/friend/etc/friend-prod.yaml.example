@@ -35,6 +35,9 @@ kafka:
 
 friend:
   max_friends: 200
+  # 好友申请 per-player 每分钟频率配额。与 friend-dev.yaml 保持一致;
+  # 判据是 `== 0`(负值 = 显式关闭),删掉本行会退回代码默认 10。
+  rate_quota_per_min: 60
   locator_addr: "player-locator:20006"
   player_name_resolver_addr: "player.pandora.svc.cluster.local:20002"
   player_name_resolver_auth_secret: "__FRIEND_PLAYER_NAME_RESOLVE_AUTH_SECRET_32B_CHANGE_ME__"

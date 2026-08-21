@@ -94,7 +94,8 @@ function Get-PandoraPlannerTimingSummaryLines {
         '[耗时] {0}  {1} 秒  {2}{3}' -f $row.Name,
             (Format-PandoraPlannerSeconds ([int64]$row.ElapsedMilliseconds)), $row.Status, $suffix
     }
-    '[耗时] 注：基础设施组件是并行启动，单项耗时不可相加；请以“基础设施总计”和“总计”为准。'
+    '[耗时] 注：导表、staging build、基础设施以及部分迁移会重叠；基础设施组件也并行，单项耗时不可相加。'
+    '[耗时] 注：请以“并行准备总计”“基础设施总计”和“总计”的墙钟耗时为准。'
     '[耗时] 总计  {0} 秒' -f (Format-PandoraPlannerSeconds $TotalElapsedMilliseconds)
 }
 

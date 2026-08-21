@@ -43,6 +43,7 @@ from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy import mysqlx
 from pandorapy.services.inventory import bag_apply as bapply
+from pandorapy.services.inventory import bag_migration as bmig
 from pandorapy.services.inventory import repo_sql as rsql
 
 # 一小时滑窗额度用的 SQL 片段与 Go 逐字相同(NOW() 由服务端时钟裁决,不信调用方)。
@@ -206,7 +207,7 @@ def effective_capacity_fn(base: bapply.CapacityFn, extras: dict[int, int]) -> ba
     return _eff
 
 
-class MySQLBagRepo:
+class MySQLBagRepo(bmig.BagSeederMixin):
     """基于 asyncmy 连接池的背包域仓储。对应 Go 的 MySQLBagRepo。
 
     ★ 池必须以 **autocommit=True** 建(见 main.py):与 Go 的 database/sql 默认语义一致;

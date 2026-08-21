@@ -53,7 +53,11 @@ param(
     [ValidateSet('up', 'down', 'status', 'provision', 'reset')]
     [string]$Action = 'up',
 
-    [switch]$Force
+    [switch]$Force,
+
+    # 仅供同一 runspace 的策划启动协调器使用。组件完成 exact listener + 协议探活后调用，
+    # 让 MySQL 就绪即可触发 migration，而不必等待 Redis/Kafka/Envoy 全部完成。
+    [scriptblock]$OnPlannerComponentReady
 )
 
 $ErrorActionPreference = 'Stop'
@@ -986,6 +990,7 @@ function New-PlannerInfraStartState {
         Ready = $false
         ReadyAtMilliseconds = [int64]0
         FinishedAtMilliseconds = [int64]0
+        CompletionHandled = $false
         Failure = ''
     }
 }
@@ -2019,9 +2024,12 @@ function Start-LocalMysql {
             -MysqlProcessId $owned.Id -MysqlExecutable $owned.Path -MysqlDefaultsFile (Get-MysqlIniPath) | Out-Null
         Write-Ok "MySQL :$MysqlPort 已在运行(归属与账号已验证)"
         if ($DeferReady) {
-            Add-PandoraPlannerTiming -Name '基础设施·MySQL' `
-                -ElapsedMilliseconds ([Environment]::TickCount64 - $componentStartedAt) `
-                -Status '复用' -Detail '已在运行'
+            $existingState = New-PlannerInfraStartState -Name 'mysql' -Ports @($MysqlPort) `
+                -Process $owned -TimeoutSeconds 90 -ListenerOwnerKind direct `
+                -ExpectedExecutable $owned.Path -RequiredCommandLineTokens @(
+                    (Get-MysqlIniPath), '--no-monitor') -Reused $true `
+                -StartedAtMilliseconds $componentStartedAt
+            Assert-PlannerInfraExistingState $existingState
         }
         return
     }
@@ -2548,6 +2556,35 @@ function Add-PlannerInfraStateTiming($State, [string]$Status, [string]$Detail = 
         -Status $Status -Detail $Detail
 }
 
+function Complete-PlannerInfraReadyState($State) {
+    if ([bool]$State.CompletionHandled) { return }
+    $status = '失败'
+    $detail = '组件就绪后的协议探活/收尾失败'
+    try {
+        Complete-PlannerInfraStartState $State
+        if ($null -ne $OnPlannerComponentReady) {
+            $null = & $OnPlannerComponentReady $State
+        }
+        $status = if ([bool]$State.Reused) { '复用' } else { '完成' }
+        $detail = if ([bool]$State.Reused) { '已在运行' } else { '' }
+    } catch {
+        $detail = "$detail`:$($_.Exception.Message)"
+        throw
+    } finally {
+        # callback 是就绪边的一部分：只有协议探活和上层触发都完成，组件才真正可供后续依赖使用。
+        $State.FinishedAtMilliseconds = [Environment]::TickCount64
+        $State.CompletionHandled = $true
+        Add-PlannerInfraStateTiming -State $State -Status $status -Detail $detail
+    }
+}
+
+function Invoke-PlannerExternalComponentReady([string]$Name) {
+    if ($null -eq $OnPlannerComponentReady) { return }
+    $null = & $OnPlannerComponentReady ([pscustomobject]@{
+            Name = $Name; Reused = $false; CompletionHandled = $true
+        })
+}
+
 function Invoke-PlannerInfraFastStart {
     $batchStartedAt = [Environment]::TickCount64
     $launchers = [Collections.Generic.List[scriptblock]]::new()
@@ -2566,10 +2603,17 @@ function Invoke-PlannerInfraFastStart {
             return Test-PlannerInfraStateReady -State $State -Listeners $Listeners
         } -OnFailure {
             param($State, [string]$Reason)
-            Add-PlannerInfraStateTiming -State $State -Status '失败' -Detail $Reason
+            if (-not $State.PSObject.Properties['CompletionHandled'] -or -not [bool]$State.CompletionHandled) {
+                Add-PlannerInfraStateTiming -State $State -Status '失败' -Detail $Reason
+            }
             if ($Reason -eq 'process-exited') {
                 $exitCode = try { $State.Process.ExitCode } catch { '?' }
                 Write-Err "$($State.Name) 启动后立即退出 (exit $exitCode)。"
+            } elseif ($Reason -eq 'ready-callback-failed') {
+                $callbackMessage = if ($State.PSObject.Properties['FailureException']) {
+                    $State.FailureException.Exception.Message
+                } else { '未知错误' }
+                Write-Err "$($State.Name) listener 就绪后的协议探活/依赖触发失败:$callbackMessage"
             } else {
                 Write-Err "$($State.Name) 在 $([int]($State.TimeoutMilliseconds / 1000))s 内没有完成精确 listener 归属验证:$($State.Ports -join ',')。"
             }
@@ -2578,6 +2622,7 @@ function Invoke-PlannerInfraFastStart {
             param([int]$Milliseconds)
             Start-Sleep -Milliseconds $Milliseconds
         } -GetElapsedMilliseconds { return [int64][Environment]::TickCount64 } `
+        -OnReady { param($State) Complete-PlannerInfraReadyState $State } `
         -StopOnFirstFailure -PollMilliseconds 100)
 
     $infraFailed = $false
@@ -2586,24 +2631,20 @@ function Invoke-PlannerInfraFastStart {
             $infraFailed = $true
             $failureDetail = if ($state.Failure -eq 'batch-aborted') {
                 '同批其他组件失败，停止等待'
+            } elseif ($state.Failure -eq 'ready-callback-failed' -and $state.PSObject.Properties['FailureException']) {
+                "协议探活/依赖触发失败:$($state.FailureException.Exception.Message)"
             } else { [string]$state.Failure }
-            Add-PlannerInfraStateTiming -State $state -Status '失败' -Detail $failureDetail
+            if (-not [bool]$state.CompletionHandled) {
+                Add-PlannerInfraStateTiming -State $state -Status '失败' -Detail $failureDetail
+            }
             continue
         }
-        $status = '失败'
-        $detail = '组件就绪后的协议探活/收尾失败'
-        try {
-            Complete-PlannerInfraStartState $state
-            $status = if ([bool]$state.Reused) { '复用' } else { '完成' }
-            $detail = if ([bool]$state.Reused) { '已在运行' } else { '' }
-        } catch {
-            $infraFailed = $true
-            $detail = "${detail}:$($_.Exception.Message)"
-        } finally {
-            # listener ready 之后还有 Redis PING / MySQL SELECT 1 / Envoy 指纹落盘；
-            # 成功与失败都在收尾完成后封口，避免明细漏时。
-            $state.FinishedAtMilliseconds = [Environment]::TickCount64
-            Add-PlannerInfraStateTiming -State $state -Status $status -Detail $detail
+        if (-not [bool]$state.CompletionHandled) {
+            try {
+                Complete-PlannerInfraReadyState $state
+            } catch {
+                $infraFailed = $true
+            }
         }
     }
     if ($infraFailed) { exit 1 }
@@ -2635,10 +2676,14 @@ function Invoke-Up {
     } else {
         if (-not $CentralMysqlManaged) {
             Invoke-PandoraPlannerTimedStep -Name '基础设施·MySQL' -Action { Start-LocalMysql }
+            Invoke-PlannerExternalComponentReady 'mysql'
         }
         Invoke-PandoraPlannerTimedStep -Name '基础设施·Redis' -Action { Start-LocalRedis }
+        Invoke-PlannerExternalComponentReady 'redis'
         Invoke-PandoraPlannerTimedStep -Name '基础设施·Kafka' -Action { Start-LocalKafka }
+        Invoke-PlannerExternalComponentReady 'kafka'
         Invoke-PandoraPlannerTimedStep -Name '基础设施·Envoy' -Action { Start-LocalEnvoy }
+        Invoke-PlannerExternalComponentReady 'envoy'
     }
     Write-Host ''
     Write-Host '  本机基础设施已就绪(免 Docker)' -ForegroundColor Green

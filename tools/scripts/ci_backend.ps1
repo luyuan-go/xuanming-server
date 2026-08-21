@@ -255,6 +255,8 @@ $contractTests = @(
     'tools/scripts/tests/dev_migrate_planner_fast_contract_test.ps1'
     # 策划已安装基础设施的冷启动：批量 launch、共享 listener 轮询与 direct/Kafka-child exact owner。
     'tools/scripts/tests/localinfra_planner_parallel_start_contract_test.ps1'
+    # 策划并行准备：exact child 真实耗时/有界 drain、投机构建稳定重试与生产依赖接线。
+    'tools/scripts/tests/planner_parallel_prepare_contract_test.ps1'
     # SVN 带包时全程离线、Git 空目录时逐项联网；所有本地来源仍必须过固定 SHA256。
     'tools/scripts/tests/localinfra_bundled_packages_contract_test.ps1'
     # 免 Go 策划机必须随发布包拿到 pandora-migrate.exe；否则旧数据目录会跳过增量迁移。

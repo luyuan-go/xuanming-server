@@ -26,7 +26,11 @@ param(
 
     # 本轮 -GenTables 的强指纹是否确认产物发生变化。默认 false，普通入口行为不变；
     # run_services 用它把读表服务纳入选择性重启集合。
-    [switch]$ConfigTableChanged
+    [switch]$ConfigTableChanged,
+
+    # 只由策划 fast 入口传入：导表与业务 staging build、基础设施启动并行。
+    # 普通 dev_all 调用仍由 start.ps1 在进入本脚本前完成导表。
+    [switch]$GenerateTables
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,7 +38,76 @@ $ScriptDir = $PSScriptRoot
 . (Join-Path $ScriptDir 'lib/local_infra_state.ps1')
 . (Join-Path $ScriptDir 'lib/planner_mysql_startup.ps1')
 . (Join-Path $ScriptDir 'lib/planner_start_timing.ps1')
+. (Join-Path $ScriptDir 'lib/planner_parallel_prepare.ps1')
 $projectRoot = (Resolve-Path "$ScriptDir/../..").Path
+
+function Get-PlannerConfigTableDistIdentity {
+    $manifestPath = Join-Path $projectRoot 'configtable/dist/manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return $null }
+    try {
+        # version 是 SVN revision；本地尚未提交的 xlsx 变化仍可能沿用同一 revision。
+        # manifest 内含逐表 checksum，绑定整份 manifest 才能识别真实内容变化。
+        return (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash
+    } catch { return $null }
+}
+
+function Get-PlannerConfigTableGenerationIdentity {
+    # speculative build 与导表会并发读取/写入 pkg/configtable。只跟踪生成器可能改动且
+    # Go build 会读取的代码：所有 *.gen.go（含 tables.gen.go / *_bitindex.gen.go）以及
+    # 每张表缺失时才创建的 <name>.go companion。纯 dist JSON/manifest 由上面的 dist
+    # identity 单独驱动消费者重启，不应让一个数据值变化作废已完成的 Go staging build。
+    $paths = [Collections.Generic.List[string]]::new()
+    $goDir = Join-Path $projectRoot 'pkg/configtable'
+    if (Test-Path -LiteralPath $goDir -PathType Container) {
+        foreach ($item in @(Get-ChildItem -LiteralPath $goDir -File -Filter '*.gen.go' | Sort-Object FullName)) {
+            $paths.Add($item.FullName)
+            $tableMatch = [regex]::Match($item.Name, '^(?<name>.+)_table\.gen\.go$',
+                [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+            if (-not $tableMatch.Success) { continue }
+            $companion = Join-Path $goDir ($tableMatch.Groups['name'].Value + '.go')
+            if (Test-Path -LiteralPath $companion -PathType Leaf) { $paths.Add($companion) }
+        }
+    }
+    $hash = [Security.Cryptography.IncrementalHash]::CreateHash(
+        [Security.Cryptography.HashAlgorithmName]::SHA256)
+    try {
+        foreach ($path in @($paths | Sort-Object)) {
+            $relative = [IO.Path]::GetRelativePath($projectRoot, $path).Replace('\', '/')
+            $hash.AppendData([Text.Encoding]::UTF8.GetBytes($relative))
+            $hash.AppendData([byte[]]@(0))
+            $hash.AppendData([IO.File]::ReadAllBytes($path))
+            $hash.AppendData([byte[]]@(0))
+        }
+        return [Convert]::ToHexString($hash.GetHashAndReset())
+    } finally {
+        $hash.Dispose()
+    }
+}
+
+function Remove-PlannerPreparationOrphanStages($Handle) {
+    if ($null -eq $Handle -or "$($Handle.Name)" -notlike 'build*' -or $null -eq $Handle.Process) { return }
+    $workerPid = [int]$Handle.Process.Id
+    if ($workerPid -le 0) { throw "无效的 build worker PID:$workerPid" }
+    $binDir = [IO.Path]::GetFullPath((Join-Path $projectRoot 'run/dev/bin'))
+    if (-not (Test-Path -LiteralPath $binDir -PathType Container)) { return }
+    $exactPattern = '^\.[A-Za-z0-9_]+\.planner-stage-' + [regex]::Escape("$workerPid") +
+        '-[0-9a-fA-F]{32}\.exe$'
+    foreach ($candidate in @(Get-ChildItem -LiteralPath $binDir -File -Force -ErrorAction Stop)) {
+        if ($candidate.Name -cnotmatch $exactPattern -or
+            -not [string]::Equals($candidate.Directory.FullName, $binDir, [StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        Remove-Item -LiteralPath $candidate.FullName -Force -ErrorAction Stop
+    }
+}
+
+$plannerTableHandle = $null
+$plannerBuildHandle = $null
+$plannerMigrationContext = [pscustomobject]@{ Handle = $null }
+$plannerPreparedBuildManifest = ''
+$plannerPreparedBuildConsumed = $false
+$plannerParallelPrepareStartedAt = 0L
+$plannerParallelPrepareRecorded = $false
 
 Enter-PandoraOrchestrationLock -ProjectRoot $projectRoot -Operation $(if ($Down) { '完整停止' } else { '完整启动' })
 try {
@@ -72,10 +145,76 @@ if ($NoDocker) {
     # 端口权威与“业务服务已经应用的端口”是两件事。只有完整服务启动成功才更新后者；
     # 即使上轮在基础设施启动后半途失败，下轮也仍会强制刷新旧 DSN 进程。
     $appliedMysql = Get-PandoraServiceAppliedMysqlState $projectRoot
+    # 策划一键是完整服务集合；调试用 -Exclude 保持原路径，避免 prepared manifest 与
+    # 随后 activation 的目标集合不一致。
+    $plannerParallelEnabled = $env:PANDORA_PLANNER_FAST_START -ceq '1' -and $Exclude.Count -eq 0
+    $tableVersionBefore = $null
+    $generationIdentityBefore = $null
+    if ($plannerParallelEnabled) {
+        $plannerParallelPrepareStartedAt = [Environment]::TickCount64
+        $pwshExe = Join-Path $PSHOME 'pwsh.exe'
+        if (-not (Test-Path -LiteralPath $pwshExe -PathType Leaf)) {
+            throw "策划并行准备找不到当前 PowerShell:$pwshExe"
+        }
+        if ($GenerateTables) {
+            $tableVersionBefore = Get-PlannerConfigTableDistIdentity
+            $generationIdentityBefore = Get-PlannerConfigTableGenerationIdentity
+            $plannerTableHandle = Start-PandoraPlannerPreparationProcess -Name tables -FilePath $pwshExe `
+                -WorkingDirectory $projectRoot -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                    (Join-Path $ScriptDir 'configtable_gen.ps1'), '-SkipIfInputsUnchanged'
+                )
+            Write-Host '  [parallel] 导表已启动；与 build/基础设施重叠执行。' -ForegroundColor DarkCyan
+        }
+
+        $prepareDir = Join-Path $projectRoot 'run/localinfra/tmp'
+        New-Item -ItemType Directory -Force -Path $prepareDir | Out-Null
+        $plannerPreparedBuildManifest = Join-Path $prepareDir (
+            'planner-build-prepared-{0}-{1}.json' -f $PID, [guid]::NewGuid().ToString('N'))
+        $buildArguments = [Collections.Generic.List[string]]::new()
+        foreach ($argument in @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                (Join-Path $ScriptDir 'run_services.ps1'), '-Action', 'prepare',
+                '-FastExistingProbe', '-PreparedBuildManifestPath', $plannerPreparedBuildManifest
+            )) { $buildArguments.Add($argument) }
+        $plannerBuildHandle = Start-PandoraPlannerPreparationProcess -Name build -FilePath $pwshExe `
+            -WorkingDirectory $projectRoot -ArgumentList $buildArguments.ToArray()
+        Write-Host '  [parallel] 业务 staging build 已启动；不会覆盖正在运行的 exe。' -ForegroundColor DarkCyan
+    } elseif ($GenerateTables) {
+        throw '-GenerateTables 只允许不带 -Exclude 的策划 fast 完整启动入口使用。'
+    }
+
+    $infraReadyCallback = $null
+    if ($plannerParallelEnabled -and -not $centralManaged) {
+        $infraReadyCallback = {
+            param($State)
+            if ("$($State.Name)" -cne 'mysql') { return }
+            if ($null -ne $plannerMigrationContext.Handle) {
+                throw 'MySQL ready callback 被重复调用；拒绝启动第二个 migration worker。'
+            }
+            $migrationPort = Get-PandoraLocalMysqlPort $projectRoot -Required
+            $mysqlClient = Get-ChildItem -Path (Join-Path $ScriptDir '../../run/localinfra/dist/mysql') `
+                -Recurse -File -Filter 'mysql.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $mysqlClient) { throw 'MySQL 已就绪，但找不到本机 mysql.exe，无法启动迁移。' }
+            $plannerMigrationContext.Handle = Start-PandoraPlannerPreparationProcess -Name migration `
+                -FilePath $pwshExe -WorkingDirectory $projectRoot -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                    (Join-Path $ScriptDir 'dev_migrate.ps1'), '-MysqlClient', $mysqlClient.FullName,
+                    '-MysqlPort', "$migrationPort", '-RequireMysql'
+                )
+            Write-Host '  [parallel] MySQL 已通过协议探活；migration 与其余基础设施继续重叠。' `
+                -ForegroundColor DarkCyan
+        }.GetNewClosure()
+    }
+
     $infraWatch = [Diagnostics.Stopwatch]::StartNew()
     $infraStatus = '失败'
     try {
-        & "$ScriptDir/local_infra.ps1" -Action up
+        if ($null -ne $infraReadyCallback) {
+            & "$ScriptDir/local_infra.ps1" -Action up -OnPlannerComponentReady $infraReadyCallback
+        } else {
+            & "$ScriptDir/local_infra.ps1" -Action up
+        }
         $infraExitCode = $LASTEXITCODE
         if ($infraExitCode -eq 0) { $infraStatus = '完成' }
     } finally {
@@ -86,6 +225,60 @@ if ($NoDocker) {
     if ($infraExitCode -ne 0) {
         Write-Host "[ERR] 本机基础设施启动失败,中止" -ForegroundColor Red
         exit 1
+    }
+
+    if ($plannerParallelEnabled) {
+        $generationIdentityChanged = $false
+        if ($plannerTableHandle) {
+            $tableResult = Complete-PandoraPlannerPreparationProcess -Handle $plannerTableHandle `
+                -TimeoutMilliseconds 300000 -WriteOutput
+            Add-PandoraPlannerTiming -Name '导表' -ElapsedMilliseconds $tableResult.ElapsedMilliseconds `
+                -Status $(if ($tableResult.ExitCode -eq 0) { '完成' } else { '失败' })
+            if ($tableResult.ExitCode -ne 0) {
+                Write-Host '[ERR] 并行导表失败；不会发布二进制或启动业务服务。' -ForegroundColor Red
+                exit 1
+            }
+            $plannerTableHandle = $null
+            $tableVersionAfter = Get-PlannerConfigTableDistIdentity
+            $ConfigTableChanged = $null -eq $tableVersionAfter -or $tableVersionBefore -cne $tableVersionAfter
+            $generationIdentityAfter = Get-PlannerConfigTableGenerationIdentity
+            $generationIdentityChanged = $generationIdentityBefore -cne $generationIdentityAfter
+        }
+
+        $buildResult = Complete-PandoraPlannerPreparationProcess -Handle $plannerBuildHandle `
+            -TimeoutMilliseconds 900000 -WriteOutput
+        $buildDisposition = Get-PandoraPlannerSpeculativeBuildDisposition `
+            -GenerationIdentityChanged $generationIdentityChanged -ExitCode $buildResult.ExitCode `
+            -DrainCompleted $buildResult.DrainCompleted
+        $initialBuildStatus = if ($buildDisposition -ceq 'retry-stable-once') { '作废' } elseif ($buildResult.ExitCode -eq 0) {
+            '完成'
+        } else { '失败' }
+        $initialBuildDetail = if ($buildDisposition -ceq 'retry-stable-once') { '导表改变生成态，稳定后重编' } else { '' }
+        Add-PandoraPlannerTiming -Name '业务程序·并行 staging build' `
+            -ElapsedMilliseconds $buildResult.ElapsedMilliseconds `
+            -Status $initialBuildStatus -Detail $initialBuildDetail
+        if ($buildDisposition -ceq 'fail-unbounded') {
+            Write-Host "[ERR] 并行 staging build 未能有界收口:$($buildResult.DrainError)" -ForegroundColor Red
+            exit 1
+        }
+
+        if ($buildDisposition -ceq 'retry-stable-once') {
+            # 首轮 build 是投机结果：无论成功/失败，只要导表改变了生成 Go/companion 文件，
+            # 都不能把它当权威结果。完成 exact worker 回收后清 staging，并只在稳定输入上重建一次。
+            Remove-PlannerPreparationOrphanStages $plannerBuildHandle
+            & "$ScriptDir/run_services.ps1" -Action discard `
+                -PreparedBuildManifestPath $plannerPreparedBuildManifest
+            if ($LASTEXITCODE -ne 0) { throw '无法安全丢弃导表期间的 speculative staging build。' }
+            $plannerBuildHandle = $null
+            $plannerBuildHandle = Start-PandoraPlannerPreparationProcess -Name build-after-tables `
+                -FilePath $pwshExe -WorkingDirectory $projectRoot -ArgumentList $buildArguments.ToArray()
+            Write-Host '  [parallel] 导表改变生成态；稳定 target 重编与数据库迁移继续重叠。' -ForegroundColor DarkCyan
+        } elseif ($buildDisposition -ceq 'fail') {
+            Write-Host '[ERR] 并行 staging build 失败；正式 exe/运行中服务均未改动。' -ForegroundColor Red
+            exit 1
+        } else {
+            $plannerBuildHandle = $null
+        }
     }
     $mysqlPort = if ($centralManaged) { [int]$mysqlContext.Profile.endpoint.port } else {
         Get-PandoraLocalMysqlPort $projectRoot -Required
@@ -117,16 +310,33 @@ if ($NoDocker) {
 
     Write-Host ""
     Write-Host "===== [2/3] 数据库结构 =====" -ForegroundColor Cyan
-    $schemaWatch = [Diagnostics.Stopwatch]::StartNew()
-    $schemaStatus = '失败'
-    try {
-        if ($centralManaged) {
-            # 中心 provisioner 只有 READY 才发凭据；本机不再拥有 migration 写权。
-            # run_services 会用 verify-only 做 schema/权限/TLS 预检，不对中心库执行变更。
-            Write-Host '[ OK ] 中心 workspace 已 READY；跳过本机 MySQL 迁移。' -ForegroundColor Green
-            $schemaStatus = '跳过'
-        } else {
-            # 免 Docker本机模式用 local_infra 备料的 mysql.exe 作客户端。
+    if ($centralManaged) {
+        # 中心 provisioner 只有 READY 才发凭据；本机不再拥有 migration 写权。
+        # run_services 会用 verify-only 做 schema/权限/TLS 预检，不对中心库执行变更。
+        Write-Host '[ OK ] 中心 workspace 已 READY；跳过本机 MySQL 迁移。' -ForegroundColor Green
+        Add-PandoraPlannerTiming -Name '数据库结构校验/迁移' -ElapsedMilliseconds 0 -Status '跳过'
+    } elseif ($plannerParallelEnabled) {
+        $migrationHandle = $plannerMigrationContext.Handle
+        if ($null -eq $migrationHandle) {
+            Add-PandoraPlannerTiming -Name '数据库结构校验/迁移' -ElapsedMilliseconds 0 -Status '失败' `
+                -Detail 'MySQL ready 后没有建立 migration worker'
+            throw 'MySQL 已就绪，但 migration worker 未启动；拒绝带旧结构继续。'
+        }
+        $migrationResult = Complete-PandoraPlannerPreparationProcess -Handle $migrationHandle `
+            -TimeoutMilliseconds 600000 -WriteOutput
+        Add-PandoraPlannerTiming -Name '数据库结构校验/迁移' `
+            -ElapsedMilliseconds $migrationResult.ElapsedMilliseconds `
+            -Status $(if ($migrationResult.ExitCode -eq 0) { '完成' } else { '失败' })
+        if ($migrationResult.ExitCode -ne 0 -or -not $migrationResult.DrainCompleted) {
+            Write-Host '[ERR] 并行数据库结构升级失败；不会发布二进制或启动业务服务。' -ForegroundColor Red
+            exit 1
+        }
+        $plannerMigrationContext.Handle = $null
+    } else {
+        $schemaWatch = [Diagnostics.Stopwatch]::StartNew()
+        $schemaStatus = '失败'
+        try {
+            # 免 Docker 本机普通路径用 local_infra 备料的 mysql.exe 作客户端。
             $mysqlClient = Get-ChildItem -Path (Join-Path $ScriptDir '../../run/localinfra/dist/mysql') `
                 -Recurse -File -Filter 'mysql.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $mysqlClient) {
@@ -139,11 +349,32 @@ if ($NoDocker) {
                 exit 1
             }
             $schemaStatus = '完成'
+        } finally {
+            $schemaWatch.Stop()
+            Add-PandoraPlannerTiming -Name '数据库结构校验/迁移' `
+                -ElapsedMilliseconds $schemaWatch.ElapsedMilliseconds -Status $schemaStatus
         }
-    } finally {
-        $schemaWatch.Stop()
-        Add-PandoraPlannerTiming -Name '数据库结构校验/迁移' `
-            -ElapsedMilliseconds $schemaWatch.ElapsedMilliseconds -Status $schemaStatus
+    }
+
+    if ($plannerBuildHandle) {
+        $stableBuildResult = Complete-PandoraPlannerPreparationProcess -Handle $plannerBuildHandle `
+            -TimeoutMilliseconds 900000 -WriteOutput
+        Add-PandoraPlannerTiming -Name '业务程序·导表后目标重编' `
+            -ElapsedMilliseconds $stableBuildResult.ElapsedMilliseconds `
+            -Status $(if ($stableBuildResult.ExitCode -eq 0) { '完成' } else { '失败' })
+        if ($stableBuildResult.ExitCode -ne 0 -or -not $stableBuildResult.DrainCompleted) {
+            Write-Host '[ERR] 导表后目标重编失败；不会发布二进制或启动业务服务。' -ForegroundColor Red
+            exit 1
+        }
+        $plannerBuildHandle = $null
+    }
+    if ($plannerParallelEnabled -and -not $plannerParallelPrepareRecorded) {
+        $parallelPrepareElapsed = [Math]::Max([int64]0,
+            [Environment]::TickCount64 - [int64]$plannerParallelPrepareStartedAt)
+        Add-PandoraPlannerTiming -Name '并行准备总计' -ElapsedMilliseconds $parallelPrepareElapsed
+        $plannerParallelPrepareRecorded = $true
+        Write-Host ("[perf] planner-parallel-prepare wall_ms={0} tables_build_infra_migration=overlapped" -f `
+                $parallelPrepareElapsed) -ForegroundColor DarkGray
     }
 
     Write-Host ""
@@ -153,9 +384,13 @@ if ($NoDocker) {
     try {
         & "$ScriptDir/run_services.ps1" -Exclude $Exclude -SocialOnMysql -NoDocker -MysqlPort $mysqlPort `
             -FastExistingProbe:($env:PANDORA_PLANNER_FAST_START -eq '1') `
-            -ConfigTableChanged:$ConfigTableChanged
+            -ConfigTableChanged:$ConfigTableChanged `
+            -PreparedBuildManifestPath $plannerPreparedBuildManifest
         $servicesExitCode = $LASTEXITCODE
-        if ($servicesExitCode -eq 0) { $servicesStatus = '完成' }
+        if ($servicesExitCode -eq 0) {
+            $servicesStatus = '完成'
+            $plannerPreparedBuildConsumed = $true
+        }
     } finally {
         $servicesWatch.Stop()
         Add-PandoraPlannerTiming -Name '业务程序启动' `
@@ -201,5 +436,33 @@ Write-Host "===== [4/4] 业务服务 =====" -ForegroundColor Cyan
 & "$ScriptDir/run_services.ps1" -Exclude $Exclude -ConfigTableChanged:$ConfigTableChanged
 exit $LASTEXITCODE
 } finally {
+    $plannerCleanupErrors = [Collections.Generic.List[string]]::new()
+    foreach ($handle in @($plannerTableHandle, $plannerBuildHandle, $plannerMigrationContext.Handle)) {
+        if ($null -eq $handle) { continue }
+        try {
+            if (-not (Stop-PandoraPlannerPreparationProcess -Handle $handle -DrainTimeoutMilliseconds 5000)) {
+                $plannerCleanupErrors.Add("worker $($handle.Name) 未在 5 秒内退出")
+            } else {
+                Remove-PlannerPreparationOrphanStages $handle
+            }
+        } catch {
+            $plannerCleanupErrors.Add("worker $($handle.Name) 回收失败:$($_.Exception.Message)")
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($plannerPreparedBuildManifest) -and
+        -not $plannerPreparedBuildConsumed) {
+        try {
+            & "$ScriptDir/run_services.ps1" -Action discard `
+                -PreparedBuildManifestPath $plannerPreparedBuildManifest
+            if ($LASTEXITCODE -ne 0) {
+                $plannerCleanupErrors.Add("staging 清理返回退出码 $LASTEXITCODE")
+            }
+        } catch {
+            $plannerCleanupErrors.Add("staging 清理失败:$($_.Exception.Message)")
+        }
+    }
     Exit-PandoraOrchestrationLock
+    if ($plannerCleanupErrors.Count -gt 0) {
+        throw "策划并行准备清理不完整:$($plannerCleanupErrors -join ' | ')"
+    }
 }

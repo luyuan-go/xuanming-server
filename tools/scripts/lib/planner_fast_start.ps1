@@ -523,6 +523,85 @@ function Test-PandoraPlannerAppliedReceipt {
     }
 }
 
+function Get-PandoraPlannerRuntimeInputFingerprint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$TargetFingerprint,
+        [Parameter(Mandatory)][string]$SourceConfigPath,
+        [AllowEmptyCollection()][string[]]$AdditionalInputPaths = @(),
+        [AllowEmptyCollection()][string[]]$EnvironmentNames = @(),
+        [scriptblock]$GetEnvironmentValue = { param([string]$Name) [Environment]::GetEnvironmentVariable($Name, 'Process') }
+    )
+    Set-StrictMode -Version Latest
+
+    $secretNamePattern = '(?i)(PASSWORD|PASSWD|TOKEN|SECRET|CREDENTIAL|PRIVATE|API[_-]?KEY|DSN|USERNAME|(?:^|_)USER(?:_|$)|(?:^|_)KEY(?:_|$))'
+    $files = @($SourceConfigPath) + @($AdditionalInputPaths)
+    $descriptors = [Collections.Generic.List[string]]::new()
+    foreach ($path in @($files | Where-Object { $_ } | Sort-Object -Unique)) {
+        $full = [IO.Path]::GetFullPath($path)
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "runtime 指纹输入不存在:$full" }
+        $hash = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
+        $descriptors.Add("file:$([IO.Path]::GetFileName($full)):$hash")
+    }
+    foreach ($name in @($EnvironmentNames | Where-Object { $_ } | Sort-Object -Unique)) {
+        if ($name -cnotmatch '^[A-Z][A-Z0-9_]*$') { throw "runtime 指纹环境变量名非法:$name" }
+        if ($name -match $secretNamePattern) {
+            throw "runtime receipt 禁止绑定 secret 环境变量内容:$name"
+        }
+        $value = & $GetEnvironmentValue $name
+        $state = if ($null -eq $value) { 'unset' } else { "set:$value" }
+        $valueHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($state)))
+        $descriptors.Add("env:${name}:$valueHash")
+    }
+    $payload = "pandora-runtime-input-v1`0$TargetFingerprint`0$($descriptors -join "`n")"
+    return "runtime-input-v1:$([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($payload))))"
+}
+
+function Get-PandoraPlannerRuntimeEnvironmentNames {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RuntimeName)
+    Set-StrictMode -Version Latest
+
+    # pkg/log 与 pkg/middleware 在当前 22 个业务 main 的真实依赖闭包中；下方契约会从
+    # 非测试 Go import 闭包反向扫描 os.Getenv/LookupEnv，任何新增/删除都会要求同步此表。
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($name in @('LOG_LEVEL', 'LOG_SLOW_RPC_MS')) { $null = $names.Add($name) }
+
+    if ($RuntimeName -in @(
+            'player_locator', 'hub_allocator', 'player', 'ds_allocator', 'mission', 'battle_result', 'login'
+        )) {
+        # 这 7 个 runtime 通过 AcquireRuntime 或 writerlease 实际构造 dsauthfence etcd client。
+        # KEY/USERNAME/PASSWORD 文件属于 credential 输入，刻意不进入 applied receipt。
+        foreach ($name in @(
+                'PANDORA_DS_AUTH_ETCD_REQUIRE_MTLS', 'PANDORA_DS_AUTH_ETCD_CA_FILE',
+                'PANDORA_DS_AUTH_ETCD_CERT_FILE', 'PANDORA_DS_AUTH_ETCD_SERVER_NAME',
+                'PANDORA_DS_AUTH_ETCD_CLIENT_IDENTITY', 'PANDORA_DS_AUTH_ETCD_IDENTITY_REVISION',
+                'PANDORA_DS_AUTH_ETCD_REQUIRE_AUTH', 'PANDORA_DS_AUTH_ETCD_FORBIDDEN_READ_PREFIX'
+            )) { $null = $names.Add($name) }
+    }
+    if ($RuntimeName -in @('player_locator', 'hub_allocator', 'ds_allocator', 'battle_result', 'login')) {
+        # 只有直接调用 dsauthfence.AcquireRuntime 的 5 个进程读取不可变 Pod 身份。
+        $null = $names.Add('PANDORA_POD_UID')
+        $null = $names.Add('PANDORA_IMAGE_DIGEST')
+    }
+
+    switch -CaseSensitive ($RuntimeName) {
+        { $_ -in @('player', 'mission') } {
+            $null = $names.Add('PANDORA_DEPLOY_STRATEGY')
+            $null = $names.Add('KUBERNETES_SERVICE_HOST')
+        }
+        { $_ -in @('ds_allocator', 'hub_allocator') } {
+            foreach ($name in @(
+                    'PANDORA_DEPLOY_STRATEGY', 'KUBERNETES_SERVICE_HOST',
+                    'PANDORA_DS_ADVERTISE_HOST', 'PANDORA_DS_DIR', 'PANDORA_DS_EXE',
+                    'PANDORA_DS_LAUNCHER', 'PANDORA_DS_UPROJECT'
+                )) { $null = $names.Add($name) }
+        }
+        'owner' { $null = $names.Add('PANDORA_PPROF') }
+    }
+    return @($names | Sort-Object)
+}
+
 function Write-PandoraPlannerAppliedReceipt {
     [CmdletBinding()]
     param(
@@ -612,6 +691,99 @@ function Get-PandoraPlannerRuntimeActionPlan {
     }
 }
 
+function Invoke-PandoraPlannerActivationReplacement {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RunningRecords,
+        [Parameter(Mandatory)][scriptblock]$Stop,
+        [Parameter(Mandatory)][scriptblock]$Publish,
+        [Parameter(Mandatory)][scriptblock]$Restart
+    )
+    Set-StrictMode -Version Latest
+
+    $stopped = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($record in $RunningRecords) {
+            $null = & $Stop $record
+            $stopped.Add($record)
+        }
+        $null = & $Publish
+        return [pscustomobject][ordered]@{ StoppedRecords = $stopped.ToArray(); Published = $true }
+    } catch {
+        $primaryFailure = $_
+        $restartFailure = $null
+        if ($stopped.Count -gt 0) {
+            try { $null = & $Restart $stopped.ToArray() } catch { $restartFailure = $_ }
+        }
+        if ($restartFailure) {
+            throw "策划 activation 失败:$($primaryFailure.Exception.Message)；旧服务恢复也失败:$($restartFailure.Exception.Message)"
+        }
+        throw $primaryFailure
+    }
+}
+
+function Assert-PandoraPlannerPreparedStagePairs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object[]]$DesiredPlans,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$ExpectedTargetNames,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$StageEntries
+    )
+    Set-StrictMode -Version Latest
+
+    $desiredByName = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    foreach ($plan in $DesiredPlans) {
+        $targetName = "$($plan.Name)"
+        if ([string]::IsNullOrWhiteSpace($targetName) -or $desiredByName.ContainsKey($targetName)) {
+            throw "prepared build 当前 desired target 为空或重复:$targetName"
+        }
+        $desiredByName.Add($targetName, $plan)
+    }
+
+    $expectedTargets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $expectedPairs = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($targetNameValue in $ExpectedTargetNames) {
+        $targetName = "$targetNameValue"
+        if (-not $expectedTargets.Add($targetName)) {
+            throw "prepared build expected target 重复:$targetName"
+        }
+        if (-not $desiredByName.ContainsKey($targetName)) {
+            throw "prepared build expected target 不在当前 desired plan:$targetName"
+        }
+        foreach ($service in @($desiredByName[$targetName].Target.Services)) {
+            $runtimeName = "$($service.Name)"
+            if ([string]::IsNullOrWhiteSpace($runtimeName)) {
+                throw "prepared build desired runtime 为空:$targetName"
+            }
+            $pair = "$targetName`0$runtimeName"
+            if (-not $expectedPairs.Add($pair)) {
+                throw "prepared build desired target/runtime pair 重复:$targetName/$runtimeName"
+            }
+        }
+    }
+
+    $actualPairs = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($entry in $StageEntries) {
+        $targetName = "$($entry.target_name)"
+        $runtimeName = "$($entry.runtime_name)"
+        $pair = "$targetName`0$runtimeName"
+        if (-not $actualPairs.Add($pair)) {
+            throw "prepared build staging target/runtime pair 重复:$targetName/$runtimeName"
+        }
+        if (-not $expectedPairs.Contains($pair)) {
+            throw "prepared build staging 含额外 target/runtime pair:$targetName/$runtimeName"
+        }
+    }
+    if ($actualPairs.Count -ne $expectedPairs.Count -or -not $actualPairs.SetEquals($expectedPairs)) {
+        $missing = [Collections.Generic.List[string]]::new()
+        foreach ($pair in $expectedPairs) {
+            if (-not $actualPairs.Contains($pair)) { $missing.Add($pair.Replace("`0", '/')) }
+        }
+        throw "prepared build staging 缺少 target/runtime pair:$($missing -join ',')"
+    }
+    return $true
+}
+
 function Publish-PandoraPlannerStagedFiles {
     [CmdletBinding()]
     param(
@@ -639,6 +811,21 @@ function Publish-PandoraPlannerStagedFiles {
             [string]::Equals($stage, $destination, [StringComparison]::OrdinalIgnoreCase)) {
             throw 'staging/目标路径重复，拒绝非确定性发布。'
         }
+        $expectedLength = 0L
+        $expectedSha256 = if ($record.PSObject.Properties['Sha256']) { "$($record.Sha256)".ToUpperInvariant() } else { '' }
+        if (-not $record.PSObject.Properties['Length'] -or
+            -not [int64]::TryParse("$($record.Length)", [ref]$expectedLength) -or $expectedLength -lt 0 -or
+            $expectedSha256 -cnotmatch '^[0-9A-F]{64}$') {
+            throw "staging record 缺少合法 Length/Sha256:$stage"
+        }
+        # 最后一刻、且在任何正式文件 backup/overwrite 之前复验 stage 实际字节。
+        # 所有 record 先验证完才进入下面 mutation 循环，篡改会 fail before mutation。
+        $stageInfo = Get-Item -LiteralPath $stage -ErrorAction Stop
+        $actualSha256 = (Get-FileHash -LiteralPath $stage -Algorithm SHA256).Hash
+        if ([int64]$stageInfo.Length -ne $expectedLength -or
+            -not [string]::Equals($actualSha256, $expectedSha256, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "staging 二进制在发布前已变化:$stage"
+        }
         $backup = Join-Path (Split-Path -Parent $destination) ('.{0}.planner-backup-{1}-{2}' -f `
                 [IO.Path]::GetFileName($destination), $PID, [guid]::NewGuid().ToString('N'))
         $prepared.Add([pscustomobject][ordered]@{
@@ -646,6 +833,8 @@ function Publish-PandoraPlannerStagedFiles {
                 DestinationPath = $destination
                 BackupPath = $backup
                 HadDestination = [IO.File]::Exists($destination)
+                Length = $expectedLength
+                Sha256 = $expectedSha256
             })
     }
 
@@ -660,7 +849,24 @@ function Publish-PandoraPlannerStagedFiles {
         }
         foreach ($record in $prepared) {
             $null = & $MoveFile $record.StagePath $record.DestinationPath $true
+            # MoveFile 返回即先登记 rollback 归属，再读取 destination 的真实字节。
+            # 这样 seam/外部进程在 hash→move 或 move 后篡改时，catch 能删除新文件并恢复旧 backup。
             $published.Add($record)
+            $destinationInfo = Get-Item -LiteralPath $record.DestinationPath -ErrorAction Stop
+            $destinationSha256 = (Get-FileHash -LiteralPath $record.DestinationPath -Algorithm SHA256).Hash
+            if ([int64]$destinationInfo.Length -ne [int64]$record.Length -or
+                -not [string]::Equals($destinationSha256, "$($record.Sha256)", [StringComparison]::OrdinalIgnoreCase)) {
+                throw "staging destination 发布后校验失败:$($record.DestinationPath)"
+            }
+        }
+        # 后续 record 发布期间仍可能篡改先前 destination；提交成功前再整批复核一次。
+        foreach ($record in $prepared) {
+            $destinationInfo = Get-Item -LiteralPath $record.DestinationPath -ErrorAction Stop
+            $destinationSha256 = (Get-FileHash -LiteralPath $record.DestinationPath -Algorithm SHA256).Hash
+            if ([int64]$destinationInfo.Length -ne [int64]$record.Length -or
+                -not [string]::Equals($destinationSha256, "$($record.Sha256)", [StringComparison]::OrdinalIgnoreCase)) {
+                throw "staging destination 最终复核失败:$($record.DestinationPath)"
+            }
         }
         $succeeded = $true
     } catch {

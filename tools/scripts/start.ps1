@@ -4302,7 +4302,8 @@ function Invoke-Local {
         }
     }
 
-    & "$ScriptDir/dev_all.ps1" -NoDocker:$NoDocker -ConfigTableChanged:$script:ConfigTableChanged
+    & "$ScriptDir/dev_all.ps1" -NoDocker:$NoDocker -ConfigTableChanged:$script:ConfigTableChanged `
+        -GenerateTables:($NoDocker -and $env:PANDORA_PLANNER_FAST_START -ceq '1' -and $GenTables)
     # dev_all.ps1 每一步失败都会 exit 1,但 `&` 调子脚本**不会**让本脚本失败 —— 不透传的话
     # start.ps1 走完 switch 就正常结束,双击窗口 / Web 管理台拿到的是「完成(退出码 0)」,
     # 而基础设施其实压根没起来(2026-08-12 现场:另一台机器缺 dev.env,[1/4] 就断了,外层照报 0)。
@@ -7873,12 +7874,13 @@ Write-Host "============================================" -ForegroundColor Magen
 
 if ($Status) { Show-Status; exit $script:ShowStatusExitCode }
 
-# -GenTables:先把策划 xlsx 导成服务端配置表。必须排在起服务 / 重启服务之前 —— 读表的
-# go 服务是在进程启动时从 configtable/dist 加载的,表还没生成就把服务起起来,读到的是上一批。
-# 导表失败会直接 exit(见 Invoke-ConfigTableGen:改表就是为了测它,用旧表跑更难查)。
+# -GenTables:普通入口先把策划 xlsx 导成服务端配置表。策划 NoDocker fast 入口会把导表
+# 下沉到 dev_all 的并行准备批次，与 staging build/基础设施重叠；业务发布和启动仍严格等待
+# 导表成功，绝不会让读表服务加载上一批。
 # -Down / -Check 是停机和干跑,导表对它们没有意义。
 $script:ConfigTableChanged = $false
-if ($GenTables -and -not $Down -and -not $Check) {
+$deferPlannerTableGeneration = $plannerTimingEnabled -and $GenTables -and -not $Down -and -not $Check
+if ($GenTables -and -not $Down -and -not $Check -and -not $deferPlannerTableGeneration) {
     $script:ConfigTableChanged = Invoke-PandoraPlannerTimedStep -Name '导表' -Action {
         Invoke-ConfigTableGen
     }

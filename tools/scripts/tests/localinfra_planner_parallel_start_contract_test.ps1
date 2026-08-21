@@ -262,6 +262,106 @@ Assert-True ($clock.Snapshots -le 176) '每轮只能抓一份共享 listener 快
 Assert-True ($events[0] -eq 'launch:mysql' -and $events[3] -eq 'launch:envoy' -and
     $events[4] -eq 'snapshot:0') '必须全部 launch 后才开始统一轮询'
 
+# MySQL 一旦 ready，调用方即可启动 migration；不必等同批最慢 Kafka。全部状态、端口和
+# 时间均为虚拟对象，不触碰本机进程或网络。
+$dependencyClock = [pscustomobject]@{ Milliseconds = [int64]0 }
+$dependencyEvents = [Collections.Generic.List[string]]::new()
+$dependencyReadyAt = @{ mysql = [int64]200; kafka = [int64]700 }
+$dependencyDefinitions = @(
+    [pscustomobject]@{ Name = 'mysql'; Port = 13307; ProcessId = 151 }
+    [pscustomobject]@{ Name = 'kafka'; Port = 9093; ProcessId = 152 }
+)
+$dependencyLaunchers = @($dependencyDefinitions | ForEach-Object {
+    $definition = $_
+    {
+        [pscustomobject]@{
+            Name = $definition.Name
+            Ports = @($definition.Port)
+            Process = [pscustomobject]@{ Id = $definition.ProcessId }
+            StartedAtMilliseconds = [int64]0
+            TimeoutMilliseconds = [int64]30000
+            Ready = $false
+            Failure = ''
+        }
+    }.GetNewClosure()
+})
+$dependencyStates = @(Invoke-PandoraPlannerInfraBatch -Launchers $dependencyLaunchers `
+    -GetListenerRecords {
+        $records = @()
+        foreach ($definition in $dependencyDefinitions) {
+            if ($dependencyClock.Milliseconds -ge $dependencyReadyAt[$definition.Name]) {
+                $records += [pscustomobject]@{
+                    LocalPort = $definition.Port
+                    OwningProcess = $definition.ProcessId
+                }
+            }
+        }
+        return @($records)
+    } -TestProcessExited { param($State) return $false } `
+    -TestStateReady {
+        param($State, $Listeners)
+        return @($Listeners | Where-Object {
+            $_.LocalPort -eq $State.Ports[0] -and $_.OwningProcess -eq $State.Process.Id
+        }).Count -gt 0
+    } -OnReady {
+        param($State)
+        $dependencyEvents.Add("ready:$($State.Name):$($dependencyClock.Milliseconds)")
+        if ($State.Name -ceq 'mysql') {
+            $dependencyEvents.Add("migration-start:$($dependencyClock.Milliseconds)")
+        }
+    } -OnFailure { param($State, $Reason) throw "依赖边虚拟组件不应失败:$($State.Name)/$Reason" } `
+    -Sleep { param($Milliseconds) $dependencyClock.Milliseconds += $Milliseconds } `
+    -GetElapsedMilliseconds { return [int64]$dependencyClock.Milliseconds } -PollMilliseconds 100)
+
+Assert-Equal 200 (@($dependencyStates | Where-Object Name -eq 'mysql')[0].ReadyAtMilliseconds) `
+    'MySQL 应在虚拟 200ms ready'
+Assert-Equal 700 (@($dependencyStates | Where-Object Name -eq 'kafka')[0].ReadyAtMilliseconds) `
+    'Kafka 应在虚拟 700ms ready'
+Assert-Equal 1 @($dependencyEvents | Where-Object { $_ -ceq 'migration-start:200' }).Count `
+    'MySQL ready callback 必须在 200ms 立即启动且只启动一次 migration'
+$migrationStartIndex = $dependencyEvents.IndexOf('migration-start:200')
+$kafkaReadyIndex = $dependencyEvents.IndexOf('ready:kafka:700')
+Assert-True ($migrationStartIndex -ge 0 -and $kafkaReadyIndex -gt $migrationStartIndex) `
+    'migration-start 必须发生在 Kafka 700ms ready 之前，不能退化为全基础设施 join 后迁移'
+
+# ready callback 自身失败属于根因；StopOnFirstFailure 必须封存尚未 ready 的 sibling，
+# 不能继续等 Kafka，也不能把 callback 异常误报成端口超时。
+$callbackClock = [pscustomobject]@{ Milliseconds = [int64]0 }
+$callbackFailures = [Collections.Generic.List[string]]::new()
+$callbackStates = @(Invoke-PandoraPlannerInfraBatch -Launchers @(
+    { [pscustomobject]@{ Name = 'mysql'; Ports = @(13307); Process = [pscustomobject]@{ Id = 161 }; StartedAtMilliseconds = [int64]0; TimeoutMilliseconds = [int64]30000; Ready = $false; Failure = '' } }
+    { [pscustomobject]@{ Name = 'kafka'; Ports = @(9093); Process = [pscustomobject]@{ Id = 162 }; StartedAtMilliseconds = [int64]0; TimeoutMilliseconds = [int64]30000; Ready = $false; Failure = '' } }
+) -GetListenerRecords {
+    if ($callbackClock.Milliseconds -ge 200) {
+        return @([pscustomobject]@{ LocalPort = 13307; OwningProcess = 161 })
+    }
+    return @()
+} -TestProcessExited { param($State) return $false } `
+    -TestStateReady {
+        param($State, $Listeners)
+        return @($Listeners | Where-Object {
+            $_.LocalPort -eq $State.Ports[0] -and $_.OwningProcess -eq $State.Process.Id
+        }).Count -gt 0
+    } -OnReady { param($State) if ($State.Name -ceq 'mysql') { throw 'virtual-migration-start-failed' } } `
+    -OnFailure { param($State, $Reason) $callbackFailures.Add("$($State.Name):$Reason") } `
+    -Sleep { param($Milliseconds) $callbackClock.Milliseconds += $Milliseconds } `
+    -GetElapsedMilliseconds { return [int64]$callbackClock.Milliseconds } `
+    -StopOnFirstFailure -PollMilliseconds 100)
+
+$failedCallbackMysql = @($callbackStates | Where-Object Name -eq 'mysql')[0]
+$abortedCallbackKafka = @($callbackStates | Where-Object Name -eq 'kafka')[0]
+Assert-Equal 200 $callbackClock.Milliseconds 'ready callback 失败后必须在当轮 200ms 立即收敛'
+Assert-Equal 'ready-callback-failed' $failedCallbackMysql.Failure `
+    'callback throw 必须标记为 ready-callback-failed'
+Assert-True ($failedCallbackMysql.FailureException.Exception.Message -match 'virtual-migration-start-failed') `
+    'callback 根因异常必须保留用于诊断'
+Assert-Equal 'mysql:ready-callback-failed' $callbackFailures[0] `
+    'OnFailure 必须收到 callback 根因组件和专用失败码'
+Assert-Equal 'batch-aborted' $abortedCallbackKafka.Failure `
+    'StopOnFirstFailure 必须把尚未 ready 的 sibling 显式封存为 batch-aborted'
+Assert-Equal 200 $abortedCallbackKafka.FinishedAtMilliseconds `
+    'sibling 封存必须记录 callback 失败当刻，不能继续等到 Kafka ready'
+
 # 进程提前退出必须立刻按本组件失败，不能继续等满最长 120 秒。
 $exitClock = [pscustomobject]@{ Milliseconds = [int64]0; Snapshots = 0 }
 $exitFailures = [Collections.Generic.List[string]]::new()

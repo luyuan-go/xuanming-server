@@ -13,7 +13,7 @@ battle 票。它带病上线的后果不是"匹配不好用",而是**同一玩�
     ①  abs_conf_path_failed                    fail-fast  -conf 解不成绝对路径
     ②  config_load_failed                      fail-fast  yaml 读不到 / 语法坏
     ③  config_scan_failed                      fail-fast  yaml 结构对不上
-        └ cellroute_init_failed                fail-fast  cell_route.mode 非空(位置比 Go 早,见下)
+        └ cellroute_init_failed                fail-fast  cell_route 配置非法 / 路由表装配失败
     ④  config_validation_failed                fail-fast  team_addr / 四把内部密钥的信任域校验
     ⑤  configtable_load_failed                 fail-fast  关卡表整批 fail-closed
         ├ configtable_load_warning             WARN       manifest 未列出的脏文件(不拒批次)
@@ -62,11 +62,17 @@ battle 票。它带病上线的后果不是"匹配不好用",而是**同一玩�
 
 ★ 一处与 Go 的**落点差异**(诚实标注,不是等价实现):
 
-  1) 闸③ 的 cellroute_init_failed:Go 在装配链末尾调 `etcdtable.BuildRouter`,失败
-     os.Exit。Python 的 `cellroute` 只有静态表与路由算法、没有 BuildRouter 装配,
-     于是 `pandorapy.config.BaseConf` 的 pydantic 校验器在**加载配置时**就对
-     `cell_route.mode` 非空拒启。事件名保持不变(告警按事件名建),方向一致
-     (fail-fast,不会静默按单 Cell 跑);单 Cell(当前唯一形态)两边完全相同。
+  1) 闸③ 的 cellroute_init_failed 会在**两个位置**报:一是 `pandorapy.config.BaseConf`
+     的 pydantic 校验器在**加载配置时**跑与 Go `RouterConfig.Validate` 逐条同义的
+     校验(比 Go 早);二是装配链里调 `cellroute_etcd.build_router` 失败(与 Go
+     `etcdtable.BuildRouter` 同位)。事件名在两处保持一致(告警按事件名建),
+     方向一致(都是 fail-fast,不会静默按单 Cell 跑)。
+
+     ★ 2026-08-21 补齐:本段原先写「Python 的 cellroute 只有静态表与路由算法、
+     没有 BuildRouter 装配,于是对 mode 非空一律拒启」—— 那已随 `cellroute_etcd`
+     补齐而失效。当时那道拒启闸又是 `matchloop` 声称「不存在配了却静默按单桶跑」
+     的**唯一**依据;闸改了而那句注释没改,中间就出现过一段真空期。
+     教训:**拆掉一道 fail-closed 闸时,必须 grep 完所有引用它做安全论据的注释**。
 
 ★ 后台循环只有一条:撮合主循环(`uc.run_match_loop`,内部含 start saga 推进 /
   装箱成局 / 分配推进 / 确认期超时 / 离线回收 6+2 个步骤)。
@@ -88,6 +94,7 @@ from __future__ import annotations
 # ★ 必须最先 import:Windows 控制台默认 cp1252,日志里的中文会抛 UnicodeEncodeError
 # 并把真正的启动错误顶掉(实测踩过多次)。见 pandorapy/_utf8.py。
 from pandorapy import _utf8  # noqa: F401  isort:skip
+from pandorapy import cellroute_etcd
 from pandorapy import config as pconfig
 
 import argparse
@@ -188,21 +195,23 @@ class KafkaMatchPusher:
 def _self_region(cfg: mconf.Config) -> int:
     """本副本的 region 编号 —— 只用于 leader 选举的分片键。
 
-    Python 侧 cell_route 段未建模(mode 非空时在加载配置阶段就拒启,见闸③),
-    所以从 `model_extra` 里读。读不到按 0,与 Go 单 Cell 部署的 SelfRegion 零值一致。
+    直接取 `cfg.cell_route.self_region`(`BaseConf` 的正式字段)。留空按 0,
+    与 Go 单 Cell 部署的 SelfRegion 零值一致。
 
     为什么分片键里要有 region:同一 (game_mode, region) 的副本才该竞争同一个 leader。
     少了 region,跨 region 部署会把所有副本挤到一个选举里 —— 另一个 region 的撮合
     直接停摆(它的副本永远选不上),而且没有任何错误日志。
+
+    ★ 2026-08-21 修:本函数原先从 `cfg.model_extra["cell_route"]` 读。那在
+    `cell_route` 还没建模时是对的,但同日 `BaseConf.cell_route` 建成**正式字段**后,
+    pydantic 就不再把它放进 `model_extra` —— 于是本函数**恒返回 0**,
+    `election` 恒为 `.../r0`,跨 region 部署的所有副本挤进同一个选举,
+    非 leader region 的撮合永久停摆且零错误日志(正是上面那段注释描述的事故)。
+    同一形状的缺陷 `services/auction/conf.py` 的「历史教训」段已记过一次:
+    **一旦某段从 model_extra 升级成正式字段,所有 `model_extra` 读取点都得跟着改**。
+    回归测试见 `tests/test_matchmaker_region_affinity.py::test_self_region_reads_modeled_cell_route`。
     """
-    extra = cfg.model_extra or {}
-    section = extra.get("cell_route") or {}
-    if not isinstance(section, dict):
-        return 0
-    try:
-        return int(section.get("self_region") or 0)
-    except (TypeError, ValueError):
-        return 0
+    return int(cfg.cell_route.self_region)
 
 
 async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, PLR0912, PLR0915 —— 与 Go 同为线性启动闸
@@ -331,6 +340,9 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
     locator: mclients.GrpcLocationNotifier | None = None
     presence: offlinewatch.GrpcPresenceReader | None = None
     ds_allocator: mclients.GrpcDSAllocator | None = None
+    # 在 try 之前声明:finally 里要读它。装配链中途报错时若还没赋值,
+    # finally 会撞 UnboundLocalError 并顶掉真正的退出原因。
+    cell_watcher = None
     try:
         # ── 闸⑧ Snowflake ────────────────────────────────────────────────
         #
@@ -609,6 +621,29 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         if ct_store is not None:
             uc.set_config_tables(ct_store)
 
+        # ── cellroute 装配(对应 Go main.go 的 `etcdtable.BuildRouter` + SetCellRouter)──
+        # off(mode 空)→ router 为 None = 单 Cell,`_form_matches_in_pool` 走单桶贪心,
+        # 与 Go 侧 router 为 nil 完全一致;static / etcd → 真正建表并注入,撮合随即升级为
+        # 「region 内优先 + 跨 region 溢出」两级。非法 mode 在上面 config 加载阶段(闸③)
+        # 就已经打 cellroute_init_failed 拒启了,这里兜的是**装配期**失败(etcd 连不上等)。
+        try:
+            router, cell_watcher = await cellroute_etcd.build_router(cfg.cell_route)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            logger.error("cellroute_init_failed", err=str(exc))
+            return 1
+        # cell_watcher 已在 try 之前声明,由本函数末尾的 finally 统一关闭
+        # (关闭顺序与建立顺序相反)。
+        if router is not None:
+            uc.set_cell_router(router)
+            logger.info(
+                "cellroute_enabled",
+                mode=cfg.cell_route.mode,
+                self_region=cfg.cell_route.self_region,
+                self_cell=cfg.cell_route.self_cell,
+            )
+
         # ── 闸⑭ 进场侧限流(anti-abuse §6 第 2/3/7/8 项)────────────────────
         # StartMatch 冷却 + 成局级冷却 + 容量耗尽静默窗 + no-show 退避执行。
         # 复用共享 rdb;这是**背压不是不变量**,故障时 fail-open(见 entry_limiter.py)。
@@ -806,7 +841,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         if producer is not None:
             with contextlib.suppress(Exception):
                 await producer.close()
-        for closable in (team_reader, locator, presence, ds_allocator):
+        for closable in (team_reader, locator, presence, ds_allocator, cell_watcher):
             if closable is not None:
                 with contextlib.suppress(Exception):
                     await closable.close()
