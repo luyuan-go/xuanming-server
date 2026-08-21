@@ -22,7 +22,9 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import datetime as _dt
+import enum
 import hashlib
+import re
 import time
 
 from pandorapy import dbguard
@@ -904,6 +906,90 @@ def ticket_key(jti: str) -> str:
     return f"pandora:ticket:{jti}"
 
 
+# ── Redis authority 在线准入:票据 jti 的版本化幂等 marker ────────────────────
+#
+# Go: `internal/data/account.go` 的 peekTicketAdmissionScript / markTicketAdmissionScript。
+# 两段 Lua **逐字符照抄**(含空格与换行):它们不只是"存个标记",而是把
+# 「首次准入」「同一次准入的重试」「另一次准入的重放」三种情形在**单次原子执行**里分开。
+# 任何改写(哪怕只是把 string.match 的模式写"等价"一点)都可能让 legacy `"1"` 或坏格式
+# 从 Conflict 掉进 Missing,而那一步之后就是无条件覆盖 —— 防重放当场失效且无任何日志。
+
+
+class AdmissionMarkerStatus(enum.IntEnum):
+    """Go `data.AdmissionMarkerStatus`(取值与 iota 顺序一致)。"""
+
+    MISSING = 0
+    CREATED = 1
+    EXISTING = 2
+    CONFLICT = 3
+
+
+#: marker 的重认窗口(Go `RedisTicketJTIRepo.admissionReplayWindow`)。
+#: 它**短于**票据 TTL:窗口内允许同一次 admission 重试,窗口外即便 marker 还在也判冲突,
+#: 避免一次准入无限期地把票"占着"。
+ADMISSION_REPLAY_WINDOW_SEC = 30.0
+
+#: sha256 hex 摘要长度。attempt_owner / accepted_credential_hash 都必须是它。
+_ADMISSION_DIGEST_HEX_LEN = 64
+_ADMISSION_DIGEST_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
+def valid_admission_digest(value: str) -> bool:
+    """Go `validAdmissionDigest`:64 位小写 hex。
+
+    ★ 锚 `\\A...\\Z` 而不是 `^...$`:后者在多行串上会匹配任意一行,
+    `"<64位hex>\\n<垃圾>"` 会被判成合法摘要,而它随后会被拼进 Lua marker 值 ——
+    marker 里的 `|` 分隔格式会被换行搅乱。
+    """
+    return bool(value) and bool(_ADMISSION_DIGEST_RE.fullmatch(value))
+
+
+_PEEK_TICKET_ADMISSION = redisx.LuaScript(
+    "login_ticket_peek_admission",
+    """
+local current = redis.call('GET', KEYS[1])
+if not current then return 0 end
+local version, attempt, credential, accepted_at, replay_until = string.match(
+  current, '^([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)$')
+if version ~= 'admission-v4' or string.len(attempt or '') ~= 64 or not string.match(attempt, '^[0-9a-f]+$') or
+   string.len(credential or '') ~= 64 or not string.match(credential, '^[0-9a-f]+$') or
+   not tonumber(accepted_at) or not tonumber(replay_until) or tonumber(replay_until) < tonumber(accepted_at) then
+  return 3
+end
+local redis_time = redis.call('TIME')
+local now_ms = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
+if attempt == ARGV[1] and now_ms <= tonumber(replay_until) then
+  return 2
+end
+return 3
+""",
+)
+
+_MARK_TICKET_ADMISSION = redisx.LuaScript(
+    "login_ticket_mark_admission",
+    """
+local current = redis.call('GET', KEYS[1])
+local redis_time = redis.call('TIME')
+local now_ms = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
+if not current then
+  local replay_until = now_ms + tonumber(ARGV[4])
+  local marker = 'admission-v4|' .. ARGV[1] .. '|' .. ARGV[2] .. '|' .. now_ms .. '|' .. replay_until
+  redis.call('PSETEX', KEYS[1], ARGV[3], marker)
+  return 1
+end
+local version, attempt, credential, accepted_at, replay_until = string.match(
+  current, '^([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)$')
+if version == 'admission-v4' and string.len(attempt or '') == 64 and string.match(attempt, '^[0-9a-f]+$') and
+   string.len(credential or '') == 64 and string.match(credential, '^[0-9a-f]+$') and
+   tonumber(accepted_at) and tonumber(replay_until) and tonumber(replay_until) >= tonumber(accepted_at) and
+   attempt == ARGV[1] and now_ms <= tonumber(replay_until) then
+  return 2
+end
+return 0
+""",
+)
+
+
 # 单 key 原子「代际比较 + 覆盖」。现存 gen 缺失 / 更小 → 覆盖并刷 TTL 返回 1;
 # 更大 → 零写入返回 0(本次登录已被更新一代顶掉);
 # 相等且同 jti → 返回 2(网络重试的幂等成功:第一次 EVAL 已落地、只是回包丢了);
@@ -1079,12 +1165,26 @@ class RedisSessionRepo:
 
 
 class RedisTicketJTIRepo:
-    """pandora:ticket:<jti> 短期标记。首次 SETNX 成功 → 票据可用;再次失败 → 已重放。"""
+    """pandora:ticket:<jti> 短期标记。首次 SETNX 成功 → 票据可用;再次失败 → 已重放。
 
-    __slots__ = ("_rdb",)
+    两套语义共用同一个 key,**不能混**:
+
+      · `mark_used`(off/legacy 档)—— 值恒为 `"1"`,一次性核销,没有"同一次准入重试"概念;
+      · `peek_admission` / `mark_used_by_admission`(Redis authority 在线准入)——
+        值是 `admission-v4|<attempt>|<credential>|<accepted_at>|<replay_until>` 版本化 marker,
+        同一次 PreLoginAsync 在 `replay_until` 之前可以重认(DS 侧重试 / 回包丢失),
+        不同 attempt 一律判冲突。
+
+    ★ legacy 的 `"1"` 在准入路径上必须被判成 **Conflict** 而不是 "格式没解出来就当没有":
+      前者是安全的(拒一次重试),后者会让任何一张旧格式 marker 直接被覆盖成新 attempt,
+      等于防重放整个失效。Lua 里那串 `string.match` 校验就是干这个的,一个字符都不能省。
+    """
+
+    __slots__ = ("_rdb", "_admission_replay_window_sec")
 
     def __init__(self, rdb) -> None:  # noqa: ANN001
         self._rdb = rdb
+        self._admission_replay_window_sec = ADMISSION_REPLAY_WINDOW_SEC
 
     async def mark_used(self, jti: str, ttl_sec: float) -> None:
         if not jti:
@@ -1099,6 +1199,89 @@ class RedisTicketJTIRepo:
             raise errcode.PandoraError(
                 errcode.ErrLoginTicketReplayed, f"ticket jti={jti} already used"
             )
+
+    async def peek_admission(self, jti: str, attempt_owner: str) -> AdmissionMarkerStatus:
+        """只读现有 marker —— Go `PeekAdmission`。
+
+        legacy `"1"`、坏格式、不同 attempt、已过 `replay_until` 一律 **Conflict**(安全 replay);
+        Redis 故障 → `ErrUnavailable`(可重试,不是"没有 marker")。
+        """
+        if not jti or not valid_admission_digest(attempt_owner):
+            raise errcode.PandoraError(
+                errcode.ErrInvalidArg, "invalid admission marker lookup"
+            )
+        if self._rdb is None:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "ticket admission replay authority unavailable"
+            )
+        try:
+            result = await _PEEK_TICKET_ADMISSION(
+                self._rdb, keys=[ticket_key(jti)], args=[attempt_owner]
+            )
+        except Exception as exc:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, f"redis ticket admission lookup failed: {exc}"
+            ) from exc
+        code = int(result or 0)
+        if code == 0:
+            return AdmissionMarkerStatus.MISSING
+        if code == 2:  # noqa: PLR2004 —— Lua 返回码,与 Go 逐值对齐
+            return AdmissionMarkerStatus.EXISTING
+        return AdmissionMarkerStatus.CONFLICT
+
+    async def mark_used_by_admission(
+        self,
+        jti: str,
+        attempt_owner: str,
+        accepted_credential_hash: str,
+        ttl_sec: float,
+    ) -> AdmissionMarkerStatus:
+        """单条 Lua 完成 absent→versioned marker —— Go `MarkUsedByAdmission`。
+
+        同 attempt_owner 只**确认**已存在,绝不覆盖首次 `accepted_credential_hash`、
+        也不续 TTL:覆盖会让"首次接受了哪份凭据"的审计事实丢失,续 TTL 会让一张票
+        靠不断重试无限延寿。不同 owner / legacy `"1"` / 坏格式均判冲突。
+        """
+        if (
+            not jti
+            or ttl_sec <= 0
+            or not valid_admission_digest(attempt_owner)
+            or not valid_admission_digest(accepted_credential_hash)
+        ):
+            raise errcode.PandoraError(
+                errcode.ErrInvalidArg, "invalid admission ticket marker"
+            )
+        if self._rdb is None:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "ticket admission replay authority unavailable"
+            )
+        replay_window_sec = self._admission_replay_window_sec
+        if replay_window_sec <= 0:
+            replay_window_sec = ADMISSION_REPLAY_WINDOW_SEC
+        try:
+            result = await _MARK_TICKET_ADMISSION(
+                self._rdb,
+                keys=[ticket_key(jti)],
+                args=[
+                    attempt_owner,
+                    accepted_credential_hash,
+                    int(ttl_sec * 1000),
+                    int(replay_window_sec * 1000),
+                ],
+            )
+        except Exception as exc:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, f"redis ticket admission mark failed: {exc}"
+            ) from exc
+        code = int(result or 0)
+        if code == 1:
+            return AdmissionMarkerStatus.CREATED
+        if code == 2:  # noqa: PLR2004
+            return AdmissionMarkerStatus.EXISTING
+        raise errcode.PandoraError(
+            errcode.ErrLoginTicketReplayed,
+            f"ticket jti={jti} already used by another admission",
+        )
 
 
 # ── Redis:登录失败 Quota(账号 + IP)────────────────────────────────────────

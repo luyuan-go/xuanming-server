@@ -24,20 +24,64 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import grpc
 from pandora.common.v1 import errcode_pb2
 from pandora.locator.v1 import locator_pb2, locator_pb2_grpc
 
+from pandorapy import auth as pauth
+from pandorapy import dsauth
 from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy.services.player_locator import biz as lbiz
+from pandorapy.services.player_locator import hub_credential as lhubcred
 from pandorapy.services.player_locator import usecase as lusecase
+
+# DS 回调面拒绝 reason 枚举(§11.3 R2)。取值与 Go 的 reason* 常量逐字节一致。
+REASON_DS_GUARD_REJECTED = "ds_callback_guard_rejected"
+REASON_HUB_CREDENTIAL_INACTIVE = "hub_credential_not_active"
 
 
 def _to_proto_code(err: BaseException) -> int:
     """errcode → proto enum,1:1 数值映射。对应 Go 的 toProtoCode。"""
     return errcode.as_code(err)
+
+
+def _log_callback_rejected(
+    rpc: str, reason: str, player_id: int, hub_pod: str, err: str, **extra: Any
+) -> None:
+    """记录一次 DS 回调面的**副作用前**拒绝 —— 对应 Go 的 logCallbackRejected。
+
+    这些拒绝返回 in-band Code(ErrUnauthorized / ErrPermissionDeny / ErrUnavailable),
+    handler 自身正常返回 → access log 记 rpc_ok(DEBUG)。线上默认 info 级下,
+    「Hub DS 的位置上报被门禁挡掉了」这件事**一条日志都没有**,现象只剩下
+    「玩家在大厅里但 locator 查不到他」。
+
+    ⚠️ 本面不会自动带 player_id(DS 走 AuthOptional,不带 x-pandora-player-id),
+    所以 player_id / hub_pod 必须手写,否则定位不到人。
+    """
+    plog.get().warning(
+        "locator_ds_callback_rejected",
+        rpc=rpc,
+        reason=reason,
+        player_id=player_id,
+        hub_pod=hub_pod,
+        err=err,
+        **extra,
+    )
+
+
+def _guard_reject_err(code: int) -> str:
+    """守卫拒绝的 `err` 字段文本。
+
+    Go 的 `CheckHubCredential` 走 error 通道,拒绝理由有文本;Python 的
+    `DSCallbackGuard.check_credential` 只回 in-band code(**刻意如此**,见
+    dsauth.py 里那段长注释:改成抛异常会把 in-band code 契约当场打破)。
+    真正的拒绝理由已由守卫内部的 `ds_callback_auth_rejected` 打出并带 reason,
+    这里只补一个可对齐的占位,不假装自己知道细节。
+    """
+    return f"ds callback guard rejected: errcode={code}"
 
 
 def _fence_from_proto(f: locator_pb2.HubPresenceFence) -> lbiz.HubPresenceFence:
@@ -62,10 +106,38 @@ def _location_to_proto(out: lusecase.LocationOutput) -> locator_pb2.Location:
 class LocatorService(locator_pb2_grpc.PlayerLocatorServiceServicer):
     """实现 PlayerLocatorServiceServicer。对应 Go 的 service.LocatorService。"""
 
-    __slots__ = ("_uc",)
+    __slots__ = ("_uc", "_ds_guard", "_hub_credential_checker")
 
     def __init__(self, usecase: lusecase.LocatorUsecase) -> None:
         self._uc = usecase
+        # None = mode=off(未配置服务零改动),与 Go 的 nil dsGuard 同义:
+        # Go 的 `(*DSCallbackGuard)(nil).CheckWithClaims` 直接放行。
+        self._ds_guard: dsauth.DSCallbackGuard | None = None
+        # 仅在 ds_auth.authority_mode=redis + enforce 时注入;
+        # None 表示 legacy/off/permissive,不改变既有行为。
+        self._hub_credential_checker: lhubcred.HubCredentialStateChecker | None = None
+
+    def set_ds_callback_guard(self, guard: dsauth.DSCallbackGuard | None) -> None:
+        """注入 DS 回调令牌守卫(main 按 ds_auth 配置构建;None 表示 off)。"""
+        self._ds_guard = guard
+
+    def set_hub_credential_state_checker(
+        self, checker: lhubcred.HubCredentialStateChecker | None
+    ) -> None:
+        """注入 Model B Redis active credential 终态门。"""
+        self._hub_credential_checker = checker
+
+    def _check_ds_callback(
+        self, context: grpc.aio.ServicerContext, scope: dsauth.DSScope
+    ) -> tuple[dsauth.VerifiedCredential | None, int]:
+        """守卫校验 —— 对应 Go 的 `s.dsGuard.CheckHubCredential(ctx, scope)`。
+
+        守卫未注入(mode=off)时返回 `(None, 0)`:与 Go 的 nil 接收者放行同义。
+        """
+        if self._ds_guard is None:
+            return None, 0
+        _claims, cred, code = self._ds_guard.check_credential(context, scope)
+        return cred, code
 
     # ── 位置写入 ──────────────────────────────────────────────────────────
 
@@ -74,15 +146,52 @@ class LocatorService(locator_pb2_grpc.PlayerLocatorServiceServicer):
         request: locator_pb2.SetLocationRequest,
         context: grpc.aio.ServicerContext,
     ) -> locator_pb2.SetLocationResponse:
-        """写入玩家位置。守卫拒绝 → ErrLocatorConflict(in-band)。
+        """写入玩家位置。守卫拒绝 → in-band 鉴权码;业务守卫拒绝 → ErrLocatorConflict。
 
-        ⚠️ Go 侧在这里还有一道 **DS 回调令牌守卫**(dsGuard.CheckHubCredential)。
-        Python 侧尚未实现该 middleware,因此 main.py 在 `ds_auth.mode != off` 时
-        **拒绝启动**(见 main.py 闸⑩)—— 绝不能在这里静默放行:
-        那等于把 fail-closed 的令牌校验悄悄降级成 fail-open。
-        mode=off(dev/当前生产档)下 Go 的守卫本身就是 no-op,两边行为一致。
+        DS 回调范围绑定:Hub DS 只能写 HUB 状态且 pod 必须与令牌 sub 一致;
+        其余状态(MATCHING/BATTLE/OFFLINE 等)只允许内部服务写
+        (matchmaker / ds_allocator / login),来自 DS 网关或带 DS 令牌的请求一律拒
+        (deny_ds)。
+
+        全仓确认:写 HUB 状态的唯一合法调用者是 Hub DS(经回调令牌),无任何内部 Go
+        服务写 HUB(login→LOGIN_PENDING、matchmaker→MATCHING/BATTLE、
+        ds_allocator→BATTLE),故 HUB 分支置 require_token:enforce 下无令牌直连
+        (绕过 Envoy)一律拒(fail-closed,审核 P1)。
         """
         loc = request.location
+        scope = dsauth.DSScope(deny_ds=True)
+        if loc.state == lbiz.LOCATION_STATE_HUB:
+            scope = dsauth.DSScope(
+                ds_type=pauth.DS_TYPE_HUB, pod=loc.hub_pod, require_token=True
+            )
+        cred, code = self._check_ds_callback(context, scope)
+        if code != 0:
+            _log_callback_rejected(
+                "SetLocation",
+                REASON_DS_GUARD_REJECTED,
+                request.player_id,
+                loc.hub_pod,
+                _guard_reject_err(code),
+                presence_state=int(loc.state),
+                deny_ds=scope.deny_ds,
+                require_token=scope.require_token,
+            )
+            return locator_pb2.SetLocationResponse(code=code)
+        if (
+            loc.state == lbiz.LOCATION_STATE_HUB
+            and self._hub_credential_checker is not None
+        ):
+            chk = await self._hub_credential_checker.check_active(loc.hub_pod, cred)
+            if chk.code != 0:
+                _log_callback_rejected(
+                    "SetLocation",
+                    REASON_HUB_CREDENTIAL_INACTIVE,
+                    request.player_id,
+                    loc.hub_pod,
+                    chk.err,
+                    presence_state=int(loc.state),
+                )
+                return locator_pb2.SetLocationResponse(code=chk.code)
         # §11.3 R3:match_id 在这里第一次被解析出来,写进日志上下文让本请求后续所有
         # 日志(守卫拒绝 / 状态迁移 / CAS 耗尽)自动带上,无需层层传参。
         inp = lbiz.LocationInput(
@@ -223,10 +332,35 @@ class LocatorService(locator_pb2_grpc.PlayerLocatorServiceServicer):
         """Hub DS 心跳捎带的在线保活:批量续期 HUB 位置 TTL。
 
         整批被拒 = 这台 Hub 上所有玩家的 presence 都不再续期,TTL 后集体蒸发
-        (对下游就是「整台服的人同时离线」)—— 所以拒绝必须可见,见 usecase。
-
-        ⚠️ Go 侧此处同样有 DS 回调令牌守卫;Python 侧的处理见 SetLocation 的说明。
+        (对下游就是「整台服的人同时离线」)—— 所以拒绝必须可见,故守卫与终态门的
+        拒绝在这里各打一条日志,而不是只靠 usecase 那侧。
         """
+        scope = dsauth.DSScope(
+            ds_type=pauth.DS_TYPE_HUB, pod=request.hub_pod, require_token=True
+        )
+        cred, code = self._check_ds_callback(context, scope)
+        if code != 0:
+            _log_callback_rejected(
+                "RefreshHubLocations",
+                REASON_DS_GUARD_REJECTED,
+                0,
+                request.hub_pod,
+                _guard_reject_err(code),
+                requested=len(request.player_ids),
+            )
+            return locator_pb2.RefreshHubLocationsResponse(code=code)
+        if self._hub_credential_checker is not None:
+            chk = await self._hub_credential_checker.check_active(request.hub_pod, cred)
+            if chk.code != 0:
+                _log_callback_rejected(
+                    "RefreshHubLocations",
+                    REASON_HUB_CREDENTIAL_INACTIVE,
+                    0,
+                    request.hub_pod,
+                    chk.err,
+                    requested=len(request.player_ids),
+                )
+                return locator_pb2.RefreshHubLocationsResponse(code=chk.code)
         try:
             refreshed = await self._uc.refresh_hub_locations(
                 request.hub_pod, list(request.player_ids)
@@ -244,7 +378,36 @@ class LocatorService(locator_pb2_grpc.PlayerLocatorServiceServicer):
         request: locator_pb2.ReportDisconnectRequest,
         context: grpc.aio.ServicerContext,
     ) -> locator_pb2.ReportDisconnectResponse:
-        """快速断线上报:把 HUB 位置 TTL 缩到 grace(只缩不涨)。"""
+        """快速断线上报:把 HUB 位置 TTL 缩到 grace(只缩不涨)。
+
+        DS 回调范围绑定:hub 令牌 sub 必须等于 req.hub_pod(防伪造别的 pod 缩别人 TTL)。
+        全仓确认:唯一合法调用者是 Hub DS,无任何内部 Go 服务调用,故置 require_token
+        —— enforce 下无令牌直连(绕过 Envoy)一律拒(fail-closed,审核 P1)。
+        """
+        scope = dsauth.DSScope(
+            ds_type=pauth.DS_TYPE_HUB, pod=request.hub_pod, require_token=True
+        )
+        cred, code = self._check_ds_callback(context, scope)
+        if code != 0:
+            _log_callback_rejected(
+                "ReportDisconnect",
+                REASON_DS_GUARD_REJECTED,
+                request.player_id,
+                request.hub_pod,
+                _guard_reject_err(code),
+            )
+            return locator_pb2.ReportDisconnectResponse(code=code)
+        if self._hub_credential_checker is not None:
+            chk = await self._hub_credential_checker.check_active(request.hub_pod, cred)
+            if chk.code != 0:
+                _log_callback_rejected(
+                    "ReportDisconnect",
+                    REASON_HUB_CREDENTIAL_INACTIVE,
+                    request.player_id,
+                    request.hub_pod,
+                    chk.err,
+                )
+                return locator_pb2.ReportDisconnectResponse(code=chk.code)
         try:
             shrunk = await self._uc.report_disconnect(
                 request.hub_pod,

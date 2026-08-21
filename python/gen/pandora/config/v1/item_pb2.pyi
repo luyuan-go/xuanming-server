@@ -15,15 +15,24 @@ class ItemType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ITEM_TYPE_EQUIPMENT: _ClassVar[ItemType]
     ITEM_TYPE_QUEST: _ClassVar[ItemType]
     ITEM_TYPE_CURRENCY: _ClassVar[ItemType]
+
+class ItemHealType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    ITEM_HEAL_TYPE_UNSPECIFIED: _ClassVar[ItemHealType]
+    ITEM_HEAL_TYPE_FIXED: _ClassVar[ItemHealType]
+    ITEM_HEAL_TYPE_MAX_HP_PERCENT: _ClassVar[ItemHealType]
 ITEM_TYPE_UNSPECIFIED: ItemType
 ITEM_TYPE_CONSUMABLE: ItemType
 ITEM_TYPE_MATERIAL: ItemType
 ITEM_TYPE_EQUIPMENT: ItemType
 ITEM_TYPE_QUEST: ItemType
 ITEM_TYPE_CURRENCY: ItemType
+ITEM_HEAL_TYPE_UNSPECIFIED: ItemHealType
+ITEM_HEAL_TYPE_FIXED: ItemHealType
+ITEM_HEAL_TYPE_MAX_HP_PERCENT: ItemHealType
 
 class ItemRow(_message.Message):
-    __slots__ = ("id", "name", "type", "quality", "max_stack_size", "sell_price", "icon", "description", "usable", "use_heal_hp", "equip_slot", "identify_pool_id", "equip_mesh", "equip_socket", "equip_offset_x", "equip_offset_y", "equip_offset_z", "equip_yaw", "equip_pitch", "equip_roll", "equip_scale_x", "equip_scale_y", "equip_scale_z")
+    __slots__ = ("id", "name", "type", "quality", "max_stack_size", "sell_price", "icon", "description", "usable", "use_heal_hp", "equip_slot", "identify_pool_id", "equip_mesh", "equip_socket", "equip_offset_x", "equip_offset_y", "equip_offset_z", "equip_yaw", "equip_pitch", "equip_roll", "equip_scale_x", "equip_scale_y", "equip_scale_z", "use_heal_type", "use_heal_max_hp_percent")
     ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -47,6 +56,8 @@ class ItemRow(_message.Message):
     EQUIP_SCALE_X_FIELD_NUMBER: _ClassVar[int]
     EQUIP_SCALE_Y_FIELD_NUMBER: _ClassVar[int]
     EQUIP_SCALE_Z_FIELD_NUMBER: _ClassVar[int]
+    USE_HEAL_TYPE_FIELD_NUMBER: _ClassVar[int]
+    USE_HEAL_MAX_HP_PERCENT_FIELD_NUMBER: _ClassVar[int]
     id: int
     name: str
     type: ItemType
@@ -70,7 +81,9 @@ class ItemRow(_message.Message):
     equip_scale_x: float
     equip_scale_y: float
     equip_scale_z: float
-    def __init__(self, id: _Optional[int] = ..., name: _Optional[str] = ..., type: _Optional[_Union[ItemType, str]] = ..., quality: _Optional[int] = ..., max_stack_size: _Optional[int] = ..., sell_price: _Optional[int] = ..., icon: _Optional[str] = ..., description: _Optional[str] = ..., usable: bool = ..., use_heal_hp: _Optional[int] = ..., equip_slot: _Optional[int] = ..., identify_pool_id: _Optional[int] = ..., equip_mesh: _Optional[str] = ..., equip_socket: _Optional[str] = ..., equip_offset_x: _Optional[float] = ..., equip_offset_y: _Optional[float] = ..., equip_offset_z: _Optional[float] = ..., equip_yaw: _Optional[float] = ..., equip_pitch: _Optional[float] = ..., equip_roll: _Optional[float] = ..., equip_scale_x: _Optional[float] = ..., equip_scale_y: _Optional[float] = ..., equip_scale_z: _Optional[float] = ...) -> None: ...
+    use_heal_type: ItemHealType
+    use_heal_max_hp_percent: int
+    def __init__(self, id: _Optional[int] = ..., name: _Optional[str] = ..., type: _Optional[_Union[ItemType, str]] = ..., quality: _Optional[int] = ..., max_stack_size: _Optional[int] = ..., sell_price: _Optional[int] = ..., icon: _Optional[str] = ..., description: _Optional[str] = ..., usable: bool = ..., use_heal_hp: _Optional[int] = ..., equip_slot: _Optional[int] = ..., identify_pool_id: _Optional[int] = ..., equip_mesh: _Optional[str] = ..., equip_socket: _Optional[str] = ..., equip_offset_x: _Optional[float] = ..., equip_offset_y: _Optional[float] = ..., equip_offset_z: _Optional[float] = ..., equip_yaw: _Optional[float] = ..., equip_pitch: _Optional[float] = ..., equip_roll: _Optional[float] = ..., equip_scale_x: _Optional[float] = ..., equip_scale_y: _Optional[float] = ..., equip_scale_z: _Optional[float] = ..., use_heal_type: _Optional[_Union[ItemHealType, str]] = ..., use_heal_max_hp_percent: _Optional[int] = ...) -> None: ...
 
 class ItemTableData(_message.Message):
     __slots__ = ("rows",)

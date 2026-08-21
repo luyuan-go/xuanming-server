@@ -926,7 +926,7 @@ async def new_activation_client_with_security(
     if prefix == "":
         prefix = _dep("DEFAULT_PREFIX")
     if timeout <= 0:
-        timeout = float(_dep("DEFAULT_DIAL_TIMEOUT"))
+        timeout = float(_dep("DEFAULT_DIAL_TIMEOUT_SEC", "DEFAULT_DIAL_TIMEOUT"))
     if security is None:
         security = _dep("ClientSecurity")()
     cli = _dep("new_etcd_client")(list(endpoints), timeout, prefix, security)
@@ -1630,7 +1630,7 @@ def _digest_ok(value: str) -> bool:
     """
     if not isinstance(value, str):
         return False
-    return _dep("digest_pattern").fullmatch(value) is not None
+    return _dep("DIGEST_PATTERN", "digest_pattern").fullmatch(value) is not None
 
 
 # ── 解析器 ──────────────────────────────────────────────────────────────────
@@ -1959,12 +1959,12 @@ def _capability_from_json(raw: bytes) -> Any:
     if fn is not None:
         return fn(raw)
     cls = getattr(dsauthfence, "Capability", None)
-    loader = getattr(cls, "from_json_bytes", None) if cls is not None else None
+    loader = getattr(cls, "from_json", None) or getattr(cls, "from_json_bytes", None) if cls is not None else None
     if loader is not None:
         return loader(raw)
     raise PandoraError(
         ErrUnavailable,
-        "dsauthfence 缺少 capability_from_json / Capability.from_json_bytes"
+        "dsauthfence 缺少 capability_from_json / Capability.from_json / Capability.from_json_bytes"
         "(见 dsauthfence_activate 的依赖契约块)",
     )
 

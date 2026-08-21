@@ -4,12 +4,25 @@
   ✅ Login / EnterRole / ListAccountRoles / SelectRole / Logout / GetPlayerNo /
      GetResumeContext,会话代际定序、会话现行性门、交付终检、登录失败 Quota、
      owner query-first 路由(applyOwnerPlacement 逐条移植)。
-  ⚠️ **断线重连三态门未移植**:Go 的 tryBattleReconnect 依赖 matchmaker 的
-     ResolvePlayerMatchContext(耐久权威)+ BattleTicketIssuer(roster 权威门)。
-     本版在 locator presence 报 BATTLE 时**不猜**,一律按 WAIT/OWNER_UNKNOWN 返回 ——
-     方向与 Go 的 `reconnectErr → WAIT` 分支一致(§9.22:结果不确定必须 fail-closed,
-     禁止冒充默认 Hub)。玩家表现为"退避重查",不会被错误地丢回大厅造成双在场。
-  ⚠️ DSTicket v2(RS256)未移植:main.py 在 v2 启用时拒启,不会静默降级成 HS256。
+  ✅ 断线重连三态门(`_try_battle_reconnect` / `_resolve_battle_authority` /
+     `_build_battle_resume`)+ Hub 放行门(`_guard_hub_route_against_active_battle`)
+     + 两条路由入口(`resolve_hub_endpoint_from_match` / `resolve_battle_endpoint`)。
+  ✅ DSTicket v2(RS256 / 方案 B)已接:`TicketUsecase` 的签发与验签两侧都按**配置**
+     二选一(`set_ds_ticket_v2_signer` / `set_ds_ticket_v2_verifier` 任一已注入 =
+     RS256-only,legacy HS256 玩家票一律拒)。绝不"签不出 v2 就退回 HS256" ——
+     那会同时打穿实例绑定 / 灰度轨道粘滞 / jti 吊销三道门(§9.3),而运行期没有任何信号。
+
+★ 战斗态判定为什么必须是**两层**权威(P0 修复 2026-07-15 的核心结论):
+    locator presence 是 30s TTL 的**投影**,key 在不能证明对局还活着,key 不在更不能
+    证明玩家已离开旧 DS(§9.22)。matchmaker 的 player claim + match 记录才是"玩家是否
+    属于一场活跃对局"的**耐久事实**(由 ReleaseMatch 显式释放)。presence 未命中 BATTLE
+    时必须再查一次 matchmaker,封住两个窗口:
+      · READY 已定但 notifyBattle 尚未 / 失败 → 玩家被误路由回 Hub;
+      · locator TTL 恰好蒸发但对局仍活跃 → Hub / Battle 双在场(§9 不变量 1)。
+    反向同理:presence 报 BATTLE 时**不能**直接签重连票,必须过 `InspectBattleRoute`
+    的显式三态(ACTIVE / TERMINAL / UNKNOWN)。把签票门的 ErrPermissionDeny 当"终局"
+    正是当年那个 P0:对局明明还活着,签票被拒只是因为 roster 抖动,却被读成"已结束"
+    而放行进 Hub。UNKNOWN 一律 fail-closed 重试,绝不折叠成终态。
 
 ★ 本文件里每一处 `except BaseException` 之前都先 `except asyncio.CancelledError: raise`
   (或该 except 自身无条件 raise)。吞掉取消会让 §9.16 的「先摘流量 → 再排空在途」失效。
@@ -24,15 +37,20 @@ import hashlib
 import time
 import uuid
 
+from pandora.locator.v1 import locator_pb2
 from pandora.login.v1 import login_pb2
+from pandora.match.v1 import match_pb2
 
 from pandorapy import auth as pauth
+from pandorapy import dsticket as pdsticket
 from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy import safego
 from pandorapy.protoenum import enum_name
+from pandorapy.services.login import battleroute as lbattleroute
 from pandorapy.services.login import clients as lclients
 from pandorapy.services.login import data as ldata
+from pandorapy.services.login import dsadmission as ldsadmission
 from pandorapy.services.login import dsticket as ldsticket
 from pandorapy.services.login import hubbinding as lhubbinding
 from pandorapy.services.login import passwd as lpasswd
@@ -62,11 +80,106 @@ OWNER_RETRY_AFTER_CEILING_MS = 10000
 # Login 因权威暂时不可判定而返回 WAIT 时给客户端的退避。
 LOGIN_WAIT_RETRY_AFTER_MS = 1000
 
+# locator presence 查询的就地短重试(Go: battleLocationQueryRetries / battleLocationQueryBackoff)。
+# 它挡的是**单次抖动**,不是故障:presence 一次读失败就判"不在战斗"会直接放行进 Hub,
+# 而玩家可能还在旧 Battle DS 上(§9 不变量 1)。重试耗尽后抛错,由调用方按 profile
+# 决定 fail-closed 还是降级 —— 这里绝不吞掉。
+# 3×50ms 的总额外开销 ≤ 100ms,只占 prod 5s 登录预算的 2%。
+BATTLE_LOCATION_QUERY_RETRIES = 3
+BATTLE_LOCATION_QUERY_BACKOFF_SEC = 0.05
+
+# ── battle 权威判定的 decision 取值(与 Go `logBattleAuthorityResolved` 逐字同值)──
+#
+# 这七个字符串是"为什么这次登录走了这条路"的**唯一**可观测判据。改一个字面量,
+# 按 decision 分组的看板与告警会静默丢一整类样本,而服务本身零错误。
+BATTLE_AUTHORITY_PRESENCE_IN_BATTLE = "presence_in_battle"
+BATTLE_AUTHORITY_PRESENCE_ONLY = "presence_only_no_match_resolver"
+BATTLE_AUTHORITY_RECOVERED_FROM_CLAIM = "recovered_from_ready_claim"
+BATTLE_AUTHORITY_ACTIVE_STAGE_NOT_READY = "match_active_stage_not_ready"
+BATTLE_AUTHORITY_MATCH_NONE = "match_none"
+BATTLE_AUTHORITY_QUERY_DEGRADED = "match_query_degraded"
+BATTLE_AUTHORITY_STATE_UNKNOWN_DEGRADED = "match_state_unknown_degraded"
+
+#: matchmaker 未被查询过时 state/stage 字段的日志占位。
+#: 与 `UNSPECIFIED`(查了,但权威自己说不知道)必须可判别 —— 两者的处置完全相反:
+#: 前者是本部署没接 resolver,后者是 fail-closed 重试点。
+MATCH_AUTHORITY_NOT_QUERIED = "NOT_QUERIED"
+
+# ── 在线准入(Redis authority)拒绝原因 —— 与 Go `admissionReject*` 逐字同值 ──
+#
+# 这五个字面量是 `ds_ticket_admission_rejected` 的 `reason` 维度。合并任意两个都会
+# 让"部署没接权威件"(恒不可进,要改配置)与"这一张票不行"(单玩家,要看归属变更)
+# 在同一条告警里塌成一类。
+ADMISSION_REJECT_REPO_UNAVAILABLE = "admission_repo_unavailable"
+ADMISSION_REJECT_TICKET_NO_JTI = "ticket_missing_jti"
+ADMISSION_REJECT_MARKER_OWNER_INVALID = "admission_marker_owner_invalid"
+ADMISSION_REJECT_PEEK_FAILED = "admission_peek_failed"
+ADMISSION_REJECT_HUB_CHECKER_UNAVAILABLE = "hub_assignment_checker_unavailable"
+ADMISSION_REJECT_HUB_ASSIGNMENT_STALE = "hub_assignment_not_current"
+
 _R = login_pb2  # 枚举一律从生成的 pb2 引用,不手抄数值
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _resume_stage_from_match_stage(stage: int) -> int:
+    """matchmaker 的 `PlayerMatchResumeStage` → login 的 `ResumeMatchStage`。
+
+    **必须逐值显式映射**,不准 `ResumeMatchStage(int(stage))` 这种数值直转:
+    两个 enum 分属不同 proto 文件、由不同服务演进,今天恰好同序不代表明天还同序。
+    一旦其中一侧插值,数值直转会把"排队中"渲染成"确认中",而两边都不报错。
+    未知值一律 UNSPECIFIED(fail-safe 到"不知道",不猜一个具体阶段)。
+    """
+    if stage == match_pb2.PLAYER_MATCH_RESUME_STAGE_STARTING:
+        return _R.RESUME_MATCH_STAGE_QUEUED
+    if stage == match_pb2.PLAYER_MATCH_RESUME_STAGE_QUEUED:
+        return _R.RESUME_MATCH_STAGE_QUEUED
+    if stage == match_pb2.PLAYER_MATCH_RESUME_STAGE_CONFIRMING:
+        return _R.RESUME_MATCH_STAGE_CONFIRMING
+    if stage == match_pb2.PLAYER_MATCH_RESUME_STAGE_ALLOCATING:
+        return _R.RESUME_MATCH_STAGE_ALLOCATING
+    if stage == match_pb2.PLAYER_MATCH_RESUME_STAGE_READY:
+        return _R.RESUME_MATCH_STAGE_READY
+    return _R.RESUME_MATCH_STAGE_UNSPECIFIED
+
+
+def _match_authority_state_name(ma: "lclients.PlayerMatchAuthority | None") -> str:
+    """nil-safe 的 state 名。对齐 Go `matchAuthorityStateName`。"""
+    if ma is None:
+        return MATCH_AUTHORITY_NOT_QUERIED
+    return enum_name(match_pb2.PlayerMatchContextState, ma.state)
+
+
+def _match_authority_stage_name(ma: "lclients.PlayerMatchAuthority | None") -> str:
+    """nil-safe 的 stage 名。对齐 Go `matchAuthorityStageName`。"""
+    if ma is None:
+        return MATCH_AUTHORITY_NOT_QUERIED
+    return enum_name(match_pb2.PlayerMatchResumeStage, ma.stage)
+
+
+def _match_authority_match_id(ma: "lclients.PlayerMatchAuthority | None") -> int:
+    if ma is None:
+        return 0
+    return ma.match_id
+
+
+def _battle_resume_game_mode_reason(
+    bl: "lclients.BattleLocation", ma: "lclients.PlayerMatchAuthority | None"
+) -> str:
+    """把"为什么没拿到 canonical game_mode"拆成四种可判别原因。对齐 Go 同名函数。
+
+    折叠成一条 "game_mode missing" 会让四种完全不同的故障看起来一样:
+    没接 resolver / 撮合已结束 / claim 漂移到别的 match / matchmaker 真的没写 game_mode。
+    """
+    if ma is None:
+        return "match_authority_missing"
+    if ma.state != match_pb2.PLAYER_MATCH_CONTEXT_STATE_ACTIVE:
+        return "match_state_not_active"
+    if ma.match_id != bl.match_id:
+        return "claim_match_id_drift"
+    return "game_mode_empty"
 
 
 # ── 结果结构 ─────────────────────────────────────────────────────────────────
@@ -185,6 +298,28 @@ class LoginResult:
         out.cell_id = self.cell_id
         out.player_no = self.player_no
         return out
+
+
+class BattleTicketResult:
+    """`issue_battle_ds_ticket_at_cell` 的产出。对齐 Go `biz.DSTicketResult` 的 battle 子集。
+
+    `battle_ds_addr` **只能**来自 roster 权威门返回的 target,不接受调用方传入 ——
+    "谁报一个 match_id 谁就能拿到那局的地址"正是这道门要挡的东西。
+    """
+
+    __slots__ = ("ticket", "expires_at_ms", "battle_ds_addr", "jti")
+
+    def __init__(
+        self,
+        ticket: str = "",
+        expires_at_ms: int = 0,
+        battle_ds_addr: str = "",
+        jti: str = "",
+    ) -> None:
+        self.ticket = ticket
+        self.expires_at_ms = expires_at_ms
+        self.battle_ds_addr = battle_ds_addr
+        self.jti = jti
 
 
 class _AccountView:
@@ -324,8 +459,48 @@ class LoginUsecase:
         self._profile_seeder: lclients.GrpcProfileSeeder | None = None
         self._owner: lclients.GrpcOwnerClient | None = None
         self._limiter: ldata.RedisLoginRateLimiter | None = None
+        self._match_resolver: lclients.GrpcMatchContextResolver | None = None
+        self._battle_ticket_issuer: "TicketUsecase | None" = None
+        self._rs256_ds_ticket_profile = False
 
     # ── setter(与 Go 的 SetXxx 逐一对应)──────────────────────────────────
+
+    def set_match_context_resolver(self, resolver) -> None:  # noqa: ANN001
+        """注入 matchmaker 只读耐久权威(可 None = presence-only 降级)。
+
+        None 只在 legacy HS256 dev 裸跑档可接受:strict 档下 `_strict_battle_gate_profile`
+        为 True,少了这条权威等于失去"presence 未命中 BATTLE 时的第二次确认",
+        而那正是双在场窗口的唯一封口。
+        """
+        self._match_resolver = resolver
+
+    def set_battle_ticket_issuer(self, issuer) -> None:  # noqa: ANN001
+        """注入 Battle 票据签发 + 三态路由检查入口(TicketUsecase)。
+
+        必须在对外监听**之前**注入:issuer 为 None 且 locator 已报 BATTLE 时,
+        `_try_battle_reconnect` 一律 ErrUnavailable —— 绝不回退到直签票或继续 Hub 链。
+        """
+        self._battle_ticket_issuer = issuer
+
+    def set_rs256_ds_ticket_profile(self, enabled: bool) -> None:
+        """标记本部署是否处于 DSTicket v2(RS256)档。
+
+        它与 `require_hub_assignment_binding` 一起构成 `_strict_battle_gate_profile`。
+        两轴正交:前者只看 login.ds_ticket 配没配 verifier,后者是归属绑定的滚动激活
+        栅栏。只按后者分档会漏掉"RS256 已配、binding 未激活"这个激活窗口 ——
+        那会出现「弱档放行 + 强档出票」:玩家在依赖抖动时被判"不在战斗",却拿到一张
+        DS 会正常接受的正式绑定票,于是同时在 Battle 与 Hub 两台可操作 DS(§9 不变量 1)。
+        """
+        self._rs256_ds_ticket_profile = enabled
+
+    def _strict_battle_gate_profile(self) -> bool:
+        """「战斗态查不到时能否放行进 Hub」的唯一档位判据。对齐 Go `strictBattleGateProfile`。
+
+        必须与 `_resolve_hub` 的出票档位判据逐字一致,理由见 `set_rs256_ds_ticket_profile`。
+        弱降级(返回 False)只允许存在于两轴都关的 legacy HS256 dev 裸跑档 ——
+        那里 login 自签票,本就没有生产级权威可言。
+        """
+        return self._require_hub_assignment_binding or self._rs256_ds_ticket_profile
 
     def set_session_generation_repo(self, repo) -> None:  # noqa: ANN001
         self._session_gen = repo
@@ -958,6 +1133,8 @@ class LoginUsecase:
                 hub_ds_addr=out.hub_ds_addr, hub_ticket_exp_ms=out.hub_ticket_exp_ms,
                 hub_assignment_id=r.hub_assignment_id,
                 battle_ds_addr=out.battle_ds_addr, match_id=r.match_id,
+                match_stage=enum_name(_R.ResumeMatchStage, r.match_stage),
+                game_mode=r.game_mode, map_id=r.map_id,
                 ds_pod=r.ds_pod_name, ds_instance_uid=r.ds_instance_uid,
                 ds_instance_epoch=r.ds_instance_epoch, release_track=r.release_track,
                 region_id=out.region_id, cell_id=out.cell_id, player_no=out.player_no,
@@ -975,16 +1152,34 @@ class LoginUsecase:
             return out
 
         # ── 断线重连分诊 ────────────────────────────────────────────────
-        # ⚠️ 三态门(matchmaker 耐久权威 + roster 权威签票)未移植。locator presence
-        # 报 BATTLE 时**不猜**:presence key 在也不能单独证明对局还活着,不在也不能证明
-        # 玩家已离开旧 DS(§9.22)。按 WAIT/OWNER_UNKNOWN 返回,客户端退避重查 ——
-        # 与 Go 的 reconnectErr 分支同方向,不会把玩家错误地丢回大厅造成双在场。
-        if self._notifier is not None:
+        # presence 投影 + matchmaker 耐久权威 + roster 三态门(§9.22)。
+        # 三种出口:签出重连票直接返回 / 拿到终局 fence 继续 Hub 链 / 不可判定按 WAIT。
+        hub_fence_match_id = 0
+        if self._notifier is None:
+            if self._strict_battle_gate_profile():
+                # strict 档没有 locator = 无法证明玩家不在战斗。放行进 Hub 就是双在场。
+                log.error(
+                    "login_locator_not_configured",
+                    reason="battle_gate_requires_locator",
+                    account=account, player_id=player_id,
+                    hint="strict 档必须配 login.locator.addr;否则无法证明玩家不在战斗",
+                )
+                out = base.copy_base()
+                out.resume = _wait_resume(
+                    _R.RESUME_WAIT_REASON_OWNER_UNKNOWN, LOGIN_WAIT_RETRY_AFTER_MS
+                )
+                return await deliver(out)
+        else:
             try:
-                loc = await self._notifier.get_battle_location(player_id)
+                reconnect, hub_fence_match_id = await self._try_battle_reconnect(
+                    player_id, device_id, session_token, sess_exp_ms,
+                    region_id, cell_id, sess_jti,
+                )
             except asyncio.CancelledError:
                 raise
             except BaseException as exc:  # noqa: BLE001
+                # §9.23:会话已建立,暂时失败不得清会话 / 不得要求重输密码,
+                # 带着 session 返回 WAIT,由客户端按 retry_after 重查同一入口。
                 log.warning(
                     "login_battle_reconnect_unresolved", err=str(exc),
                     account=account, player_id=player_id,
@@ -994,18 +1189,13 @@ class LoginUsecase:
                     _R.RESUME_WAIT_REASON_OWNER_UNKNOWN, LOGIN_WAIT_RETRY_AFTER_MS
                 )
                 return await deliver(out)
-            if loc.in_battle:
-                log.warning(
-                    "login_battle_reconnect_unresolved",
-                    reason="battle_authority_not_ported",
-                    account=account, player_id=player_id, match_id=loc.match_id,
-                    hint="Python 版尚未移植 matchmaker 三态权威门;按 WAIT 退避重查,不猜路由",
-                )
-                out = base.copy_base()
-                out.resume = _wait_resume(
-                    _R.RESUME_WAIT_REASON_OWNER_UNKNOWN, LOGIN_WAIT_RETRY_AFTER_MS
-                )
-                return await deliver(out)
+            if reconnect is not None:
+                # 重连票也必须过交付终检(与 Hub 链同一道门):签票期间会话可能已被
+                # 新登录轮换,交付旧凭据等于让被顶设备重新进场。
+                await self._fence_login_delivery(player_id, sess_jti)
+                reconnect.player_no = player_no
+                log_outcome(reconnect)
+                return reconnect
 
         # ── 角色权威门(§9.23 最小状态集)────────────────────────────────
         # 必须区分三种结果,不能都折叠成 role=0:
@@ -1059,8 +1249,11 @@ class LoginUsecase:
 
         # ── 解析 hub 分片 + hub 票据 ────────────────────────────────────
         try:
+            # hub_fence_match_id 来自三态门判定的**显式终局**对局:把它签进 hub 票的
+            # source_match_id,DS 侧据此拒绝那局的残留连接(Battle→Hub 回流栅栏)。
             hub_addr, hub_ticket, hub_exp_ms = await self._resolve_hub(
-                player_id, region_id, cell_id, selected_role_id, 0, sess_jti
+                player_id, region_id, cell_id, selected_role_id,
+                hub_fence_match_id, sess_jti,
             )
         except asyncio.CancelledError:
             raise
@@ -1118,6 +1311,571 @@ class LoginUsecase:
         else:
             out.resume = owned
         return await deliver(out)
+
+    # ── 战斗态两层权威(presence 投影 + matchmaker 耐久事实)──────────────
+
+    async def _query_battle_location(self, player_id: int) -> lclients.BattleLocation:
+        """带就地短重试的 presence 查询。对齐 Go `queryBattleLocation`。
+
+        重试是为了吸收**单次抖动**,不是为了等故障恢复:耗尽后抛错交给调用方按 profile
+        判定(strict → fail-closed;弱档 → 继续 Hub 链)。这里绝不"重试完就当没在战斗" ——
+        那正是 §16.10 点名禁止的"到期后假设成功"。
+        """
+        log = plog.get()
+        last_err = ""
+        for attempt in range(1, BATTLE_LOCATION_QUERY_RETRIES + 1):
+            if attempt > 1:
+                # 取消必须立刻生效:登录被上游放弃后不该继续占着 locator 的并发额度。
+                await asyncio.sleep(BATTLE_LOCATION_QUERY_BACKOFF_SEC)
+            try:
+                return await self._notifier.get_battle_location(player_id)
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                last_err = str(exc)
+                log.debug(
+                    "battle_location_query_retry", err=last_err, player_id=player_id,
+                    attempt=attempt, max=BATTLE_LOCATION_QUERY_RETRIES,
+                )
+        raise errcode.PandoraError(
+            errcode.ErrUnavailable,
+            "battle location query failed after %d attempts: %s",
+            BATTLE_LOCATION_QUERY_RETRIES,
+            last_err,
+        )
+
+    def _log_battle_authority_resolved(
+        self,
+        player_id: int,
+        decision: str,
+        bl: lclients.BattleLocation,
+        ma: "lclients.PlayerMatchAuthority | None",
+    ) -> None:
+        """两层权威的**唯一**收口日志。对齐 Go `logBattleAuthorityResolved`。
+
+        必须 INFO 且每次登录一条:"玩家到底被判成在不在战斗、依据是 presence 还是
+        matchmaker claim"是双在场类事故的第一判据,DEBUG 下线上完全不可见。
+        """
+        plog.get().info(
+            "battle_authority_resolved",
+            player_id=player_id,
+            decision=decision,
+            in_battle=bl.in_battle,
+            presence_state=enum_name(locator_pb2.LocationState, bl.presence_state),
+            locator_match_id=bl.match_id,
+            match_state=_match_authority_state_name(ma),
+            match_stage=_match_authority_stage_name(ma),
+            claim_match_id=_match_authority_match_id(ma),
+            strict_profile=self._strict_battle_gate_profile(),
+        )
+
+    async def _resolve_battle_authority(
+        self, player_id: int
+    ) -> tuple[lclients.BattleLocation, "lclients.PlayerMatchAuthority | None"]:
+        """presence 投影 + matchmaker 耐久权威的合成判定。对齐 Go `resolveBattleAuthority`。
+
+        两条不对称的短路,方向都不能反:
+          · presence **已经**报 BATTLE → 不必再查 matchmaker(结论只会更强不会更弱);
+          · presence 未命中 → **必须**再查一次 matchmaker,否则 READY↔投影 之间的窗口
+            会把还在对局里的玩家路由回 Hub。
+        """
+        log = plog.get()
+        bl = await self._query_battle_location(player_id)
+        if bl.in_battle or self._match_resolver is None:
+            decision = (
+                BATTLE_AUTHORITY_PRESENCE_IN_BATTLE
+                if bl.in_battle
+                else BATTLE_AUTHORITY_PRESENCE_ONLY
+            )
+            self._log_battle_authority_resolved(player_id, decision, bl, None)
+            return bl, None
+
+        try:
+            ma = await self._match_resolver.resolve_player_match_context(player_id)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            if self._strict_battle_gate_profile():
+                # strict 档:查不到耐久权威 = 无法证明玩家不在对局 → fail-closed。
+                raise errcode.PandoraError(
+                    errcode.ErrUnavailable,
+                    "cannot consult durable match authority; retry: %s",
+                    exc,
+                ) from exc
+            log.warning(
+                "match_authority_query_degraded", err=str(exc), player_id=player_id,
+                hint="legacy dev 档降级为 presence-only;strict 档在此 fail-closed",
+            )
+            self._log_battle_authority_resolved(
+                player_id, BATTLE_AUTHORITY_QUERY_DEGRADED, bl, None
+            )
+            return bl, None
+
+        if ma.state == match_pb2.PLAYER_MATCH_CONTEXT_STATE_ACTIVE:
+            if ma.stage == match_pb2.PLAYER_MATCH_RESUME_STAGE_READY and ma.match_id != 0:
+                # 撮合已 READY 但 presence 还没写上(或已蒸发):以耐久 claim 为准,
+                # 把 in_battle 恢复出来。少了这一支就是"READY 之后立刻重登 → 掉回大厅"。
+                log.info(
+                    "battle_authority_recovered_from_match_claim",
+                    player_id=player_id, match_id=ma.match_id,
+                )
+                recovered = lclients.BattleLocation(
+                    in_battle=True,
+                    match_id=ma.match_id,
+                    battle_addr=ma.battle_ds_addr,
+                    presence_state=bl.presence_state,
+                )
+                self._log_battle_authority_resolved(
+                    player_id, BATTLE_AUTHORITY_RECOVERED_FROM_CLAIM, recovered, ma
+                )
+                return recovered, ma
+            # ACTIVE 但还没 READY(排队 / 确认 / 分配中):玩家不在任何 DS 上,
+            # 走 Hub 链是对的;但 ma 要带回去,resume 的 match_stage / game_mode 靠它。
+            self._log_battle_authority_resolved(
+                player_id, BATTLE_AUTHORITY_ACTIVE_STAGE_NOT_READY, bl, ma
+            )
+            return bl, ma
+
+        if ma.state == match_pb2.PLAYER_MATCH_CONTEXT_STATE_NONE:
+            self._log_battle_authority_resolved(
+                player_id, BATTLE_AUTHORITY_MATCH_NONE, bl, ma
+            )
+            return bl, ma
+
+        # UNSPECIFIED = matchmaker 自己也不确定(读取错误 / 索引漂移)。
+        if self._strict_battle_gate_profile():
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "durable match authority state unknown; retry"
+            )
+        log.warning(
+            "match_authority_state_unknown_degraded", player_id=player_id,
+            hint="matchmaker 返回 UNSPECIFIED;legacy dev 档降级,strict 档 fail-closed",
+        )
+        # 刻意返回 None 而不是这个 ma:状态不可判定的 ma 不该再被 resume 拿去填字段。
+        self._log_battle_authority_resolved(
+            player_id, BATTLE_AUTHORITY_STATE_UNKNOWN_DEGRADED, bl, ma
+        )
+        return bl, None
+
+    async def _build_battle_resume(
+        self,
+        player_id: int,
+        bl: lclients.BattleLocation,
+        ma: "lclients.PlayerMatchAuthority | None",
+    ) -> ResumeContextResult:
+        """组装 BATTLE 重连的 resume。对齐 Go `buildBattleResume`。
+
+        路由权威仍然是 owner(§9.23 query-first):本函数只负责把 match 维度的三个字段
+        (match_id / match_stage / game_mode+map_id)叠加到 owner 的判定上。
+        owner 说不是 BATTLE → 一律 WAIT,**绝不**用 presence 覆盖 owner 的结论。
+        """
+        log = plog.get()
+        if ma is None and self._match_resolver is not None:
+            # 懒查:presence 直接报 BATTLE 时上游短路过 matchmaker,但 game_mode 只有
+            # 那里有。冷启动客户端要用它恢复 x-pandora-game-mode 路由头。
+            try:
+                ma = await self._match_resolver.resolve_player_match_context(player_id)
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                if self._strict_battle_gate_profile():
+                    log.error(
+                        "battle_resume_game_mode_unavailable", err=str(exc),
+                        player_id=player_id, match_id=bl.match_id,
+                        reason="match_query_failed",
+                        hint="strict 档 fail-closed;WAIT 原因被硬编码成 OWNER_UNKNOWN,真根因在 matchmaker 查询",
+                    )
+                    raise errcode.PandoraError(
+                        errcode.ErrUnavailable,
+                        "cannot resolve canonical game_mode for battle resume; retry: %s",
+                        exc,
+                    ) from exc
+                log.warning(
+                    "battle_resume_game_mode_query_degraded", err=str(exc),
+                    player_id=player_id, match_id=bl.match_id,
+                )
+
+        game_mode = ""
+        map_id = 0
+        # 三个条件缺一不可:claim 漂到别的 match 时,那局的 game_mode 用在这局上
+        # 会把客户端路由到错误的撮合命名空间。
+        if (
+            ma is not None
+            and ma.state == match_pb2.PLAYER_MATCH_CONTEXT_STATE_ACTIVE
+            and ma.match_id == bl.match_id
+        ):
+            game_mode = ma.game_mode
+            map_id = ma.map_id
+        if not game_mode:
+            if self._strict_battle_gate_profile():
+                log.error(
+                    "battle_resume_game_mode_unavailable", player_id=player_id,
+                    match_id=bl.match_id,
+                    reason=_battle_resume_game_mode_reason(bl, ma),
+                    match_state=_match_authority_state_name(ma),
+                    match_stage=_match_authority_stage_name(ma),
+                    claim_match_id=_match_authority_match_id(ma),
+                    hint="缺 game_mode 的 BATTLE resume 会让客户端拒绝路由,交付它等于交付一个 bug",
+                )
+                raise errcode.PandoraError(
+                    errcode.ErrUnavailable,
+                    "canonical game_mode unavailable for battle resume (match_id=%d); retry",
+                    bl.match_id,
+                )
+            log.warning(
+                "battle_resume_game_mode_missing", player_id=player_id,
+                match_id=bl.match_id, reason=_battle_resume_game_mode_reason(bl, ma),
+            )
+
+        # presence 确实报 BATTLE = 玩家已经在 DS 上跑着 → RUNNING;
+        # 只有"从 claim 恢复出来的 in_battle"才需要按撮合阶段细分。
+        stage = _R.RESUME_MATCH_STAGE_RUNNING
+        if bl.presence_state != locator_pb2.LOCATION_STATE_BATTLE and ma is not None:
+            stage = _resume_stage_from_match_stage(ma.stage)
+
+        decided, owned = await self._resolve_resume_from_owner(player_id)
+        if (
+            not decided
+            or owned.entry_state == _R.RESUME_ENTRY_STATE_WAIT
+            or owned.route != _R.RESUME_ROUTE_BATTLE
+        ):
+            # owner 是路由唯一权威。它说"没归属 / 不确定 / 归属在 Hub"时,presence 报的
+            # BATTLE 不能反过来推翻它 —— 那会造出第二个 owner(§9.22)。
+            log.warning(
+                "battle_resume_owner_not_battle", player_id=player_id,
+                match_id=bl.match_id, owner_decided=decided,
+                owner_route=enum_name(_R.ResumeRoute, owned.route),
+                hint="按 WAIT/OWNER_UNKNOWN 退避重查,不用 presence 覆盖 owner 判定",
+            )
+            return _wait_resume(
+                _R.RESUME_WAIT_REASON_OWNER_UNKNOWN, OWNER_UNKNOWN_RETRY_AFTER_MS
+            )
+        owned.match_id = bl.match_id
+        owned.match_stage = stage
+        owned.game_mode = game_mode
+        owned.map_id = map_id
+        return owned
+
+    async def _try_battle_reconnect(
+        self,
+        player_id: int,
+        device_id: str,
+        session_token: str,
+        sess_exp_ms: int,
+        region_id: int,
+        cell_id: int,
+        sess_jti: str,
+    ) -> tuple["LoginResult | None", int]:
+        """断线重连三态门。对齐 Go `tryBattleReconnect`。
+
+        返回 `(结果, terminal_fence_match_id)`:
+          · `(LoginResult, 0)` —— 判定在对局中,已签出 roster 权威门核准的重连票;
+          · `(None, 0)`        —— 判定不在对局中,交给 Hub 链;
+          · `(None, match_id)` —— 对局**显式终局**,放行进 Hub 但要把这局的 match_id
+            作为 source_match_id fence 签进 hub 票(Battle→Hub 回流栅栏);
+          · 抛 PandoraError  —— 不可判定,调用方按 WAIT 退避重查。
+        """
+        log = plog.get()
+        try:
+            bl, ma = await self._resolve_battle_authority(player_id)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            strict = self._strict_battle_gate_profile()
+            log.warning(
+                "battle_location_query_failed", err=str(exc), player_id=player_id,
+                reason=(
+                    "battle_authority_unavailable_fail_closed"
+                    if strict
+                    else "battle_authority_degraded_continue_hub"
+                ),
+                strict_profile=strict,
+            )
+            if strict:
+                raise errcode.PandoraError(
+                    errcode.ErrUnavailable,
+                    "cannot prove player is outside battle before B1 hub assignment: %s",
+                    exc,
+                ) from exc
+            return None, 0
+
+        if not bl.in_battle:
+            return None, 0
+
+        if self._battle_ticket_issuer is None:
+            # locator 已经明确说"在战斗",却没有签票权威 —— 继续 Hub 链就是双在场。
+            log.error(
+                "battle_reconnect_ticket_issuer_unavailable",
+                reason="ticket_issuer_not_configured",
+                player_id=player_id, match_id=bl.match_id,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "battle reconnect ticket authority unavailable"
+            )
+
+        state, route_err = await self._battle_ticket_issuer.inspect_battle_route(
+            player_id, bl.match_id
+        )
+        if state == lbattleroute.BattleRouteState.TERMINAL:
+            log.info(
+                "battle_reconnect_skipped_terminal_match", player_id=player_id,
+                match_id=bl.match_id, decision="route_hub_with_source_match_fence",
+            )
+            return None, bl.match_id
+        if state != lbattleroute.BattleRouteState.ACTIVE:
+            # UNKNOWN 一律可重试,**绝不**折叠成终态放行(P0 2026-07-15 的根因)。
+            log.warning(
+                "battle_reconnect_route_unknown_retryable",
+                err=str(route_err) if route_err is not None else "",
+                reason="battle_route_unknown", player_id=player_id, match_id=bl.match_id,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable,
+                "battle route authority temporarily unavailable; retry",
+            )
+
+        # resume 必须在签票**之前**建:它内部会 fail-closed(owner 不是 BATTLE / 缺
+        # game_mode),签完票再失败等于白白铸一个 jti,还要靠 TTL 自然过期。
+        resume = await self._build_battle_resume(player_id, bl, ma)
+
+        try:
+            issued = await self._battle_ticket_issuer.issue_battle_ds_ticket_at_cell(
+                player_id, bl.match_id, region_id, cell_id, sess_jti
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            log.error(
+                "authorize_battle_reconnect_ticket_failed", err=str(exc),
+                reason="battle_ticket_issue_failed", player_id=player_id,
+                match_id=bl.match_id, sess_jti=sess_jti,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable,
+                "battle reconnect ticket authority unavailable: %s",
+                exc,
+            ) from exc
+        if not issued.battle_ds_addr:
+            # 票有效但没地址 = 客户端拿到一张进不去任何地方的票。
+            log.error(
+                "battle_reconnect_target_addr_missing", reason="roster_target_addr_empty",
+                player_id=player_id, match_id=bl.match_id, ticket_jti=issued.jti,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "battle reconnect target address unavailable"
+            )
+
+        self._touch_device_async(player_id, device_id)
+
+        out = LoginResult()
+        out.player_id = player_id
+        out.session_token = session_token
+        out.session_exp_ms = sess_exp_ms
+        out.battle_ds_addr = issued.battle_ds_addr
+        out.battle_ticket = issued.ticket
+        out.battle_ticket_exp_ms = issued.expires_at_ms
+        out.match_id = bl.match_id
+        out.region_id = region_id
+        out.cell_id = cell_id
+        out.resume = resume
+        log.info(
+            "login_battle_reconnect", player_id=player_id, device_id=device_id,
+            match_id=bl.match_id, battle_ds_addr=issued.battle_ds_addr,
+            ticket_jti=issued.jti, sess_jti=sess_jti,
+            battle_ticket_exp_ms=issued.expires_at_ms,
+            region_id=region_id, cell_id=cell_id,
+            match_stage=enum_name(_R.ResumeMatchStage, resume.match_stage),
+            game_mode=resume.game_mode,
+            entry_state=enum_name(_R.ResumeEntryState, resume.entry_state),
+            owner_epoch=resume.owner_epoch,
+        )
+        return out, 0
+
+    # ── Hub 放行门 / 两条路由入口 ──────────────────────────────────────────
+
+    async def _guard_hub_route_against_active_battle(self, player_id: int) -> int:
+        """Hub 物理副作用入口的 active-BATTLE 三态门。对齐 Go `guardHubRouteAgainstActiveBattle`。
+
+        返回 source_match_id fence(0 = 无);拒绝时抛 PandoraError。
+
+        为什么 SelectRole / IssueDSTicket(hub) 也必须过它:这两条同样会让 allocator
+        真的分配一台 Hub DS 并签出可用票。只在 Login 上设门,等于留了两扇没锁的后门。
+        """
+        log = plog.get()
+        if self._notifier is None:
+            if self._strict_battle_gate_profile():
+                log.error(
+                    "hub_route_rejected", reason="locator_not_configured",
+                    player_id=player_id,
+                    hint="strict 档必须配 player_locator;否则无法证明玩家不在战斗",
+                )
+                raise errcode.PandoraError(
+                    errcode.ErrUnavailable,
+                    "player locator is required before hub ticket issuance",
+                )
+            return 0
+
+        try:
+            bl, _ma = await self._resolve_battle_authority(player_id)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            if self._strict_battle_gate_profile():
+                log.warning(
+                    "hub_route_rejected", err=str(exc),
+                    reason="battle_authority_unavailable", player_id=player_id,
+                )
+                raise errcode.PandoraError(
+                    errcode.ErrUnavailable,
+                    "cannot prove player is outside battle before hub ticket issuance: %s",
+                    exc,
+                ) from exc
+            log.warning(
+                "hub_route_gate_locator_degraded", err=str(exc),
+                reason="battle_authority_degraded_allow", player_id=player_id,
+            )
+            return 0
+
+        if not bl.in_battle:
+            return 0
+
+        if self._battle_ticket_issuer is None:
+            log.error(
+                "hub_route_rejected", reason="battle_route_authority_not_configured",
+                player_id=player_id, match_id=bl.match_id,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable,
+                "battle route authority unavailable while locator reports BATTLE",
+            )
+
+        state, route_err = await self._battle_ticket_issuer.inspect_battle_route(
+            player_id, bl.match_id
+        )
+        if state == lbattleroute.BattleRouteState.ACTIVE:
+            log.warning(
+                "hub_route_rejected_active_battle", reason="battle_route_active",
+                player_id=player_id, match_id=bl.match_id,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrInvalidState,
+                "player is in active battle (match_id=%d); reconnect via Login instead of hub ticket",
+                bl.match_id,
+            )
+        if state == lbattleroute.BattleRouteState.TERMINAL:
+            log.info(
+                "hub_route_allowed_terminal_battle",
+                decision="allow_hub_with_source_match_fence",
+                player_id=player_id, match_id=bl.match_id,
+            )
+            return bl.match_id
+        log.warning(
+            "hub_route_rejected_unknown_battle_state",
+            err=str(route_err) if route_err is not None else "",
+            reason="battle_route_unknown", player_id=player_id, match_id=bl.match_id,
+        )
+        raise errcode.PandoraError(
+            errcode.ErrUnavailable,
+            "cannot prove battle is over before hub ticket issuance",
+        )
+
+    async def resolve_hub_endpoint(self, player_id: int, sess_jti: str) -> tuple[str, str, int]:
+        """无来源 match 的 Hub 路由(等价 `resolve_hub_endpoint_from_match(..., 0, ...)`)。"""
+        return await self.resolve_hub_endpoint_from_match(player_id, 0, sess_jti)
+
+    async def resolve_hub_endpoint_from_match(
+        self, player_id: int, source_match_id: int, sess_jti: str
+    ) -> tuple[str, str, int]:
+        """结算 / 主动回大厅的 Hub 路由。对齐 Go `ResolveHubEndpointFromMatch`。
+
+        ★ 客户端上报的 `source_match_id` **只作日志参考**:真正签进票里的 fence 来自
+        路由权威门(`_guard_hub_route_against_active_battle`)。信客户端报的那个,
+        等于让客户端自己声明"我这局已经打完了"。
+        """
+        log = plog.get()
+        if player_id == 0:
+            log.warning(
+                "hub_endpoint_rejected", reason="missing_player_id",
+                source_match_id=source_match_id,
+            )
+            raise errcode.PandoraError(errcode.ErrInvalidArg, "playerID must be > 0")
+
+        fence_match_id = await self._guard_hub_route_against_active_battle(player_id)
+
+        # 单 Cell(Python 侧 cell_route 非空时 BaseConf 已在加载期拒启)。
+        region_id, cell_id = 0, 0
+
+        # 角色是 fail-closed 的:查不到就不签票。签一张 role=0 的 hub 票,
+        # 玩家会进到一个没有角色的大厅,表现为"进去了但什么都没有"。
+        role_id = await self._load_selected_role(player_id)
+
+        return await self._resolve_hub(
+            player_id, region_id, cell_id, role_id, fence_match_id, sess_jti
+        )
+
+    async def resolve_battle_endpoint(
+        self, player_id: int, match_id: int, sess_jti: str
+    ) -> tuple[str, str, int]:
+        """Battle 重连路由。对齐 Go `ResolveBattleEndpoint`。
+
+        地址与票据都只能来自 roster 权威门,调用方给的 match_id 只是"要哪一局"的选择。
+        """
+        log = plog.get()
+        if player_id == 0 or match_id == 0:
+            log.warning(
+                "battle_endpoint_rejected", reason="missing_player_or_match",
+                player_id=player_id, match_id=match_id,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrInvalidArg, "Battle endpoint requires player_id and match_id"
+            )
+        if self._battle_ticket_issuer is None:
+            log.error(
+                "battle_endpoint_rejected", reason="ticket_issuer_not_configured",
+                player_id=player_id, match_id=match_id,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "battle reconnect ticket authority unavailable"
+            )
+
+        region_id, cell_id = 0, 0
+        issued: BattleTicketResult | None = None
+        issue_err: BaseException | None = None
+        try:
+            issued = await self._battle_ticket_issuer.issue_battle_ds_ticket_at_cell(
+                player_id, match_id, region_id, cell_id, sess_jti
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            issue_err = exc
+
+        # 四种失败形态分开记 reason:签票报错 / 权威回了个空壳 / 有票没地址 /
+        # 有地址没票。折叠成一条会让"roster 权威降级"与"签发器坏了"在日志上无法区分。
+        reason = ""
+        if issue_err is not None:
+            reason = "issue_error"
+        elif issued is None:
+            reason = "nil_result"
+        elif not issued.battle_ds_addr:
+            reason = "empty_addr"
+        elif not issued.ticket:
+            reason = "empty_ticket"
+        if reason:
+            log.warning(
+                "battle_endpoint_unavailable",
+                err=str(issue_err) if issue_err is not None else "",
+                player_id=player_id, match_id=match_id, reason=reason,
+                region_id=region_id, cell_id=cell_id,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable,
+                "battle endpoint unavailable for player=%d match=%d (%s)",
+                player_id,
+                match_id,
+                reason,
+            )
+        return issued.battle_ds_addr, issued.ticket, issued.expires_at_ms
 
     # ── owner query-first ──────────────────────────────────────────────────
 
@@ -1319,6 +2077,19 @@ class LoginUsecase:
             log.warning("select_role_rejected", reason="missing_role_id", player_id=player_id)
             raise errcode.PandoraError(errcode.ErrInvalidArg, "roleID must be > 0")
 
+        # SelectRole 也是 Hub 物理副作用入口(落库 + 让 allocator 真分一台 Hub 并签票),
+        # 先过 active-BATTLE 三态权威门 —— 只在 Login 上设门等于留了一扇没锁的后门。
+        try:
+            fence_match_id = await self._guard_hub_route_against_active_battle(player_id)
+        except errcode.PandoraError as exc:
+            # 门内已按 reason 落盘;这里补一条把「被拒的是 SelectRole」钉死,
+            # 否则 hub_route_rejected* 分不清来自 SelectRole 还是 IssueDSTicket(hub)。
+            log.warning(
+                "select_role_rejected", reason="hub_route_gate_rejected",
+                player_id=player_id, role_id=role_id, err=str(exc),
+            )
+            raise
+
         if self._allowed_role_ids:
             if role_id not in self._allowed_role_ids:
                 log.warning(
@@ -1375,12 +2146,15 @@ class LoginUsecase:
                 player_id=player_id, role_id=role_id,
             )
 
-        addr, ticket, exp_ms = await self._resolve_hub(player_id, 0, 0, role_id, 0, sess_jti)
+        addr, ticket, exp_ms = await self._resolve_hub(
+            player_id, 0, 0, role_id, fence_match_id, sess_jti
+        )
         # R1:选角完成是不可逆状态推进(角色已落库 + 已签出新 hub 票),必须 INFO ——
         # 「玩家到底选没选角、选的哪个、拿到哪台 Hub」是"卡在选角界面"类问题的第一判据。
         log.info(
             "select_role_ok", player_id=player_id, role_id=role_id, hub_ds_addr=addr,
             hub_ticket_exp_ms=exp_ms, sess_jti=sess_jti, region_id=0, cell_id=0,
+            source_match_id=fence_match_id,
         )
         return addr, ticket, exp_ms
 
@@ -1756,11 +2530,26 @@ def _ticket_fingerprint(token: str) -> str:
 
 
 class TicketUsecase:
-    """DSTicket 签发 / 兑换。**只覆盖 legacy HS256**;v2 RS256 由 main 拒启拦下。"""
+    """DSTicket 签发 / 兑换。**legacy HS256 与 v2 RS256 两条路径,由配置显式二选一**。
+
+    ★ 选路判据是 `rs256_ds_ticket_profile_enabled()`(v2 signer 或 verifier 任一已注入),
+      **不是**"票里带的 alg",也**不是**"绑定齐不齐":
+
+        · 按票据 alg 兼容 = 攻击者拿一张 HS256 票就能绕开整个 v2 信任域;
+        · 按绑定齐不齐降级 = 绑定缺失时签一张无绑定票,§9.22 exact 实例绑定当场失效。
+
+      所以 v2 档下 legacy HS256 玩家票一律拒(`legacy HS256 DSTicket is disabled by
+      the RS256 profile`),v2 档下 battle 目标身份不完整一律拒签,hub 票一律拒签
+      (v2 hub 票必须带完整实例绑定,只能由 hub_allocator 签)。
+
+    ★ SessionToken 仍走独立的 HS256 路径(`LoginUsecase._signer`),不受本开关影响 ——
+      两者是两个信任域(`pandora-client` vs `pandora-game-ds`)。
+    """
 
     __slots__ = (
         "_ds_signer", "_jti_repo", "_session_gate",
         "_assignment_checker", "_require_hub_assignment_binding",
+        "_v2_signer", "_v2_verifier", "_battle_authorizer",
     )
 
     def __init__(
@@ -1773,6 +2562,43 @@ class TicketUsecase:
         self._session_gate: LoginUsecase | None = None
         self._assignment_checker: lhubbinding.HubAssignmentChecker | None = None
         self._require_hub_assignment_binding = False
+        self._v2_signer: pdsticket.DSTicketSigner | None = None
+        self._v2_verifier: pdsticket.DSTicketVerifier | None = None
+        self._battle_authorizer: lbattleroute.RedisBattleTicketAuthorizer | None = None
+
+    def set_ds_ticket_v2_signer(self, signer: pdsticket.DSTicketSigner | None) -> None:
+        """注入 v2(RS256)签发器 —— Go `SetDSTicketV2Signer`(启动期、对外监听前调用)。
+
+        注入后 battle 签票**全部**走 v2 实例绑定路径,不再签 legacy HS256 票;
+        hub 票一律拒签(v2 hub 票只能由 hub_allocator 签,它才有实例绑定权威)。
+        """
+        self._v2_signer = signer
+
+    def set_ds_ticket_v2_verifier(self, verifier: pdsticket.DSTicketVerifier | None) -> None:
+        """注入严格 RS256 verifier —— Go `SetDSTicketV2Verifier`。
+
+        只要 signer / verifier **任一**启用,玩家 DSTicket 验证就机械进入 RS256-only;
+        legacy HS256 只留给完全未启用 v2 的 local/off 档。
+        """
+        self._v2_verifier = verifier
+
+    def set_battle_ticket_authorizer(
+        self, authorizer: lbattleroute.RedisBattleTicketAuthorizer | None
+    ) -> None:
+        """注入 battle 签票前的 player↔match roster 权威门 —— Go `SetBattleTicketAuthorizer`。
+
+        未注入时 battle 签票 fail-closed(`ErrUnavailable`)—— 绝不"没有权威就直接签":
+        那正是"知道 match_id 就能拿到那局进场票"的旁路。Hub 签票不受此门影响。
+        """
+        self._battle_authorizer = authorizer
+
+    def rs256_ds_ticket_profile_enabled(self) -> bool:
+        """Go `rs256DSTicketProfileEnabled`。
+
+        ★ 判据是 `signer or verifier`(不是 and):只装了 verifier 的诊断副本也必须
+          拒收 legacy 票,否则"半装 v2"的部署会留一个只认 HS256 的兑换点。
+        """
+        return self._v2_signer is not None or self._v2_verifier is not None
 
     def set_hub_assignment_checker(
         self, checker: lhubbinding.HubAssignmentChecker | None, *, require_binding: bool = False
@@ -1794,37 +2620,309 @@ class TicketUsecase:
     async def issue_ds_ticket(
         self, player_id: int, ds_type: str, target_id: int, sess_jti: str
     ) -> tuple[str, int]:
-        del sess_jti  # legacy HS256 票不带 sjti(v2 才有),保留参数与 Go 同形
-        if ds_type == ldsticket.DS_TYPE_BATTLE:
-            return self._ds_signer.sign(
-                player_id, ldsticket.DS_TYPE_BATTLE, match_id=target_id
+        """公共签票入口 —— Go `TicketUsecase.IssueDSTicket`。
+
+        `sess_jti` 是**请求方登录会话 jti**(§9.23 会话 fencing):签进 v2 票的 `sjti`
+        claim,兑换点复核它仍是该玩家会话权威的当前一代。legacy HS256 票不带 sjti
+        (v1 票没有这个 claim),所以那条路径上它只是被丢弃 —— 但参数必须保留:
+        去掉它会让调用方"以为传了会绑定",而实际什么都没绑。
+        """
+        if player_id == 0:
+            raise errcode.PandoraError(errcode.ErrInvalidArg, "playerID must be > 0")
+        if ds_type not in (ldsticket.DS_TYPE_HUB, ldsticket.DS_TYPE_BATTLE):
+            raise errcode.PandoraError(
+                errcode.ErrInvalidArg, "dsType must be hub|battle, got %r", ds_type
             )
-        if ds_type == ldsticket.DS_TYPE_HUB:
-            return self._ds_signer.sign(player_id, ldsticket.DS_TYPE_HUB)
-        raise errcode.PandoraError(errcode.ErrInvalidArg, "invalid ds_type %r", ds_type)
+        if ds_type == ldsticket.DS_TYPE_BATTLE:
+            if target_id == 0:
+                raise errcode.PandoraError(
+                    errcode.ErrInvalidArg, "battle DSTicket requires match_id (targetID)"
+                )
+            # region/cell 恒 0:Python 侧单 Cell(main 的 cellroute_init_failed 闸已保证
+            # cell_route.mode 为空),与 Go 的 routeRegionCell 在 router==nil 时同值。
+            addr, ticket, exp_ms = await self.issue_battle_ds_ticket_at_cell(
+                player_id, target_id, 0, 0, sess_jti
+            )
+            del addr  # 公共 IssueDSTicket(battle) 响应不返回地址(地址来自 matchmaker)
+            return ticket, exp_ms
+        if self.rs256_ds_ticket_profile_enabled():
+            # v2(方案 B):hub 票必须带完整实例绑定,只能由 hub_allocator 签;login 不自签。
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable,
+                "hub DSTicket v2 must be issued by hub_allocator (instance binding required)",
+            )
+        if self._require_hub_assignment_binding:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable,
+                "hub DSTicket must be issued by hub_allocator while assignment binding is required",
+            )
+        return self._issue_ds_ticket_at_cell(player_id, ldsticket.DS_TYPE_HUB, 0, 0, 0)
+
+    async def issue_battle_ds_ticket_at_cell(
+        self,
+        player_id: int,
+        match_id: int,
+        region_id: int,
+        cell_id: int,
+        sess_jti: str,
+    ) -> tuple[str, str, int]:
+        """**所有** login 侧 Battle 签票路径的唯一入口 —— Go `IssueBattleDSTicketAtCell`。
+
+        返回 `(battle_ds_addr, ticket, expires_at_ms)`。
+
+        ★ 公共 IssueDSTicket 与断线重连都必须先经过**同一个** player↔match roster
+          权威门。重连路径若只相信 locator 就重新引入了"知道 match_id 即可拿票"的旁路
+          (locator 是 30s TTL 投影,不是成员资格证明)。
+        ★ 地址取自**授权时读到的同一份快照**(`target.ds_addr`),不回头用 locator 的地址:
+          locator 可能陈旧一整个 Pod 生命周期,那样签出的票绑新实例、地址指向旧实例。
+        """
+        if player_id == 0 or match_id == 0:
+            raise errcode.PandoraError(
+                errcode.ErrInvalidArg, "battle ticket requires player and match"
+            )
+        if self._battle_authorizer is None:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "battle ticket roster authority unavailable"
+            )
+        target = await self._battle_authorizer.authorize_battle_ticket(player_id, match_id)
+        if not target.ds_addr:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "battle ticket target address unavailable"
+            )
+        if self._v2_signer is not None:
+            ticket, exp_ms = self._issue_battle_ds_ticket_v2(
+                player_id, match_id, region_id, cell_id, target, sess_jti
+            )
+            return target.ds_addr, ticket, exp_ms
+        if self.rs256_ds_ticket_profile_enabled():
+            # 只装了 verifier 的 RS256 档:能验不能签。绝不退回 HS256 顶替。
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "RS256 DSTicket profile has no battle ticket signer"
+            )
+        ticket, exp_ms = self._issue_ds_ticket_at_cell(
+            player_id, ldsticket.DS_TYPE_BATTLE, match_id, region_id, cell_id
+        )
+        return target.ds_addr, ticket, exp_ms
+
+    async def inspect_battle_route(
+        self, player_id: int, match_id: int
+    ) -> lbattleroute.BattleRouteState:
+        """显式三态判定入口 —— Go `InspectBattleRoute`。不签票、零副作用。
+
+        authorizer 未接 → UNKNOWN fail-closed(绝不把 `ErrPermissionDeny` 当终态:
+        对局还活着但 roster 抖动一次,就会被读成"已结束"而放行进 Hub → 双在场)。
+        """
+        if player_id == 0 or match_id == 0:
+            raise errcode.PandoraError(
+                errcode.ErrInvalidArg, "battle route check requires player and match"
+            )
+        if self._battle_authorizer is None:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "battle route roster authority unavailable"
+            )
+        return await self._battle_authorizer.inspect_battle_route(player_id, match_id)
+
+    def _issue_battle_ds_ticket_v2(
+        self,
+        player_id: int,
+        match_id: int,
+        region_id: int,
+        cell_id: int,
+        target: lbattleroute.BattleTicketTarget,
+        sess_jti: str,
+    ) -> tuple[str, int]:
+        """v2(RS256)battle 票 —— Go `issueBattleDSTicketV2`。
+
+        实例身份**缺一即拒**(旧记录 / 降级路径),绝不退回无绑定票:那等于把 §9.22
+        exact 实例绑定与 §9.21 灰度轨道粘滞一起删掉,而两边日志全绿。
+        """
+        log = plog.get()
+        assert self._v2_signer is not None  # 调用方已判
+        if (
+            not target.pod_name
+            or not target.instance_uid
+            or target.instance_epoch == 0
+            or not target.allocation_id
+            or target.release_track
+            not in (pdsticket.RELEASE_TRACK_STABLE, pdsticket.RELEASE_TRACK_CANARY)
+        ):
+            log.warning(
+                "battle_ticket_v2_target_incomplete",
+                player_id=player_id, match_id=match_id, pod=target.pod_name,
+                uid=target.instance_uid, epoch=target.instance_epoch,
+                allocation_id=target.allocation_id, release_track=target.release_track,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable,
+                "battle ticket v2 requires complete DS instance identity from roster authority",
+            )
+        jti = str(uuid.uuid4())
+        try:
+            token, exp_ms = self._v2_signer.sign_battle_ticket(
+                player_id,
+                region_id,
+                cell_id,
+                jti,
+                pdsticket.DSTicketTarget(
+                    ds_pod_name=target.pod_name,
+                    ds_instance_uid=target.instance_uid,
+                    ds_instance_epoch=target.instance_epoch,
+                    release_track=target.release_track,
+                    match_id=match_id,
+                    allocation_id=target.allocation_id,
+                    # §9.23 会话绑定:VerifyDSTicket 核销时复核。
+                    session_jti=sess_jti,
+                ),
+            )
+        except pdsticket.DSTicketConfigError as exc:
+            log.error(
+                "sign_ds_ticket_v2_failed", err=str(exc),
+                player_id=player_id, match_id=match_id,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrInternal, "sign v2 battle ticket failed: %s", exc
+            ) from exc
+        # §9.3 五要件里 battle 侧的那一半必须落盘且是 INFO:DS 侧报
+        # 「battle v2 ticket no longer matches roster authority」时,需要对比
+        # 「签发瞬间的实例身份」与「核销瞬间的 roster 权威」——只留 pod + allocation_id
+        # 或只打 DEBUG(线上 info 级一条都不出)时两边日志根本对不上。
+        log.info(
+            "ds_ticket_v2_issued",
+            player_id=player_id, ds_type=ldsticket.DS_TYPE_BATTLE, match_id=match_id,
+            jti=jti, exp_ms=exp_ms, region_id=region_id, cell_id=cell_id,
+            pod=target.pod_name, allocation_id=target.allocation_id,
+            ds_instance_uid=target.instance_uid, ds_instance_epoch=target.instance_epoch,
+            release_track=target.release_track, sess_jti=sess_jti, ds_addr=target.ds_addr,
+            ticket_sha=_ticket_fingerprint(token),
+        )
+        return token, exp_ms
+
+    def _issue_ds_ticket_at_cell(
+        self, player_id: int, ds_type: str, target_id: int, region_id: int, cell_id: int
+    ) -> tuple[str, int]:
+        """legacy HS256 签票 —— Go `issueDSTicketAtCell`。RS256 档下一律拒。"""
+        if self.rs256_ds_ticket_profile_enabled():
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable,
+                "legacy HS256 DSTicket signing is disabled by the RS256 profile",
+            )
+        jti = str(uuid.uuid4())
+        if ds_type == ldsticket.DS_TYPE_BATTLE:
+            token, exp_ms = self._ds_signer.sign(
+                player_id, ds_type, match_id=target_id,
+                region_id=region_id, cell_id=cell_id, jti=jti,
+            )
+        else:
+            token, exp_ms = self._ds_signer.sign(
+                player_id, ds_type, region_id=region_id, cell_id=cell_id, jti=jti
+            )
+        # §11.3 R1:签发是不可逆推进,也是 login 侧唯一能证明「我发出去的票绑的是谁」的
+        # 记录。DS 拒票时后端无感,两边日志就靠这条 + jti 对账;与 v2 的
+        # ds_ticket_v2_issued 同为 INFO —— 同一个动作两个级别会让「票到底发没发」
+        # 在 legacy 档变成盲区。
+        plog.get().info(
+            "ds_ticket_issued",
+            player_id=player_id, ds_type=ds_type, target_id=target_id,
+            jti=jti, exp_ms=exp_ms, region_id=region_id, cell_id=cell_id,
+            ticket_sha=_ticket_fingerprint(token),
+        )
+        return token, exp_ms
+
+    def _verify_ds_ticket_signature(
+        self, ticket: str
+    ) -> tuple[ldsticket.DSTicketClaims, float]:
+        """按 JOSE header 的 alg 选**严格** verifier —— Go `verifyDSTicketSignature`。
+
+        返回 `(claims, replay_ttl_sec)`:防重放 marker 的 TTL 取自**验签路径**而不是
+        票内 exp —— 票内 exp 是签发侧的说法,marker 必须覆盖本档位允许的最大票寿命。
+
+        ★ 分发只用于选 verifier,**不是**兼容策略:装了任一 v2 组件后,HS256 玩家票
+          一律拒。按票据 alg 兼容 = 攻击者拿一张自签 HS256 票就绕开整个 v2 信任域。
+        """
+        alg = pdsticket.ds_ticket_algorithm(ticket)
+        if alg == ldsticket.ALGORITHM:  # HS256(legacy / v1)
+            if self.rs256_ds_ticket_profile_enabled():
+                raise errcode.PandoraError(
+                    errcode.ErrLoginTicketInvalid,
+                    "legacy HS256 DSTicket is disabled by the RS256 profile",
+                )
+            if self._ds_signer is None:
+                raise errcode.PandoraError(
+                    errcode.ErrUnavailable, "legacy DSTicket verifier unavailable"
+                )
+            claims = self._ds_signer.verify(ticket)
+            ttl = self._ds_signer.ttl
+            return claims, (
+                ttl.total_seconds() if isinstance(ttl, _dt.timedelta) else 300.0
+            )
+        # RS256(v2 / B1)
+        if self._v2_verifier is None:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "DSTicket v2 verifier unavailable"
+            )
+        v2 = self._v2_verifier.verify(ticket)
+        # ★ replay TTL 取 `DS_TICKET_MAX_TTL`(硬上限 3min)而不是本进程 signer 的 ttl:
+        #   兑换的票可能由 hub_allocator / matchmaker 签出,它们的 TTL 与本进程无关。
+        #   取小了会让 marker 先于票过期 —— 票还能用、防重放已经失效。
+        return _claims_from_v2(v2), pdsticket.DS_TICKET_MAX_TTL.total_seconds()
 
     async def verify_ds_ticket(self, ticket: str, ds_pod_name: str) -> ldsticket.DSTicketClaims:
-        """验签 + 归属绑定核对 + 会话复核 + jti 一次性消费。
+        """off/legacy 档兑换点 —— Go `VerifyDSTicket`。单次 SETNX 核销。"""
+        return await self._verify_ds_ticket(ticket, ds_pod_name, "", None)
+
+    async def verify_ds_ticket_for_admission(
+        self,
+        ticket: str,
+        ds_pod_name: str,
+        admission_id: str,
+        admission: ldsadmission.DSAdmissionBinding,
+    ) -> ldsticket.DSTicketClaims:
+        """Redis authority 档的在线入场兑换点 —— Go `VerifyDSTicketForAdmission`。
+
+        调用方(service 层)必须**已经**依次完成 ① DS callback credential 验签 +
+        pod scope、② Redis active 权威核对,并把核对结果作为 `admission` 传进来。
+        本方法只做剩下的两步:③ 玩家票 claims 与 caller active binding 精确比对,
+        ④ 以 admission owner 幂等消费 jti。
+
+        ★ 顺序不能并成"先消费再比对":那样一次绑定不符的重放会把合法票的 jti 烧掉。
+        """
+        if not admission_id:
+            raise errcode.PandoraError(errcode.ErrInvalidArg, "admission_id is required")
+        if admission is None or not admission.complete():
+            raise errcode.PandoraError(
+                errcode.ErrUnauthorized, "ds admission binding is incomplete"
+            )
+        return await self._verify_ds_ticket(ticket, ds_pod_name, admission_id, admission)
+
+    async def _verify_ds_ticket(  # noqa: C901, PLR0912, PLR0915 —— 逐段对 Go,拆开会丢顺序契约
+        self,
+        ticket: str,
+        ds_pod_name: str,
+        admission_id: str,
+        admission: ldsadmission.DSAdmissionBinding | None,
+    ) -> ldsticket.DSTicketClaims:
+        """验签 + 归属绑定核对 + 会话复核 + jti 消费。对齐 Go `verifyDSTicket`。
 
         顺序是契约,四步都不能换位置:
 
           ① **验签** —— 拿到 player_id / sjti / 绑定五要件;
           ② **归属绑定** —— 票内 ds_pod 必须等于调用方 pod,且仍是权威当前归属;
           ③ **会话现行性** —— 被顶下线的旧会话在此即被拒;
-          ④ **jti 消费** —— SETNX 一次性核销。
+          ④ **jti 消费** —— legacy 单次 SETNX / admission 版本化 marker。
 
         ③ 必须在 ④ 之前:先消费 jti 再判会话,会让被顶设备的一次重放把**合法票**的
         jti 先烧掉,新设备再也进不去。② 在 ③ 之前的理由同构 —— 拿错 Pod 的票不该
         消耗任何一次性资源。
         """
+        log = plog.get()
         try:
-            claims = self._ds_signer.verify(ticket)
+            claims, replay_ttl_sec = self._verify_ds_ticket_signature(ticket)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
             # 验签失败拿不到 claims/jti,`ticket_sha`(票体 sha256 前 8 字节,**绝不落
             # 原始 token**)是唯一能与签发侧 ds_ticket_issued 关联"同一张票"的键。
-            plog.get().warning(
+            log.warning(
                 "verify_ds_ticket_failed", err=str(exc), ds_pod=ds_pod_name,
                 ticket_sha=_ticket_fingerprint(ticket),
             )
@@ -1832,26 +2930,151 @@ class TicketUsecase:
         if claims.player_id == 0:
             raise errcode.PandoraError(errcode.ErrLoginTicketInvalid, "ds ticket has no player")
 
-        await self._check_hub_binding(claims, ds_pod_name)
+        admission_repo = None
+        attempt_owner = ""
+        credential_hash = ""
+        marker_status = ldata.AdmissionMarkerStatus.MISSING
 
-        if self._session_gate is not None:
-            await self._session_gate.require_ticket_session_current(
-                claims.player_id, claims.sess_jti
-            )
-        # ★ `claims.jti != ""` 是必须的前置判据(Go ticket.go:661)。
-        # pyjwt 的 `options={"require": ["jti"]}` 只保证**键存在**,不保证非空;空串会在
-        # Redis 上铸一个全局共享的防重放键 —— 第二张空 jti 票起全被判重放,而第一张
-        # 反而畅通无阻。
-        if self._jti_repo is not None and claims.jti:
-            ttl = self._ds_signer.ttl
+        if admission is not None:
+            admission_repo = _admission_jti_repo(self._jti_repo)
+            if admission_repo is None or not claims.jti:
+                # §11.3 R2:两个条件必须能分开 —— 前者是"部署没接 admission repo"
+                # (本部署恒不可进),后者是"这张票没有 jti"(单张票的问题)。
+                reason = (
+                    ADMISSION_REJECT_TICKET_NO_JTI
+                    if admission_repo is not None
+                    else ADMISSION_REJECT_REPO_UNAVAILABLE
+                )
+                log.error(
+                    "ds_ticket_admission_rejected", reason=reason,
+                    player_id=claims.player_id, ds_pod=ds_pod_name,
+                    ds_type=claims.ds_type, admission_id=admission_id,
+                )
+                raise errcode.PandoraError(
+                    errcode.ErrUnavailable, "ticket admission replay authority unavailable"
+                )
             try:
-                await self._jti_repo.mark_used(
-                    claims.jti, ttl.total_seconds() if isinstance(ttl, _dt.timedelta) else 300.0
+                attempt_owner = admission.admission_attempt_owner(admission_id)
+                credential_hash = admission.accepted_credential_hash()
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                # ErrInvalidArg 在 access log 里落 rpc_ok=Debug,线上完全不可见 —— 必须自己打。
+                log.warning(
+                    "ds_ticket_admission_rejected",
+                    reason=ADMISSION_REJECT_MARKER_OWNER_INVALID, err=str(exc),
+                    player_id=claims.player_id, ds_pod=ds_pod_name,
+                    ds_type=claims.ds_type, admission_id=admission_id,
+                )
+                raise errcode.PandoraError(
+                    errcode.ErrInvalidArg, "invalid admission marker owner: %s", exc
+                ) from exc
+            try:
+                marker_status = await admission_repo.peek_admission(claims.jti, attempt_owner)
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                log.warning(
+                    "ds_ticket_admission_rejected", reason=ADMISSION_REJECT_PEEK_FAILED,
+                    err=str(exc), jti=claims.jti, player_id=claims.player_id,
+                    ds_pod=ds_pod_name, ds_type=claims.ds_type, admission_id=admission_id,
+                )
+                raise
+            if marker_status == ldata.AdmissionMarkerStatus.CONFLICT:
+                # 票据已属于另一次 admission = replay / 双准入安全信号。ErrLoginTicketReplayed
+                # 是业务码,access log 不当故障 → 这条 WARN 是唯一落盘点。
+                log.warning(
+                    "ds_ticket_replayed", jti=claims.jti, player_id=claims.player_id,
+                    ds_pod=ds_pod_name, ds_type=claims.ds_type,
+                )
+                raise errcode.PandoraError(
+                    errcode.ErrLoginTicketReplayed,
+                    "ticket already belongs to another admission",
+                )
+            try:
+                if marker_status == ldata.AdmissionMarkerStatus.MISSING:
+                    validate_ticket_admission_strict(claims, ds_pod_name, admission)
+                else:
+                    validate_ticket_admission_retry(claims, ds_pod_name, admission)
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                log.warning(
+                    "ds_ticket_admission_binding_rejected", err=str(exc),
+                    player_id=claims.player_id, ds_pod=ds_pod_name, ds_type=claims.ds_type,
+                )
+                raise
+            if claims.ds_type == ldsticket.DS_TYPE_HUB:
+                await self._check_hub_admission(
+                    claims, ds_pod_name, admission_id, admission, marker_status
+                )
+        elif (
+            claims.version == pdsticket.DS_TICKET_VERSION_2
+            and claims.ds_type == ldsticket.DS_TYPE_BATTLE
+        ):
+            await self._check_battle_v2_binding(claims, ds_pod_name)
+        elif claims.ds_type == ldsticket.DS_TYPE_HUB:
+            await self._check_hub_binding(claims, ds_pod_name)
+
+        # R7 复审 P2-1:会话现行性复核**前置到 replay marker 写入之前**。已被新登录轮换的
+        # 旧票在此即被拒,不消耗 jti 防重放名额,也不占 admission 短幂等窗。
+        if self._session_gate is not None:
+            try:
+                await self._session_gate.require_ticket_session_current(
+                    claims.player_id, claims.sess_jti
                 )
             except asyncio.CancelledError:
                 raise
             except BaseException as exc:
-                plog.get().warning(
+                log.warning(
+                    "ds_ticket_session_gate_rejected_pre_marker",
+                    player_id=claims.player_id, ds_pod=ds_pod_name,
+                    jti=claims.jti, err=str(exc),
+                )
+                raise
+
+        if admission is not None:
+            # Redis authority:每次都用 Lua 原子确认短幂等窗。missing→marker;
+            # 同 attempt 只确认(不覆盖首次 credential hash、不续 TTL)。
+            assert admission_repo is not None  # 上面已 fail-closed
+            try:
+                status = await admission_repo.mark_used_by_admission(
+                    claims.jti, attempt_owner, credential_hash, replay_ttl_sec
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                log.warning(
+                    "ds_ticket_admission_replay_blocked", jti=claims.jti,
+                    player_id=claims.player_id, ds_pod=ds_pod_name, err=str(exc),
+                )
+                raise
+            if status not in (
+                ldata.AdmissionMarkerStatus.CREATED,
+                ldata.AdmissionMarkerStatus.EXISTING,
+            ):
+                # 与 peek 的 CONFLICT 同类,但发生在原子 mark 这一步:Peek 之后、Mark
+                # 之前有别的 admission 抢占了这张票。
+                log.warning(
+                    "ds_ticket_admission_marker_conflict", jti=claims.jti,
+                    player_id=claims.player_id, ds_pod=ds_pod_name,
+                    ds_type=claims.ds_type, admission_id=admission_id,
+                    marker_status=int(status),
+                )
+                raise errcode.PandoraError(
+                    errcode.ErrLoginTicketReplayed, "ticket admission marker conflict"
+                )
+        # ★ `claims.jti != ""` 是必须的前置判据(Go ticket.go:661)。
+        # pyjwt 的 `options={"require": ["jti"]}` 只保证**键存在**,不保证非空;空串会在
+        # Redis 上铸一个全局共享的防重放键 —— 第二张空 jti 票起全被判重放,而第一张
+        # 反而畅通无阻。
+        elif self._jti_repo is not None and claims.jti:
+            try:
+                await self._jti_repo.mark_used(claims.jti, replay_ttl_sec)
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                log.warning(
                     "ds_ticket_replay_blocked", jti=claims.jti,
                     player_id=claims.player_id, ds_pod=ds_pod_name, err=str(exc),
                 )
@@ -1862,18 +3085,113 @@ class TicketUsecase:
         # RPC,本条是 battle 重入的**唯一**成功里程碑 —— 只有 DEBUG 时,"票签出后静默"
         # 既可能是核销成功也可能是 DS 根本没来核销,生产日志形态完全相同,"重连后卡死"
         # 无法分诊。与签发侧 ds_ticket_issued 用 jti 成对对账。
-        plog.get().info(
+        log.info(
             "ds_ticket_verified", player_id=claims.player_id, ds_type=claims.ds_type,
             match_id=claims.match_id, jti=claims.jti, ds_pod=ds_pod_name,
         )
         return claims
 
+    async def _check_hub_admission(
+        self,
+        claims: ldsticket.DSTicketClaims,
+        ds_pod_name: str,
+        admission_id: str,
+        admission: ldsadmission.DSAdmissionBinding,
+        marker_status: ldata.AdmissionMarkerStatus,
+    ) -> None:
+        """在线准入下的 Hub assignment 终态门 —— Go `verifyDSTicket` 的 hub admission 段。
+
+        ★ v2 票**有意不携带** callback credential,所以 `stable` 也从 admission 构造:
+          当前 credential 已由 admission checker(Redis active)证明过,票只负责搬
+          `hub_assignment_id`。用票内零值去比对会让每一张 v2 票都判不符。
+        """
+        log = plog.get()
+        checker = self._assignment_checker
+        if checker is None or not hasattr(checker, "check_current_admission"):
+            # 部署配置缺口:本部署恒不可进 Hub。玩家侧只看到"进不去",没这条就只能去
+            # hub_allocator 侧猜(而那边根本没收到请求)。
+            log.error(
+                "ds_ticket_admission_rejected",
+                reason=ADMISSION_REJECT_HUB_CHECKER_UNAVAILABLE,
+                player_id=claims.player_id, ds_pod=ds_pod_name, admission_id=admission_id,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "hub admission assignment checker unavailable"
+            )
+        active = lhubbinding.binding_from_admission(admission, claims.hub_assignment_id)
+        stable = (
+            active
+            if claims.version == pdsticket.DS_TICKET_VERSION_2
+            else lhubbinding.binding_from_claims(claims)
+        )
+        try:
+            await checker.check_current_admission(
+                claims.player_id,
+                stable,
+                active,
+                marker_status == ldata.AdmissionMarkerStatus.MISSING,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            # 重连最常见拒票原因:断线期间 assignment 被 Transfer/Release/同名 Pod 重建。
+            # err 原因串否则被 as_code 丢弃(只回 code),任何级别无痕;请求也不经
+            # hub_allocator,对侧不会有日志 —— 这里是唯一落盘点。
+            log.warning(
+                "ds_ticket_admission_rejected",
+                reason=ADMISSION_REJECT_HUB_ASSIGNMENT_STALE, err=str(exc),
+                player_id=claims.player_id, ds_pod=ds_pod_name, jti=claims.jti,
+                ds_type=claims.ds_type, admission_id=admission_id,
+                ticket_hub_assignment_id=claims.hub_assignment_id,
+            )
+            raise
+
+    async def _check_battle_v2_binding(
+        self, claims: ldsticket.DSTicketClaims, ds_pod_name: str
+    ) -> None:
+        """非 admission 档下 battle v2 票的 roster 权威复核 —— Go 的同名分支。
+
+        七项逐条比,返回**第一个**不符的字段名并连同两侧的值落盘:塌成一句话再静默
+        return,换 DS 版本(release_track stable→canary)或 instance_epoch 递增导致的
+        全服进不去副本只能靠猜。
+        """
+        if self._battle_authorizer is None:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "battle ticket roster authority unavailable"
+            )
+        target = await self._battle_authorizer.authorize_battle_ticket(
+            claims.player_id, claims.match_id
+        )
+        field = _battle_v2_binding_mismatch_field(ds_pod_name, claims, target)
+        if not field:
+            return
+        plog.get().warning(
+            "ds_ticket_binding_rejected",
+            player_id=claims.player_id, ds_type=claims.ds_type, ds_pod=ds_pod_name,
+            jti=claims.jti, match_id=claims.match_id, mismatch_field=field,
+            ticket_pod=claims.ds_pod_name, ticket_uid=claims.ds_instance_uid,
+            ticket_instance_epoch=claims.ds_instance_epoch,
+            ticket_allocation_id=claims.allocation_id,
+            ticket_release_track=claims.release_track,
+            authority_pod=target.pod_name, authority_uid=target.instance_uid,
+            authority_instance_epoch=target.instance_epoch,
+            authority_allocation_id=target.allocation_id,
+            authority_release_track=target.release_track,
+        )
+        raise errcode.PandoraError(
+            errcode.ErrLoginTicketInvalid,
+            "battle v2 ticket no longer matches roster authority",
+        )
+
     async def _check_hub_binding(
         self, claims: ldsticket.DSTicketClaims, ds_pod_name: str
     ) -> None:
-        """Hub 票的归属绑定门。对齐 Go `ticket.go:593-627` 的 legacy 分支 + `:899-915`。
+        """Hub 票的归属绑定门(非 admission 档)。对齐 Go `verifyDSTicket` 的 hub 分支。
 
-        三种绑定形态、三种处置 —— **半绑定比无绑定更危险**,不能当兼容旧票放过:
+        先按 `version` 分叉,**再**看字段 —— 反过来("字段空就当 legacy")会把一张 v2 票
+        按 legacy 规则放行,§9.22 exact 实例绑定当场失效。
+
+        legacy 三种绑定形态、三种处置 —— **半绑定比无绑定更危险**,不能当兼容旧票放过:
 
           | 形态 | 判据 | 处置 |
           |---|---|---|
@@ -1882,6 +3200,9 @@ class TicketUsecase:
           | 全空 | `empty()` | 看 `require_hub_assignment_binding` 栅栏 |
         """
         if claims.ds_type != ldsticket.DS_TYPE_HUB:
+            return
+        if claims.version == pdsticket.DS_TICKET_VERSION_2:
+            await self._check_hub_binding_v2(claims, ds_pod_name)
             return
         log = plog.get()
         binding = lhubbinding.binding_from_claims(claims)
@@ -1937,3 +3258,268 @@ class TicketUsecase:
             raise errcode.PandoraError(
                 errcode.ErrLoginTicketInvalid, "hub ticket missing required assignment binding"
             )
+
+    async def _check_hub_binding_v2(
+        self, claims: ldsticket.DSTicketClaims, ds_pod_name: str
+    ) -> None:
+        """v2(RS256)hub 票的归属门 —— Go `verifyDSTicket` 的 `B1HubAssignmentChecker` 分支。
+
+        v2 票不带 callback credential(gen/jti/writer_epoch),所以判据是四要件 +
+        release_track,由 `check_current_b1` 从权威记录补齐 credential 后再跑活性校验。
+        checker 缺失 = 权威**不可判定** → `ErrUnavailable`(fail-closed),不是"通过"。
+        """
+        log = plog.get()
+        checker = self._assignment_checker
+        if checker is None or not hasattr(checker, "check_current_b1"):
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "hub v2 assignment checker unavailable"
+            )
+        common = dict(
+            player_id=claims.player_id, ds_type=claims.ds_type, ds_pod=ds_pod_name,
+            jti=claims.jti, ticket_pod=claims.ds_pod_name,
+            ticket_uid=claims.ds_instance_uid,
+            ticket_instance_epoch=claims.ds_instance_epoch,
+            ticket_hub_assignment_id=claims.hub_assignment_id,
+            ticket_release_track=claims.release_track,
+        )
+        if not ds_pod_name or ds_pod_name != claims.ds_pod_name:
+            log.warning(
+                "ds_ticket_binding_rejected",
+                mismatch_field="caller_ds_pod" if ds_pod_name else "caller_ds_pod_empty",
+                **common,
+            )
+            raise errcode.PandoraError(
+                errcode.ErrUnauthorized, "hub v2 ticket target pod mismatch"
+            )
+        try:
+            await checker.check_current_b1(
+                claims.player_id,
+                claims.ds_pod_name,
+                claims.ds_instance_uid,
+                claims.ds_instance_epoch,
+                claims.hub_assignment_id,
+                claims.release_track,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            # 归属权威说这张票绑的 assignment / 实例已不是当前的
+            # (Transfer / Release / 同名 Pod 重建 / 灰度换轨)。
+            log.warning(
+                "ds_ticket_binding_rejected", err=str(exc),
+                mismatch_field="hub_assignment_authority", **common,
+            )
+            raise
+
+
+# ── 兑换点辅助(模块级,与 Go 的包级函数一一对应)────────────────────────────
+
+
+def _claims_from_v2(v2: pdsticket.DSTicketClaimsV2) -> ldsticket.DSTicketClaims:
+    """`DSTicketClaimsV2` → 两路径共用的已验签视图。对齐 Go `verifyDSTicketSignature` 的 RS256 支。
+
+    ★ `ds_protocol_epoch` / `ds_credential_gen` / `ds_credential_jti` / `ds_writer_epoch`
+      **恒零**:v2 有意不携带 callback credential。把 `ds_instance_epoch` 顺手抄到
+      `ds_protocol_epoch` 会让 v2 票拿 legacy 的绑定规则过门(§9.22 当场失效)。
+    ★ `iat` / `exp` 是**秒**,这里的字段是**毫秒**。
+    """
+    return ldsticket.DSTicketClaims(
+        player_id=v2.player_id(),
+        match_id=v2.match_id,
+        issued_at_ms=int(v2.issued_at * 1000) if v2.issued_at is not None else 0,
+        expires_at_ms=int(v2.expires_at * 1000) if v2.expires_at is not None else 0,
+        ds_type=v2.ds_type,
+        jti=v2.jti,
+        region_id=v2.region_id,
+        cell_id=v2.cell_id,
+        role_id=v2.role_id,
+        ds_pod_name=v2.ds_pod_name,
+        ds_instance_uid=v2.ds_instance_uid,
+        hub_assignment_id=v2.hub_assignment_id,
+        ds_instance_epoch=v2.ds_instance_epoch,
+        allocation_id=v2.allocation_id,
+        release_track=v2.release_track,
+        source_match_id=v2.source_match_id,
+        sess_jti=v2.sess_jti,
+        version=pdsticket.DS_TICKET_VERSION_2,
+    )
+
+
+def _admission_jti_repo(repo):  # noqa: ANN001, ANN202
+    """Go 的 `jtiRepo.(data.AdmissionTicketJTIRepo)` 类型断言在 Python 的对应物。
+
+    判据是"两个方法都在",不是 isinstance:测试替身与未来的分片实现都不必继承
+    `RedisTicketJTIRepo`。缺任一方法返回 None → 调用方 fail-closed(**不是**
+    退回单次 SETNX:那会让在线准入的重试被当成重放拒掉)。
+    """
+    if repo is None:
+        return None
+    if not callable(getattr(repo, "peek_admission", None)):
+        return None
+    if not callable(getattr(repo, "mark_used_by_admission", None)):
+        return None
+    return repo
+
+
+def validate_ticket_admission_strict(
+    claims: ldsticket.DSTicketClaims,
+    ds_pod_name: str,
+    admission: ldsadmission.DSAdmissionBinding,
+) -> None:
+    """marker 不存在的**首次**准入 —— Go `validateTicketAdmissionStrict`。
+
+    首次准入必须把票内完整凭据(legacy)或稳定实例身份(v2)与 caller 当前 active
+    逐字段钉死;battle 票没有 assignment 字段,改钉 `match_id` + roster 成员资格。
+    """
+    if (
+        claims is None
+        or not admission.complete()
+        or not ds_pod_name
+        or ds_pod_name != admission.pod_name
+        or claims.ds_type != admission.ds_type
+    ):
+        raise errcode.PandoraError(
+            errcode.ErrLoginTicketInvalid, "ds ticket caller type or pod mismatch"
+        )
+    if claims.version == pdsticket.DS_TICKET_VERSION_2:
+        if (
+            claims.ds_pod_name != admission.pod_name
+            or claims.ds_instance_uid != admission.instance_uid
+            or claims.ds_instance_epoch != admission.protocol_epoch
+            or not claims.release_track
+            or claims.release_track != admission.release_track
+        ):
+            raise errcode.PandoraError(
+                errcode.ErrLoginTicketInvalid, "v2 ticket stable instance binding mismatch"
+            )
+        if admission.ds_type == ldsticket.DS_TYPE_HUB:
+            if claims.match_id != 0 or admission.match_id != 0 or not claims.hub_assignment_id:
+                raise errcode.PandoraError(
+                    errcode.ErrLoginTicketInvalid, "hub v2 ticket assignment binding invalid"
+                )
+            return
+        if admission.ds_type == ldsticket.DS_TYPE_BATTLE:
+            if (
+                claims.match_id == 0
+                or claims.match_id != admission.match_id
+                or not claims.allocation_id
+                or claims.allocation_id != admission.allocation_id
+                or claims.player_id not in admission.player_ids
+            ):
+                raise errcode.PandoraError(
+                    errcode.ErrLoginTicketInvalid, "battle v2 ticket authority binding mismatch"
+                )
+            return
+        raise errcode.PandoraError(
+            errcode.ErrLoginTicketInvalid, "ds ticket admission type invalid"
+        )
+    if admission.ds_type == ldsticket.DS_TYPE_HUB:
+        if (
+            claims.match_id != 0
+            or admission.match_id != 0
+            or claims.ds_pod_name != admission.pod_name
+            or claims.ds_instance_uid != admission.instance_uid
+            or claims.ds_protocol_epoch != admission.protocol_epoch
+            or claims.ds_credential_gen != admission.credential_gen
+            or claims.ds_credential_jti != admission.credential_jti
+            or claims.ds_writer_epoch != admission.writer_epoch
+        ):
+            raise errcode.PandoraError(
+                errcode.ErrLoginTicketInvalid,
+                "hub ticket does not match caller active credential",
+            )
+        return
+    if admission.ds_type == ldsticket.DS_TYPE_BATTLE:
+        if (
+            claims.match_id == 0
+            or claims.match_id != admission.match_id
+            or claims.player_id not in admission.player_ids
+        ):
+            raise errcode.PandoraError(
+                errcode.ErrLoginTicketInvalid,
+                "battle ticket match does not match caller active credential",
+            )
+        return
+    raise errcode.PandoraError(errcode.ErrLoginTicketInvalid, "ds ticket admission type invalid")
+
+
+def validate_ticket_admission_retry(
+    claims: ldsticket.DSTicketClaims,
+    ds_pod_name: str,
+    admission: ldsadmission.DSAdmissionBinding,
+) -> None:
+    """同 attempt_owner marker 已存在时的重试门 —— Go `validateTicketAdmissionRetry`。
+
+    普通 token 轮换允许 gen/jti/exp/kid/hash 变化;**稳定身份**(type/match/pod/UID/
+    instance epoch/writer)与 hub assignment_id 仍必须一致。把重试当首次处理会让一次
+    正常的凭据轮换把已经准入成功的玩家拒在门外。
+    """
+    if (
+        claims is None
+        or not admission.complete()
+        or not ds_pod_name
+        or ds_pod_name != admission.pod_name
+        or claims.ds_type != admission.ds_type
+    ):
+        raise errcode.PandoraError(
+            errcode.ErrLoginTicketInvalid, "ds ticket retry caller type or pod mismatch"
+        )
+    if claims.version == pdsticket.DS_TICKET_VERSION_2:
+        # v2 票不绑普通 callback credential,重试仍必须精确钉住稳定实例与
+        # allocation/assignment —— 没有可以放宽的项,直接复用 strict。
+        validate_ticket_admission_strict(claims, ds_pod_name, admission)
+        return
+    if admission.ds_type == ldsticket.DS_TYPE_HUB:
+        if (
+            claims.match_id != 0
+            or admission.match_id != 0
+            or not claims.hub_assignment_id
+            or claims.ds_pod_name != admission.pod_name
+            or claims.ds_instance_uid != admission.instance_uid
+            or claims.ds_protocol_epoch != admission.protocol_epoch
+            or claims.ds_writer_epoch != admission.writer_epoch
+        ):
+            raise errcode.PandoraError(
+                errcode.ErrLoginTicketInvalid, "hub ticket retry stable identity mismatch"
+            )
+        return
+    if admission.ds_type == ldsticket.DS_TYPE_BATTLE:
+        if (
+            claims.match_id == 0
+            or claims.match_id != admission.match_id
+            or claims.player_id not in admission.player_ids
+        ):
+            raise errcode.PandoraError(
+                errcode.ErrLoginTicketInvalid, "battle ticket retry match mismatch"
+            )
+        return
+    raise errcode.PandoraError(
+        errcode.ErrLoginTicketInvalid, "ds ticket retry admission type invalid"
+    )
+
+
+def _battle_v2_binding_mismatch_field(
+    ds_pod_name: str,
+    claims: ldsticket.DSTicketClaims,
+    target: lbattleroute.BattleTicketTarget,
+) -> str:
+    """battle v2 票 ↔ roster 权威的七要件逐条核对,返回**第一个**不符的字段名。
+
+    顺序有意义:先验调用方身份(caller pod),再验票据与权威的实例五要件 ——
+    前者不匹配时后者的对比值没有意义。
+    """
+    if not ds_pod_name:
+        return "caller_ds_pod_empty"
+    if ds_pod_name != claims.ds_pod_name:
+        return "caller_ds_pod"
+    if target.pod_name != claims.ds_pod_name:
+        return "pod_name"
+    if target.instance_uid != claims.ds_instance_uid:
+        return "instance_uid"
+    if target.instance_epoch != claims.ds_instance_epoch:
+        return "instance_epoch"
+    if target.allocation_id != claims.allocation_id:
+        return "allocation_id"
+    if target.release_track != claims.release_track:
+        return "release_track"
+    return ""

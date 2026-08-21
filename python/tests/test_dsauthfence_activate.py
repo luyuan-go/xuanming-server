@@ -460,13 +460,24 @@ def _prefix_range_end(prefix: bytes) -> bytes:
     return b"\0"
 
 
-# ── 装假件 → 导入被测模块 ───────────────────────────────────────────────────
+# ── 导入被测模块 ───────────────────────────────────────────────────────────
+#
+# ★ 这里**刻意不再**把假件塞进 `sys.modules["pandorapy.dsauthfence"]`。
+#   当初 dsauthfence 与 dsauthfence_activate 是并行移植的,真模块还不存在,只能用
+#   假件顶上;如今真模块已完成(fence + etcd + security 全量),假件就成了纯负债 ——
+#   而且那次替换是**全局且不恢复**的:pytest 在收集阶段就 import 全部测试模块,
+#   一旦被替换,后面任何在模块级读 `dsauthfence.XXX` 的产品代码(例如
+#   `player_locator/main.py` 的 `DS_AUTH_FENCE_FEATURES`)都会 AttributeError,
+#   表现成"某个八竿子打不着的测试文件收集失败",排查代价极高。
+#
+#   `dsauthfence_activate` 对 dsauthfence 的依赖是**惰性 getattr**(见该模块
+#   `_resolve` / `_Deps`),所以直接跑真模块即可,不需要任何注入。
+#
+#   `_FAKE` 仍然保留,但**只作本文件的常量/键名辅助源**(`_FAKE.required_key(...)`、
+#   `_FAKE.REQUIRED_VALUE_V2` 等),不再顶替真模块。这样反而多一层交叉校验:被测代码
+#   跑真 dsauthfence,期望值由独立手写的一份推导,两边算不到一块就会红。
 _FAKE = _build_fake_dsauthfence()
-sys.modules["pandorapy.dsauthfence"] = _FAKE
-import pandorapy  # noqa: E402
-
-pandorapy.dsauthfence = _FAKE
-sys.modules.pop("pandorapy.dsauthfence_activate", None)
+import pandorapy  # noqa: E402, F401
 from pandorapy import dsauthfence_activate as act  # noqa: E402
 from pandorapy.errcode import PandoraError  # noqa: E402
 

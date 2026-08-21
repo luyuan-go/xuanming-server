@@ -22,16 +22,18 @@
      顺序、次数都照搬 —— 少一次终检,被顶号的旧设备仍能拿到一张可用的进场票。
 
 诚实边界(见文件末与 main.py 的 honest_gaps):
-  ⚠️ IssueDSTicket 的 ds_type=hub / battle 两支**未移植**,fail-closed 返回
-     ErrNotImplemented。Go 那两支分别依赖 `ResolveHubEndpointFromMatch`
-     (locator presence + matchmaker 三态门)与 `ResolveBattleEndpoint`
-     (roster 权威门)。这里绝不用"签一张票 + 空地址"顶替:
-       - hub:客户端拿到空 hub_ds_addr,或拿到一张 allocator 没有登记过的自签票,
-         Hub DS 一律拒 —— 表现是"登录成功但进不去",比直接失败难查得多;
-       - battle:跳过 roster 权威门 = 谁报一个 match_id 谁就能拿到那局的进场票。
-  ⚠️ VerifyDSTicket 的 Redis admission 权威支(authority_mode=redis)未移植,
-     main.py 在该档位直接拒启(`ds_admission_authority_incomplete`),
-     所以本文件只保留 off/legacy 那一支。
+  · IssueDSTicket 的 ds_type=hub / battle 两支走**路由权威**而不是本地自签:
+      - hub    → `LoginUsecase.resolve_hub_endpoint_from_match`(locator presence +
+                 matchmaker 三态门 + Hub 分配链);
+      - battle → `LoginUsecase.resolve_battle_endpoint`(player↔match roster 权威门)。
+    绝不用"签一张票 + 空地址"顶替:hub 会让客户端拿到 allocator 没登记过的自签票
+    (Hub DS 一律拒,表现是"登录成功但进不去"),battle 会退化成"谁报一个 match_id
+    谁就能拿到那局的进场票"。
+  · VerifyDSTicket 有 off/legacy 与 Redis admission 两支,由 main 的
+    `ds_auth.authority_mode` **显式**决定(`set_redis_ds_admission_authority`),
+    不按票据形态猜。admission 支的固定线性顺序是
+    ① DS Bearer 验签 + pod scope → ② Redis active 权威 → ③ 票内 binding 比对 →
+    ④ 原子 marker 消费,任何一步前移都会让"拿错 Pod 的票"消耗掉一次性资源。
 """
 
 from __future__ import annotations
@@ -183,7 +185,12 @@ def _resume_to_proto(r: lbiz.ResumeContextResult) -> login_pb2.ResumeContext:
 
 
 def _claims_to_proto(c: ldsticket.DSTicketClaims) -> login_pb2.DSTicket:
-    """已验签的票据 claims → proto。对应 Go 的 VerifyDSTicket 返回体。"""
+    """已验签的票据 claims → proto。对应 Go 的 VerifyDSTicket 返回体。
+
+    ★ `ds_instance_epoch` / `allocation_id` / `release_track` 是 v2 票的 exact 实例绑定
+      与 §9.21 轨道粘滞三项:漏填,DS 侧拿到的 claims 里它们恒零/恒空,两道门在 DS 上
+      被整体跳过,而两边日志全绿。
+    """
     return login_pb2.DSTicket(
         player_id=c.player_id,
         match_id=c.match_id,
@@ -202,6 +209,9 @@ def _claims_to_proto(c: ldsticket.DSTicketClaims) -> login_pb2.DSTicket:
         hub_assignment_id=c.hub_assignment_id,
         ds_writer_epoch=c.ds_writer_epoch,
         dst_ver=c.version,
+        ds_instance_epoch=c.ds_instance_epoch,
+        allocation_id=c.allocation_id,
+        release_track=c.release_track,
         source_match_id=c.source_match_id,
     )
 

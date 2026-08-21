@@ -6,9 +6,14 @@
   `sign_internal` 只能签 RegisteredClaims。claim 名必须与 Go 的 json tag **逐字相同** ——
   UE DS 是照 Go 的字节解析的,少一个下划线就是"票签出来了、DS 一律拒",而两边日志全绿。
 
-★ v2(RS256,`login.ds_ticket.private_key_file` 非空)**未实现**:本模块只覆盖
-  legacy HS256。main.py 在 v2 启用时 fail-fast 拒启,不会走到这里 —— 这是刻意的:
+★ 本模块**只签 / 只验 legacy HS256**。v2(RS256,`login.ds_ticket.private_key_file`
+  非空)在公共层 `pandorapy.dsticket` 实现,由 `biz.TicketUsecase` 按**配置**二选一
+  分派(`_verify_ds_ticket_signature` 按 JOSE header 的 alg 选严格 verifier)。
+  两条路径互斥且由配置显式决定:装了任一 v2 组件后,legacy HS256 玩家票一律拒 ——
   静默用 HS256 顶替 RS256 会让 DS 全拒票,表现为"全服进不去场景"且启动日志全绿。
+
+★ `DSTicketClaims` 是**两条路径共用**的已验签视图(对应 Go 的 `biz.verifiedDSTicket`):
+  `version` 精确区分 1 / 2,绝不把 v2 缺失字段降级解释成 legacy。
 """
 
 from __future__ import annotations
@@ -29,7 +34,16 @@ DS_TYPE_BATTLE = "battle"
 
 @dataclasses.dataclass(slots=True)
 class DSTicketClaims:
-    """已验签的 DSTicket claims(与 Go 的 biz.DSTicketClaims 同形,只保留 v1 能带的字段)。"""
+    """已验签的 DSTicket claims —— 对应 Go 的 `biz.verifiedDSTicket` / `biz.DSTicketClaims`。
+
+    legacy(v1 / HS256)与 v2(RS256)**共用**这一个结构,由 `version` 精确区分:
+    v1 票的 `ds_instance_epoch` / `allocation_id` 恒零,v2 票的
+    `ds_protocol_epoch` / `ds_credential_gen` / `ds_credential_jti` / `ds_writer_epoch`
+    恒零(v2 有意不携带 callback credential,它只钉稳定实例 + assignment)。
+
+    ★ 判据必须先看 `version` 再看字段是否为零。反过来("字段空就当 legacy")会把一张
+      v2 票按 legacy 规则放行 —— §9.22 exact 实例绑定当场失效。
+    """
 
     player_id: int = 0
     match_id: int = 0
@@ -47,6 +61,12 @@ class DSTicketClaims:
     ds_credential_jti: str = ""
     hub_assignment_id: str = ""
     ds_writer_epoch: int = 0
+    #: v2(RS256 / B1)稳定实例绑定 —— §9.22 exact 实例绑定的两项。legacy 票恒零值。
+    #: ★ `ds_instance_epoch` 与 `ds_protocol_epoch` **不是同一个东西**:前者是 v2 的
+    #:   `ds_instance_epoch` claim(同名 Pod 重建后递增),后者是 legacy 的 callback
+    #:   credential 协议代际。共用一个字段会让 v2 票拿 legacy 规则过门。
+    ds_instance_epoch: int = 0
+    allocation_id: str = ""
     #: §9.21 灰度轨道粘滞。Go `pkg/auth/dsticket.go:81` 的 `release_track,omitempty`。
     #: 初版漏解这一列 —— 于是归属校验里所有 release_track 判据都因为恒为空串而
     #: 被跳过,stable 票能在 canary Pod 上兑换,反之亦然。
@@ -55,6 +75,51 @@ class DSTicketClaims:
     # sjti 只存在于 v2(RS256)票;v1 票恒为空 —— 见 RequireTicketSessionCurrent 的兼容窗。
     sess_jti: str = ""
     version: int = 1
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DSTicketBinding:
+    """hub DSTicket 的实例 / 归属绑定 —— 对应 Go 的 `auth.DSTicketBinding`。
+
+    零值 = 旧兼容票(不带绑定);非零时**七项必须完整**,身份 =
+    `hub_assignment_id + (pod, instance_uid, protocol_epoch, gen, credential_jti, writer_epoch)`。
+
+    ★ 为什么不允许"填几项算几项":半绑定票在 DS 侧会被逐字段比对判空放行 ——
+      看起来是新格式,实际能跨实例 / 跨归属兑换,§9.22 的 exact 实例绑定当场失效,
+      而两边日志都正常。所以要么整组齐,要么一项都不带。
+    """
+
+    ds_pod_name: str = ""
+    ds_instance_uid: str = ""
+    protocol_epoch: int = 0  # Go: uint32
+    credential_gen: int = 0  # Go: uint64
+    credential_jti: str = ""
+    hub_assignment_id: str = ""
+    writer_epoch: int = 0  # Go: uint32
+
+    def empty(self) -> bool:
+        """对应 Go 的 `DSTicketBinding.empty()`(七项全零)。"""
+        return (
+            self.ds_pod_name == ""
+            and self.ds_instance_uid == ""
+            and self.protocol_epoch == 0
+            and self.credential_gen == 0
+            and self.credential_jti == ""
+            and self.hub_assignment_id == ""
+            and self.writer_epoch == 0
+        )
+
+    def complete(self) -> bool:
+        """对应 Go 的 `DSTicketBinding.complete()`(七项全非零)。"""
+        return (
+            self.ds_pod_name != ""
+            and self.ds_instance_uid != ""
+            and self.protocol_epoch != 0
+            and self.credential_gen != 0
+            and self.credential_jti != ""
+            and self.hub_assignment_id != ""
+            and self.writer_epoch != 0
+        )
 
 
 class DSTicketSigner:
@@ -91,13 +156,16 @@ class DSTicketSigner:
         role_id: int = 0,
         source_match_id: int = 0,
         jti: str = "",
+        binding: DSTicketBinding | None = None,
     ) -> tuple[str, int]:
         """签一张 DSTicket,返回 (token, expires_at_ms)。
 
         入参校验逐条对 Go 的 `signDSTicket`:
           - battle 票必须带 match_id(没有 match 的 battle 票无从判定 roster);
           - battle 票**不得**带 source_match_id(那是 Battle→Hub 回流 fence,只属 hub 票);
-          - jti 不得为空(它是 B1 纯本地验票下**唯一**的吊销手段)。
+          - jti 不得为空(它是 B1 纯本地验票下**唯一**的吊销手段);
+          - `binding` 非空时必须是 hub 票且七项完整(对应 Go 的
+            `SignBoundHubDSTicket`;半绑定票一律拒签,理由见 `DSTicketBinding`)。
         """
         if player_id == 0:
             raise errcode.PandoraError(
@@ -116,6 +184,12 @@ class DSTicketSigner:
                 errcode.ErrInvalidArg,
                 "auth.SignDSTicket: battle DSTicket must not carry source_match_id",
             )
+        if binding is not None and not binding.empty():
+            if ds_type != DS_TYPE_HUB or not binding.complete():
+                raise errcode.PandoraError(
+                    errcode.ErrInvalidArg,
+                    "auth.SignDSTicket: hub binding must be complete and only used by hub tickets",
+                )
         jti = jti or str(uuid.uuid4())
         now = _dt.datetime.now(_dt.UTC)
         exp = now + self._ttl
@@ -140,6 +214,17 @@ class DSTicketSigner:
             claims["role_id"] = role_id
         if source_match_id:
             claims["source_match_id"] = source_match_id
+        # 绑定七项:claim 名逐字对应 Go `DSTicketClaims` 的 json tag,且照搬 omitempty
+        # (零值不序列化)—— 多写一个 "ds_epoch": 0 会让"票是否带绑定"在字节层失真,
+        # 而 DS 侧正是按 claim 存在性判别半绑定票的。
+        if binding is not None and not binding.empty():
+            claims["ds_pod"] = binding.ds_pod_name
+            claims["ds_uid"] = binding.ds_instance_uid
+            claims["ds_epoch"] = binding.protocol_epoch
+            claims["ds_gen"] = binding.credential_gen
+            claims["ds_credential_jti"] = binding.credential_jti
+            claims["hub_assignment_id"] = binding.hub_assignment_id
+            claims["ds_writer_epoch"] = binding.writer_epoch
         token = pyjwt.encode(claims, self._secret, algorithm=ALGORITHM)
         return token, int(exp.timestamp() * 1000)
 

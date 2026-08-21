@@ -51,11 +51,11 @@ constexpr ItemRow::ParseTableT_ ItemRow::InternalGenerateParseTable_(const ::_pb
     {
       PROTOBUF_FIELD_OFFSET(ItemRow, _impl_._has_bits_),
       0, // no _extensions_
-      23, 248,  // max_field_number, fast_idx_mask
+      25, 248,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4286578688,  // skipmap
+      4261412864,  // skipmap
       offsetof(ParseTableT_, field_entries),
-      23,  // num_field_entries
+      25,  // num_field_entries
       0,  // num_aux_entries
       offsetof(ParseTableT_, field_names),  // no aux_entries
       class_data,
@@ -158,8 +158,14 @@ constexpr ItemRow::ParseTableT_ ItemRow::InternalGenerateParseTable_(const ::_pb
       {::_pbi::TcParser::FastF32S2,
        {445, 22, 0,
         PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.equip_scale_z_)}},
-      {::_pbi::TcParser::MiniParse, {}},
-      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.config.v1.ItemHealType use_heal_type = 24 [json_name = "useHealType", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\261\273\345\236\213"];
+      {::_pbi::TcParser::FastV32S2,
+       {448, 23, 0,
+        PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.use_heal_type_)}},
+      // uint32 use_heal_max_hp_percent = 25 [json_name = "useHealMaxHpPercent", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\231\276\345\210\206\346\257\224", (.pandora.config.v1.excel_default) = "0"];
+      {::_pbi::TcParser::FastV32S2,
+       {456, 24, 0,
+        PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.use_heal_max_hp_percent_)}},
       {::_pbi::TcParser::MiniParse, {}},
       {::_pbi::TcParser::MiniParse, {}},
       {::_pbi::TcParser::MiniParse, {}},
@@ -215,10 +221,14 @@ constexpr ItemRow::ParseTableT_ ItemRow::InternalGenerateParseTable_(const ::_pb
       {PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.equip_scale_y_), _Internal::kHasBitsOffset + 21, 0, (0 | ::_fl::kFcOptional | ::_fl::kFloat)},
       // float equip_scale_z = 23 [json_name = "equipScaleZ", (.pandora.config.v1.excel_col) = "\350\243\205\345\244\207\347\274\251\346\224\276Z", (.pandora.config.v1.excel_default) = "1"];
       {PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.equip_scale_z_), _Internal::kHasBitsOffset + 22, 0, (0 | ::_fl::kFcOptional | ::_fl::kFloat)},
+      // .pandora.config.v1.ItemHealType use_heal_type = 24 [json_name = "useHealType", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\261\273\345\236\213"];
+      {PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.use_heal_type_), _Internal::kHasBitsOffset + 23, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      // uint32 use_heal_max_hp_percent = 25 [json_name = "useHealMaxHpPercent", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\231\276\345\210\206\346\257\224", (.pandora.config.v1.excel_default) = "0"];
+      {PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.use_heal_max_hp_percent_), _Internal::kHasBitsOffset + 24, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
     }},
     // no aux_entries
     {{
-      "\31\0\4\0\0\0\0\4\13\0\0\0\0\12\14\0\0\0\0\0\0\0\0\0"
+      "\31\0\4\0\0\0\0\4\13\0\0\0\0\12\14\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
       "pandora.config.v1.ItemRow"
       "name"
       "icon"
@@ -266,7 +276,9 @@ inline constexpr ItemRow::Impl_::Impl_(
         equip_roll_{0},
         equip_scale_x_{0},
         equip_scale_y_{0},
-        equip_scale_z_{0} {}
+        equip_scale_z_{0},
+        use_heal_type_{static_cast< ::pandora::config::v1::ItemHealType >(0)},
+        use_heal_max_hp_percent_{0u} {}
 
 template <typename>
 constexpr ItemRow::ItemRow(::_pbi::ConstantInitialized,
@@ -515,7 +527,7 @@ const ::_pbi::ClassData* ItemTableData_get_class_data() {
 }  // namespace config
 }  // namespace pandora
 static const ::_pb::EnumDescriptor* PROTOBUF_NONNULL
-    file_level_enum_descriptors_pandora_2fconfig_2fv1_2fitem_2eproto[1];
+    file_level_enum_descriptors_pandora_2fconfig_2fv1_2fitem_2eproto[2];
 static constexpr const ::_pb::ServiceDescriptor* PROTOBUF_NONNULL* PROTOBUF_NULLABLE
     file_level_service_descriptors_pandora_2fconfig_2fv1_2fitem_2eproto = nullptr;
 const ::uint32_t
@@ -523,7 +535,7 @@ const ::uint32_t
         protodesc_cold) = {
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemRow, _impl_._has_bits_),
-        26, // hasbit index offset
+        28, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemRow, _impl_.id_),
         PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemRow, _impl_.name_),
         PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemRow, _impl_.type_),
@@ -547,6 +559,8 @@ const ::uint32_t
         PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemRow, _impl_.equip_scale_x_),
         PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemRow, _impl_.equip_scale_y_),
         PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemRow, _impl_.equip_scale_z_),
+        PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemRow, _impl_.use_heal_type_),
+        PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemRow, _impl_.use_heal_max_hp_percent_),
         5,
         0,
         6,
@@ -570,6 +584,8 @@ const ::uint32_t
         20,
         21,
         22,
+        23,
+        24,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::config::v1::ItemTableData, _impl_._has_bits_),
         4, // hasbit index offset
@@ -580,7 +596,7 @@ const ::uint32_t
 static const ::_pbi::MigrationSchema
     schemas[] ABSL_ATTRIBUTE_SECTION_VARIABLE(protodesc_cold) = {
         {0, sizeof(::pandora::config::v1::ItemRow)},
-        {49, sizeof(::pandora::config::v1::ItemTableData)},
+        {53, sizeof(::pandora::config::v1::ItemTableData)},
 };
 static const ::_pbi::MessageGlobalsBase* PROTOBUF_NONNULL const
     file_message_globals[] = {
@@ -591,7 +607,7 @@ const char descriptor_table_protodef_pandora_2fconfig_2fv1_2fitem_2eproto[] ABSL
     protodesc_cold) = {
     "\n\034pandora/config/v1/item.proto\022\021pandora."
     "config.v1\032\035pandora/config/v1/excel.proto"
-    "\"\335\t\n\007ItemRow\022\032\n\002id\030\001 \001(\rB\n\362\222\031\002ID\370\222\031\001R\002id"
+    "\"\220\013\n\007ItemRow\022\032\n\002id\030\001 \001(\rB\n\362\222\031\002ID\370\222\031\001R\002id"
     "\022\"\n\004name\030\002 \001(\tB\016\362\222\031\006\345\220\215\347\247\260\370\222\031\001R\004name\022\?\n\004"
     "type\030\003 \001(\0162\033.pandora.config.v1.ItemTypeB"
     "\016\362\222\031\006\347\261\273\345\236\213\370\222\031\001R\004type\022)\n\007quality\030\004 \001(\rB\017"
@@ -622,13 +638,20 @@ const char descriptor_table_protodef_pandora_2fconfig_2fv1_2fitem_2eproto[] ABSL
     "ipScaleX\022:\n\requip_scale_y\030\026 \001(\002B\026\362\222\031\r\350\243\205"
     "\345\244\207\347\274\251\346\224\276Y\202\223\031\0011R\013equipScaleY\022:\n\requip_sc"
     "ale_z\030\027 \001(\002B\026\362\222\031\r\350\243\205\345\244\207\347\274\251\346\224\276Z\202\223\031\0011R\013equ"
-    "ipScaleZ\"]\n\rItemTableData\022.\n\004rows\030\001 \003(\0132"
-    "\032.pandora.config.v1.ItemRowR\004rows:\034\352\222\031\024\351"
-    "\201\223\345\205\267/d_\351\201\223\345\205\267.xlsx\260\223\031\004*\235\001\n\010ItemType\022\031\n\025"
-    "ITEM_TYPE_UNSPECIFIED\020\000\022\030\n\024ITEM_TYPE_CON"
-    "SUMABLE\020\001\022\026\n\022ITEM_TYPE_MATERIAL\020\002\022\027\n\023ITE"
-    "M_TYPE_EQUIPMENT\020\003\022\023\n\017ITEM_TYPE_QUEST\020\004\022"
-    "\026\n\022ITEM_TYPE_CURRENCY\020\005b\006proto3"
+    "ipScaleZ\022[\n\ruse_heal_type\030\030 \001(\0162\037.pandor"
+    "a.config.v1.ItemHealTypeB\026\362\222\031\022\344\275\277\347\224\250\345\233\236\350"
+    "\241\200\347\261\273\345\236\213R\013useHealType\022T\n\027use_heal_max_hp"
+    "_percent\030\031 \001(\rB\036\362\222\031\025\344\275\277\347\224\250\345\233\236\350\241\200\347\231\276\345\210\206\346\257"
+    "\224\202\223\031\0010R\023useHealMaxHpPercent\"]\n\rItemTable"
+    "Data\022.\n\004rows\030\001 \003(\0132\032.pandora.config.v1.I"
+    "temRowR\004rows:\034\352\222\031\024\351\201\223\345\205\267/d_\351\201\223\345\205\267.xlsx\260\223"
+    "\031\004*\235\001\n\010ItemType\022\031\n\025ITEM_TYPE_UNSPECIFIED"
+    "\020\000\022\030\n\024ITEM_TYPE_CONSUMABLE\020\001\022\026\n\022ITEM_TYP"
+    "E_MATERIAL\020\002\022\027\n\023ITEM_TYPE_EQUIPMENT\020\003\022\023\n"
+    "\017ITEM_TYPE_QUEST\020\004\022\026\n\022ITEM_TYPE_CURRENCY"
+    "\020\005*k\n\014ItemHealType\022\036\n\032ITEM_HEAL_TYPE_UNS"
+    "PECIFIED\020\000\022\030\n\024ITEM_HEAL_TYPE_FIXED\020\001\022!\n\035"
+    "ITEM_HEAL_TYPE_MAX_HP_PERCENT\020\002b\006proto3"
 };
 static const ::_pbi::DescriptorTable* PROTOBUF_NONNULL const
     descriptor_table_pandora_2fconfig_2fv1_2fitem_2eproto_deps[1] = {
@@ -638,7 +661,7 @@ static ::absl::once_flag descriptor_table_pandora_2fconfig_2fv1_2fitem_2eproto_o
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_pandora_2fconfig_2fv1_2fitem_2eproto = {
     false,
     false,
-    1591,
+    1879,
     descriptor_table_protodef_pandora_2fconfig_2fv1_2fitem_2eproto,
     "pandora/config/v1/item.proto",
     &descriptor_table_pandora_2fconfig_2fv1_2fitem_2eproto_once,
@@ -661,6 +684,13 @@ ItemType_descriptor() {
 }
 PROTOBUF_CONSTINIT const uint32_t ItemType_internal_data_[] = {
     393216u, 0u, };
+[[nodiscard]] const ::google::protobuf::EnumDescriptor* PROTOBUF_NONNULL
+ItemHealType_descriptor() {
+  ::google::protobuf::internal::AssignDescriptors(&descriptor_table_pandora_2fconfig_2fv1_2fitem_2eproto);
+  return file_level_enum_descriptors_pandora_2fconfig_2fv1_2fitem_2eproto[1];
+}
+PROTOBUF_CONSTINIT const uint32_t ItemHealType_internal_data_[] = {
+    196608u, 0u, };
 // ===================================================================
 
 ItemRow::ItemRow(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
@@ -702,9 +732,9 @@ ItemRow::ItemRow(
                offsetof(Impl_, id_),
            reinterpret_cast<const char*>(&from._impl_) +
                offsetof(Impl_, id_),
-           offsetof(Impl_, equip_scale_z_) -
+           offsetof(Impl_, use_heal_max_hp_percent_) -
                offsetof(Impl_, id_) +
-               sizeof(Impl_::equip_scale_z_));
+               sizeof(Impl_::use_heal_max_hp_percent_));
 
   // @@protoc_insertion_point(copy_constructor:pandora.config.v1.ItemRow)
 }
@@ -723,9 +753,9 @@ inline void ItemRow::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   ::memset(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, id_),
            0,
-           offsetof(Impl_, equip_scale_z_) -
+           offsetof(Impl_, use_heal_max_hp_percent_) -
                offsetof(Impl_, id_) +
-               sizeof(Impl_::equip_scale_z_));
+               sizeof(Impl_::use_heal_max_hp_percent_));
 }
 ItemRow::~ItemRow() {
   // @@protoc_insertion_point(destructor:pandora.config.v1.ItemRow)
@@ -807,11 +837,12 @@ PROTOBUF_NOINLINE void ItemRow::Clear() {
         reinterpret_cast<char*>(&_impl_.equip_offset_y_) -
         reinterpret_cast<char*>(&_impl_.max_stack_size_)) + sizeof(_impl_.equip_offset_y_));
   }
-  if (BatchCheckHasBit(cached_has_bits, 0x007f0000U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00ff0000U)) {
     ::memset(&_impl_.equip_offset_z_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.equip_scale_z_) -
-        reinterpret_cast<char*>(&_impl_.equip_offset_z_)) + sizeof(_impl_.equip_scale_z_));
+        reinterpret_cast<char*>(&_impl_.use_heal_type_) -
+        reinterpret_cast<char*>(&_impl_.equip_offset_z_)) + sizeof(_impl_.use_heal_type_));
   }
+  _impl_.use_heal_max_hp_percent_ = 0u;
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
 }
@@ -1047,6 +1078,24 @@ PROTOBUF_NOINLINE void ItemRow::Clear() {
     }
   }
 
+  // .pandora.config.v1.ItemHealType use_heal_type = 24 [json_name = "useHealType", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\261\273\345\236\213"];
+  if (CheckHasBit(cached_has_bits, 0x00800000U)) {
+    if (this_._internal_use_heal_type() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteEnumToArray(
+          24, this_._internal_use_heal_type(), target);
+    }
+  }
+
+  // uint32 use_heal_max_hp_percent = 25 [json_name = "useHealMaxHpPercent", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\231\276\345\210\206\346\257\224", (.pandora.config.v1.excel_default) = "0"];
+  if (CheckHasBit(cached_has_bits, 0x01000000U)) {
+    if (this_._internal_use_heal_max_hp_percent() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
+          25, this_._internal_use_heal_max_hp_percent(), target);
+    }
+  }
+
   if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
     target =
         ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
@@ -1185,7 +1234,7 @@ PROTOBUF_NOINLINE void ItemRow::Clear() {
       }
     }
   }
-  if (BatchCheckHasBit(cached_has_bits, 0x007f0000U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00ff0000U)) {
     // float equip_offset_z = 17 [json_name = "equipOffsetZ", (.pandora.config.v1.excel_col) = "\350\243\205\345\244\207\345\201\217\347\247\273Z", (.pandora.config.v1.excel_default) = "0"];
     if (CheckHasBit(cached_has_bits, 0x00010000U)) {
       if (::absl::bit_cast<::uint32_t>(this_._internal_equip_offset_z()) != 0) {
@@ -1226,6 +1275,22 @@ PROTOBUF_NOINLINE void ItemRow::Clear() {
     if (CheckHasBit(cached_has_bits, 0x00400000U)) {
       if (::absl::bit_cast<::uint32_t>(this_._internal_equip_scale_z()) != 0) {
         total_size += 6;
+      }
+    }
+    // .pandora.config.v1.ItemHealType use_heal_type = 24 [json_name = "useHealType", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\261\273\345\236\213"];
+    if (CheckHasBit(cached_has_bits, 0x00800000U)) {
+      if (this_._internal_use_heal_type() != 0) {
+        total_size += 2 +
+                      ::_pbi::WireFormatLite::EnumSize(this_._internal_use_heal_type());
+      }
+    }
+  }
+   {
+    // uint32 use_heal_max_hp_percent = 25 [json_name = "useHealMaxHpPercent", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\231\276\345\210\206\346\257\224", (.pandora.config.v1.excel_default) = "0"];
+    if (CheckHasBit(cached_has_bits, 0x01000000U)) {
+      if (this_._internal_use_heal_max_hp_percent() != 0) {
+        total_size += 2 + ::_pbi::WireFormatLite::UInt32Size(
+                                        this_._internal_use_heal_max_hp_percent());
       }
     }
   }
@@ -1350,7 +1415,7 @@ void ItemRow::MergeImpl(::google::protobuf::MessageLite& to_msg,
       }
     }
   }
-  if (BatchCheckHasBit(cached_has_bits, 0x007f0000U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00ff0000U)) {
     if (CheckHasBit(cached_has_bits, 0x00010000U)) {
       if (::absl::bit_cast<::uint32_t>(from._internal_equip_offset_z()) != 0) {
         _this->_impl_.equip_offset_z_ = from._impl_.equip_offset_z_;
@@ -1386,6 +1451,16 @@ void ItemRow::MergeImpl(::google::protobuf::MessageLite& to_msg,
         _this->_impl_.equip_scale_z_ = from._impl_.equip_scale_z_;
       }
     }
+    if (CheckHasBit(cached_has_bits, 0x00800000U)) {
+      if (from._internal_use_heal_type() != 0) {
+        _this->_impl_.use_heal_type_ = from._impl_.use_heal_type_;
+      }
+    }
+  }
+  if (CheckHasBit(cached_has_bits, 0x01000000U)) {
+    if (from._internal_use_heal_max_hp_percent() != 0) {
+      _this->_impl_.use_heal_max_hp_percent_ = from._impl_.use_heal_max_hp_percent_;
+    }
   }
   _this->_impl_._has_bits_[0] |= cached_has_bits;
   _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
@@ -1412,8 +1487,8 @@ void ItemRow::InternalSwap(ItemRow* PROTOBUF_RESTRICT PROTOBUF_NONNULL other) {
   ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.equip_mesh_, &other->_impl_.equip_mesh_, arena);
   ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.equip_socket_, &other->_impl_.equip_socket_, arena);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.equip_scale_z_)
-      + sizeof(ItemRow::_impl_.equip_scale_z_)
+      PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.use_heal_max_hp_percent_)
+      + sizeof(ItemRow::_impl_.use_heal_max_hp_percent_)
       - PROTOBUF_FIELD_OFFSET(ItemRow, _impl_.id_)>(
           reinterpret_cast<char*>(&_impl_.id_),
           reinterpret_cast<char*>(&other->_impl_.id_));

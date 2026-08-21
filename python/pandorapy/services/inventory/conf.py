@@ -149,7 +149,7 @@ class BagConf(BaseModel):
     """
 
     dsn: str = ""
-    # 与 Go bag 独立 DSN 同名；Python 版 BagService 尚未实现，但必须保留生成态契约，
+    # 与 Go bag 独立 DSN 同名；由 mysql_client_conf() 一次性翻译成共享 mysqlx seam，
     # 不能让中心 TLS/小池字段被 pydantic 静默丢弃。
     tls_ca_file: str = ""
     tls_server_name: str = ""
@@ -175,6 +175,24 @@ class BagConf(BaseModel):
     migration_batch: int = 0
 
     # ── 查询辅助(对应 Go 的同名方法)──
+
+    def mysql_client_conf(self) -> pconfig.MySQLConf:
+        """把 bag 独立连接配置一次性翻译成共享 mysqlx seam。对应 Go 的 MySQLClientConf()。
+
+        只传 DSN 会**静默丢掉**中心 MySQL 的 TLS 身份(tls_ca_file/tls_server_name)与
+        小池参数(max_open/conn_max_lifetime/ping_timeout)—— 配了不生效且不报错,
+        正是 mysqlx.pool_kwargs 文件头点名的那种坑。
+        """
+        return pconfig.MySQLConf(
+            dsn=self.dsn,
+            tls_ca_file=self.tls_ca_file,
+            tls_server_name=self.tls_server_name,
+            max_open_conns=self.max_open_conns,
+            max_idle_conns=self.max_idle_conns,
+            conn_max_lifetime=self.conn_max_lifetime,
+            conn_max_idle_time=self.conn_max_idle_time,
+            ping_timeout=self.ping_timeout,
+        )
 
     def section_capacity_of(self, bag_type: int) -> int:
         """某段容量(0 = 未配置,调用侧 fail-closed)。"""

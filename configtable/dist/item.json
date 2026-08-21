@@ -12,7 +12,8 @@
       "use_heal_hp": 50,
       "equip_scale_x": 1,
       "equip_scale_y": 1,
-      "equip_scale_z": 1
+      "equip_scale_z": 1,
+      "use_heal_type": 1
     },
     {
       "id": 10002,
@@ -81,7 +82,8 @@
       "use_heal_hp": 40,
       "equip_scale_x": 1,
       "equip_scale_y": 1,
-      "equip_scale_z": 1
+      "equip_scale_z": 1,
+      "use_heal_type": 1
     },
     {
       "id": 10007,
@@ -96,7 +98,8 @@
       "use_heal_hp": 100,
       "equip_scale_x": 1,
       "equip_scale_y": 1,
-      "equip_scale_z": 1
+      "equip_scale_z": 1,
+      "use_heal_type": 1
     },
     {
       "id": 10008,
@@ -111,7 +114,8 @@
       "use_heal_hp": 180,
       "equip_scale_x": 1,
       "equip_scale_y": 1,
-      "equip_scale_z": 1
+      "equip_scale_z": 1,
+      "use_heal_type": 1
     },
     {
       "id": 10009,
@@ -126,7 +130,8 @@
       "use_heal_hp": 320,
       "equip_scale_x": 1,
       "equip_scale_y": 1,
-      "equip_scale_z": 1
+      "equip_scale_z": 1,
+      "use_heal_type": 1
     },
     {
       "id": 10010,

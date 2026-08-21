@@ -42,6 +42,7 @@ from pandorapy import dbguard, errcode, logwindow, rating, safego
 from pandorapy import log as plog
 from pandorapy.protoenum import enum_name
 from pandorapy.services.battle_result import conf as bconf
+from pandorapy.services.battle_result import progress as bprog
 from pandorapy.services.battle_result import repo as brepo
 from pandorapy.services.battle_result import roster as brost
 
@@ -171,8 +172,14 @@ def match_release_retry_delay(attempt: int) -> float:
 _outbox_no_pusher_log = logwindow.Window()
 
 
-class BattleResultUsecase:
-    """battle_result 业务逻辑核心。对应 Go 的 biz.BattleResultUsecase。"""
+class BattleResultUsecase(bprog.ProgressMixin):
+    """battle_result 业务逻辑核心。对应 Go 的 biz.BattleResultUsecase。
+
+    实时进度通道(ReportProgress / 进度出箱发布器 / 任务事实转发器)在
+    `progress.ProgressMixin` —— 与 Go 把 biz 拆成 battle_result.go + progress.go +
+    mission_forward.go 同一刀口。Mixin 只依赖本类的 `_repo` / `_cfg` / `_granter` /
+    `_mail_sender` / `_monster_exp` 与 `battle_item_definition()`。
+    """
 
     def __init__(
         self,
@@ -197,6 +204,12 @@ class BattleResultUsecase:
         self._mail_sender = None
         self._item_catalog = None
         self._monster_exp = None
+        # 实时进度通道的两个弱依赖(ProgressMixin 的 setter 写这两个字段)。
+        # 必须在这里预置 None:Mixin 的 run_progress_publisher / run_mission_forwarder
+        # 在 main 未调 setter 时会读它们判「是否关闭」,少了预置就是 AttributeError,
+        # 而那是在**后台循环里**炸 —— 进程照跑、health 照答 SERVING。
+        self._exp_granter = None
+        self._mission_reporter = None
 
     # ── setter ────────────────────────────────────────────────────────────
 

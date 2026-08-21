@@ -262,11 +262,18 @@ static_resources:
               - match:
                   prefix: "/pandora.trade.v1.TradeService/"
                 requires:
-                  provider_name: "pandora_session"              # mail 服务面向玩家 RPC 均需 JWT（收件人以 JWT sub 为准；Send* 运营接口路由层 403 + 服务层 systemOnly 双保险拒玩家）
+                  provider_name: "pandora_session"
+              # auction 服务全部是玩家 RPC(owner_id 以 JWT sub 为准,R5)
+              - match:
+                  prefix: "/pandora.auction.v1.AuctionService/"
+                requires:
+                  provider_name: "pandora_session"
+              # mail 服务面向玩家 RPC 均需 JWT（收件人以 JWT sub 为准；Send* 运营接口路由层 403 + 服务层 systemOnly 双保险拒玩家）
               - match:
                   prefix: "/pandora.mail.v1.MailService/"
                 requires:
-                  provider_name: "pandora_session"              # leaderboard 客户端只允许读榜;写 RPC 即使经此入口也会被服务层按 player_id 拒绝。
+                  provider_name: "pandora_session"
+              # leaderboard 客户端只允许读榜;写 RPC 即使经此入口也会被服务层按 player_id 拒绝。
               - match:
                   prefix: "/pandora.leaderboard.v1.LeaderboardService/"
                 requires:
@@ -530,6 +537,14 @@ static_resources:
                   prefix: "/pandora.trade.v1.TradeService/"
                 route:
                   cluster: trade_cluster
+                  timeout: 15s
+                  idle_timeout: 60s
+
+              # ----- auction(全服拍卖行,unary 15s 超时)-----
+              - match:
+                  prefix: "/pandora.auction.v1.AuctionService/"
+                route:
+                  cluster: auction_cluster
                   timeout: 15s
                   idle_timeout: 60s
 
@@ -1159,6 +1174,27 @@ static_resources:
               socket_address:
                 address: host.docker.internal
                 port_value: 20012
+
+  # ===== auction_cluster(全服拍卖行 unary,:20016)=====
+  - name: auction_cluster
+    type: STRICT_DNS
+    dns_lookup_family: V4_ONLY
+    connect_timeout: 1s
+    lb_policy: ROUND_ROBIN
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config:
+          http2_protocol_options: {}
+    load_assignment:
+      cluster_name: auction_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: host.docker.internal
+                port_value: 20016
 
   # ===== leaderboard_cluster(unary,demo 15s 超时)=====
   - name: leaderboard_cluster

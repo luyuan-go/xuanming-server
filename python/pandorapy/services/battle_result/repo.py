@@ -44,6 +44,7 @@ from pandora.match.v1 import match_pb2
 
 from pandorapy import dbguard, errcode, mysqlx
 from pandorapy import log as plog
+from pandorapy.services.battle_result import progress_repo as bprogress
 
 # 本服的权威库(容量巡检 / 保留期 metric 的 db 标签)。
 BATTLE_DB = "pandora_battle"
@@ -215,8 +216,13 @@ _EXPIRED_BATTLES_WHERE = "created_at < FROM_UNIXTIME(%s / 1000)"
 _SETTLED_PROGRESS_WHERE = "settled_at_ms > 0 AND settled_at_ms < %s"
 
 
-class MySQLBattleRepo:
-    """基于 asyncmy 连接池的战斗结算仓储。对应 Go 的 data.MySQLBattleRepo。"""
+class MySQLBattleRepo(bprogress.ProgressRepoMixin):
+    """基于 asyncmy 连接池的战斗结算仓储。对应 Go 的 data.MySQLBattleRepo。
+
+    实时进度 / 任务事实出箱的方法在 `progress_repo.ProgressRepoMixin`(与 Go 拆
+    progress_repo.go / mission_outbox_repo.go 同因),这里继承进来 —— 对外仍是
+    **同一个 repo 对象**,biz 侧调用点与 Go 一一对应。
+    """
 
     __slots__ = ("_pool",)
 
@@ -1047,7 +1053,12 @@ class MySQLBattleRepo:
 
     # ── 低层小工具 ───────────────────────────────────────────────────────
 
-    async def _query(self, sql: str, params: tuple, what: str) -> list:
+    async def _query(
+        self, sql: str, params: tuple, what: str, code: int = errcode.ErrInternal
+    ) -> list:
+        """单条只读 SQL。`code` 供进度水位这类**必须报 ErrUnavailable**(可重试)的
+        调用点覆盖 —— Go 侧同一条 SQL 用的是 ErrUnavailable 而不是 ErrInternal,
+        码不同会让 DS 把可重试的库抖动当成永久失败而丢批。"""
         async with self._pool.acquire() as conn, conn.cursor() as cur:
             try:
                 await cur.execute(sql, params)
@@ -1057,21 +1068,21 @@ class MySQLBattleRepo:
             except errcode.PandoraError:
                 raise
             except BaseException as exc:  # noqa: BLE001
-                raise errcode.PandoraError(
-                    errcode.ErrInternal, "%s: %s", what, exc
-                ) from exc
+                raise errcode.PandoraError(code, "%s: %s", what, exc) from exc
 
-    async def _exec(self, sql: str, params: tuple, what: str) -> int:
+    async def _exec(
+        self, sql: str, params: tuple, what: str, code: int = errcode.ErrInternal
+    ) -> int:
         async with self._pool.acquire() as conn, conn.cursor() as cur:
             try:
                 await cur.execute(sql, params)
                 return cur.rowcount or 0
             except asyncio.CancelledError:
                 raise
+            except errcode.PandoraError:
+                raise
             except BaseException as exc:  # noqa: BLE001
-                raise errcode.PandoraError(
-                    errcode.ErrInternal, "%s: %s", what, exc
-                ) from exc
+                raise errcode.PandoraError(code, "%s: %s", what, exc) from exc
 
 
 def _authoritative_recovery_player_ids(rec: TerminalReleaseRecord | None) -> list[int]:

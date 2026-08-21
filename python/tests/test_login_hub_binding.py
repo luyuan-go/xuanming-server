@@ -12,6 +12,9 @@
 
 from __future__ import annotations
 
+import base64
+import json
+
 import pytest
 
 from pandora.hub.v1 import allocator_pb2 as hubpb
@@ -220,6 +223,33 @@ async def test_release_track_mismatch_is_rejected() -> None:
 
 # ── TicketUsecase 门本身 ────────────────────────────────────────────
 
+def _hs256_token(sub: str = "42") -> str:
+    """构一张 **JOSE header 可解析的 HS256 票**,签名是垃圾。
+
+    ★ 不能再像初版那样传字面串 `"tkt"`。`_verify_ds_ticket_signature` 的第一步是
+      `ds_ticket_algorithm(ticket)` —— 先解 JOSE header 才知道该选 HS256 还是
+      RS256 verifier(算法混淆的第一道闸)。`"tkt"` 没有 header,会在**进入本文件
+      要测的归属绑定门之前**就以 `ds ticket header invalid` 拒掉,于是每条用例都在
+      验一个它没打算验的东西 —— 假件根本没把代码送进被测状态。
+
+      签名是垃圾没关系:`_Signer.verify` 忽略入参直接返回预置 claims,本文件锁的是
+      **验签之后**的归属绑定 / 会话 / jti 三段,不是验签本身。
+
+    `sub` 只用来让"两张不同的票"在字节上真的不同(防重放用例要区分票体)。
+    """
+    def seg(obj: dict) -> str:
+        # JWT 用**无 padding** base64url。带 `=` 会让 PyJWT 解不出 header。
+        raw = json.dumps(obj, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    return seg({"alg": "HS256", "typ": "JWT"}) + "." + seg({"sub": sub}) + ".c2ln"
+
+
+TKT = _hs256_token()
+TKT_A = _hs256_token("a")
+TKT_B = _hs256_token("b")
+
+
 class _Signer:
     ttl = 300
 
@@ -250,7 +280,7 @@ async def test_pod_mismatch_is_rejected_before_authority_lookup() -> None:
     uc = lbiz.TicketUsecase(_Signer(_claims()), None)
     uc.set_hub_assignment_checker(checker)
     with pytest.raises(errcode.PandoraError) as ei:
-        await uc.verify_ds_ticket("tkt", "hub-OTHER")
+        await uc.verify_ds_ticket(TKT, "hub-OTHER")
     assert ei.value.code == errcode.ErrUnauthorized
     assert checker.calls == 0, "pod 不匹配就不该再去查权威"
 
@@ -260,7 +290,7 @@ async def test_empty_caller_pod_is_rejected() -> None:
     with pytest.raises(errcode.PandoraError) as ei:
         uc = lbiz.TicketUsecase(_Signer(_claims()), None)
         uc.set_hub_assignment_checker(_OkChecker())
-        await uc.verify_ds_ticket("tkt", "")
+        await uc.verify_ds_ticket(TKT, "")
     assert ei.value.code == errcode.ErrUnauthorized
 
 
@@ -270,7 +300,7 @@ async def test_half_binding_ticket_is_rejected() -> None:
     uc = lbiz.TicketUsecase(_Signer(_claims(ds_credential_jti="", hub_assignment_id="")), None)
     uc.set_hub_assignment_checker(_OkChecker())
     with pytest.raises(errcode.PandoraError) as ei:
-        await uc.verify_ds_ticket("tkt", POD)
+        await uc.verify_ds_ticket(TKT, POD)
     assert ei.value.code == errcode.ErrLoginTicketInvalid
 
 
@@ -280,7 +310,7 @@ async def test_missing_checker_with_complete_binding_fails_closed() -> None:
     uc = lbiz.TicketUsecase(_Signer(_claims()), None)
     uc.set_hub_assignment_checker(None)
     with pytest.raises(errcode.PandoraError) as ei:
-        await uc.verify_ds_ticket("tkt", POD)
+        await uc.verify_ds_ticket(TKT, POD)
     assert ei.value.code == errcode.ErrUnavailable
 
 
@@ -293,11 +323,11 @@ async def test_empty_binding_passes_when_fence_off_and_rejected_when_on() -> Non
     )
     uc = lbiz.TicketUsecase(_Signer(empty), None)
     uc.set_hub_assignment_checker(None, require_binding=False)
-    assert (await uc.verify_ds_ticket("tkt", POD)).player_id == 42
+    assert (await uc.verify_ds_ticket(TKT, POD)).player_id == 42
 
     uc.set_hub_assignment_checker(None, require_binding=True)
     with pytest.raises(errcode.PandoraError) as ei:
-        await uc.verify_ds_ticket("tkt", POD)
+        await uc.verify_ds_ticket(TKT, POD)
     assert ei.value.code == errcode.ErrLoginTicketInvalid
 
 
@@ -308,7 +338,7 @@ async def test_battle_ticket_skips_hub_binding() -> None:
         _Signer(_claims(ds_type=ldsticket.DS_TYPE_BATTLE, match_id=9)), None
     )
     uc.set_hub_assignment_checker(None)
-    assert (await uc.verify_ds_ticket("tkt", "battle-0")).match_id == 9
+    assert (await uc.verify_ds_ticket(TKT, "battle-0")).match_id == 9
 
 
 # ── jti 空串防重放 ──────────────────────────────────────────────────
@@ -334,6 +364,6 @@ async def test_empty_jti_does_not_mint_a_shared_replay_key() -> None:
     repo = _JTIRepo()
     uc = lbiz.TicketUsecase(_Signer(_claims(jti="", ds_type=ldsticket.DS_TYPE_BATTLE)), repo)
     uc.set_hub_assignment_checker(None)
-    await uc.verify_ds_ticket("tkt-a", "battle-0")
-    await uc.verify_ds_ticket("tkt-b", "battle-0")  # 第二张不该被判重放
+    await uc.verify_ds_ticket(TKT_A, "battle-0")
+    await uc.verify_ds_ticket(TKT_B, "battle-0")  # 第二张不该被判重放
     assert repo.used == [], "空 jti 不该写任何防重放键"

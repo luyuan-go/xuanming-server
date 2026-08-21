@@ -184,6 +184,7 @@ $ScriptDir   = $PSScriptRoot
 $ProjectRoot = (Resolve-Path "$ScriptDir/../..").Path
 . (Join-Path $ScriptDir 'lib/local_infra_state.ps1')
 . (Join-Path $ScriptDir 'lib/planner_mysql_startup.ps1')
+. (Join-Path $ScriptDir 'lib/planner_start_timing.ps1')
 
 # 本脚本也会由长期运行的 web 进程拉起。Windows 进程只在启动时继承一次 PATH；之后安装
 # minikube 等工具，即使已经写入机器/用户 PATH，web 创建的新控制台仍会继承旧快照。
@@ -4296,9 +4297,18 @@ function Invoke-Local {
     # dev_all 成功还不够：它只证明 22 个 Go listener 已就绪，editor Hub DS 仍可能在
     # 后台加载关卡。仅该入口等待完整玩家面；普通 local/NoDocker 命令保持原行为。
     if ($NoDocker -and $env:PANDORA_PLANNER_FAST_START -eq '1') {
-        if (-not (Wait-LocalPlannerPlayable)) {
-            Write-Err '策划启动未达到最终可玩状态；本次返回失败，不会显示标准 Press any key。'
-            exit 1
+        $playableWatch = [Diagnostics.Stopwatch]::StartNew()
+        $playableStatus = '失败'
+        try {
+            if (-not (Wait-LocalPlannerPlayable)) {
+                Write-Err '策划启动未达到最终可玩状态；本次返回失败，不会显示标准 Press any key。'
+                exit 1
+            }
+            $playableStatus = '完成'
+        } finally {
+            $playableWatch.Stop()
+            Add-PandoraPlannerTiming -Name '等待本机 DS 可玩' `
+                -ElapsedMilliseconds $playableWatch.ElapsedMilliseconds -Status $playableStatus
         }
         Write-Ok '现在可以登录进游戏。'
     }
@@ -7760,6 +7770,9 @@ function Show-Status {
 }
 
 # ===== 主流程 =====
+$plannerTimingEnabled = $Mode -ceq 'local' -and $NoDocker -and
+    $env:PANDORA_PLANNER_FAST_START -ceq '1' -and -not $Down -and -not $Status -and -not $Check -and -not $BuildOnly
+Start-PandoraPlannerTimingSession -Enabled $plannerTimingEnabled
 $orchestrationLockEntered = $false
 try {
 if ($Mode -ne 'online' -and -not $Status -and -not $Check -and -not $BuildOnly) {
@@ -7780,7 +7793,9 @@ if ($Status) { Show-Status; exit $script:ShowStatusExitCode }
 # -Down / -Check 是停机和干跑,导表对它们没有意义。
 $script:ConfigTableChanged = $false
 if ($GenTables -and -not $Down -and -not $Check) {
-    $script:ConfigTableChanged = Invoke-ConfigTableGen
+    $script:ConfigTableChanged = Invoke-PandoraPlannerTimedStep -Name '导表' -Action {
+        Invoke-ConfigTableGen
+    }
 }
 
 # -DsOnly:只重启本机 DS 的快速通道。刻意排在 Resolve-Prerequisites 之前 —— 后端正跑着时
@@ -7792,7 +7807,9 @@ if ($GenTables -and -not $Down -and -not $Check) {
 $script:DsOnlyExitCode = 0
 if ($DsOnly -and (Invoke-LocalDsOnly)) { exit $script:DsOnlyExitCode }
 
-$prereqOk = Resolve-Prerequisites $Mode
+$prereqOk = Invoke-PandoraPlannerTimedStep -Name '环境检查' -Action {
+    Resolve-Prerequisites $Mode
+}
 
 if ($Check) {
     Write-Host ""
@@ -7825,4 +7842,6 @@ switch ($Mode) {
 }
 } finally {
     if ($orchestrationLockEntered) { Exit-PandoraOrchestrationLock }
+    Write-PandoraPlannerTimingSummary
+    Stop-PandoraPlannerTimingSession
 }

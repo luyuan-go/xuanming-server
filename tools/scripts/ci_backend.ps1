@@ -215,6 +215,8 @@ $contractTests = @(
     # deploy/k8s/agones/16-ds-envoy.yaml 各写一遍,加新身份头的人只会改自己在用的那份。
     # 集群那份漏剥 = 该头在生产上可被任意调用方伪造(实测曾漏 account-id 与 client-ip)。
     'tools/scripts/tests/envoy_ds_identity_header_strip_contract_test.ps1'
+    # AuctionService 玩家入口必须同时具备 JWT、route、h2c cluster；任漏一项都会表现为全 RPC 401/404/503。
+    'tools/scripts/tests/envoy_auction_route_contract_test.ps1'
     # 头顶编号只允许 DS 面精确调用；客户端 catch-all 前必须显式 403，两份 DS Envoy 同步白名单。
     'tools/scripts/tests/envoy_login_ds_player_no_contract_test.ps1'
     # Team→Player 名字解析只走集群内 gRPC 服务身份，不得进入客户端或 DS Envoy。

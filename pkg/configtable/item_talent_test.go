@@ -20,7 +20,19 @@ func TestValidateItemRow(t *testing.T) {
 	}
 
 	if err := validateItemRow(base()); err != nil {
-		t.Fatalf("合法行不应报错: %v", err)
+		t.Fatalf("合法的旧版固定回血行不应报错: %v", err)
+	}
+	explicitFixed := base()
+	explicitFixed.UseHealType = configpb.ItemHealType_ITEM_HEAL_TYPE_FIXED
+	if err := validateItemRow(explicitFixed); err != nil {
+		t.Fatalf("合法的显式固定回血行不应报错: %v", err)
+	}
+	percent := base()
+	percent.UseHealType = configpb.ItemHealType_ITEM_HEAL_TYPE_MAX_HP_PERCENT
+	percent.UseHealHp = 0
+	percent.UseHealMaxHpPercent = 25
+	if err := validateItemRow(percent); err != nil {
+		t.Fatalf("合法的最大生命百分比回血行不应报错: %v", err)
 	}
 
 	cases := []struct {
@@ -55,6 +67,61 @@ func TestValidateItemRow(t *testing.T) {
 			"堆叠上限必须为 1",
 		},
 		{"可使用但回血 0", func(r *configpb.ItemRow) { r.UseHealHp = 0 }, "使用回血量"},
+		{
+			"固定类型误填百分比",
+			func(r *configpb.ItemRow) { r.UseHealMaxHpPercent = 20 },
+			"固定回血类型",
+		},
+		{
+			"固定回血超过客户端上限",
+			func(r *configpb.ItemRow) { r.UseHealHp = maxClientFixedHealHP + 1 },
+			"int32 上限",
+		},
+		{
+			"不可使用却配置固定回血",
+			func(r *configpb.ItemRow) { r.Usable = false },
+			"不可使用道具",
+		},
+		{
+			"百分比类型仍填固定值",
+			func(r *configpb.ItemRow) {
+				r.UseHealType = configpb.ItemHealType_ITEM_HEAL_TYPE_MAX_HP_PERCENT
+				r.UseHealMaxHpPercent = 20
+			},
+			"固定使用回血量",
+		},
+		{
+			"百分比为 0",
+			func(r *configpb.ItemRow) {
+				r.UseHealType = configpb.ItemHealType_ITEM_HEAL_TYPE_MAX_HP_PERCENT
+				r.UseHealHp = 0
+			},
+			"1..100",
+		},
+		{
+			"百分比超过 100",
+			func(r *configpb.ItemRow) {
+				r.UseHealType = configpb.ItemHealType_ITEM_HEAL_TYPE_MAX_HP_PERCENT
+				r.UseHealHp = 0
+				r.UseHealMaxHpPercent = 101
+			},
+			"1..100",
+		},
+		{
+			"百分比回血不可使用",
+			func(r *configpb.ItemRow) {
+				r.UseHealType = configpb.ItemHealType_ITEM_HEAL_TYPE_MAX_HP_PERCENT
+				r.UseHealHp = 0
+				r.UseHealMaxHpPercent = 20
+				r.Usable = false
+			},
+			"可使用",
+		},
+		{
+			"未知回血类型",
+			func(r *configpb.ItemRow) { r.UseHealType = configpb.ItemHealType(99) },
+			"未知使用回血类型",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

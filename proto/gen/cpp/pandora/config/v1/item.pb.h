@@ -58,6 +58,8 @@ extern const ::google::protobuf::internal::DescriptorTable descriptor_table_pand
 namespace pandora {
 namespace config {
 namespace v1 {
+enum ItemHealType : int;
+extern const uint32_t ItemHealType_internal_data_[];
 enum ItemType : int;
 extern const uint32_t ItemType_internal_data_[];
 class ItemRow;
@@ -81,6 +83,9 @@ extern const ItemTableDataGlobalsTypeInternal ItemTableData_globals_;
 }  // namespace pandora
 namespace google {
 namespace protobuf {
+template <>
+internal::EnumTraitsT<::pandora::config::v1::ItemHealType_internal_data_>
+    internal::EnumTraitsImpl::value<::pandora::config::v1::ItemHealType>;
 template <>
 internal::EnumTraitsT<::pandora::config::v1::ItemType_internal_data_>
     internal::EnumTraitsImpl::value<::pandora::config::v1::ItemType>;
@@ -132,6 +137,47 @@ template <>
 [[nodiscard]] inline bool ItemType_Parse(
     ::absl::string_view name, ItemType* PROTOBUF_NONNULL value) {
   return ::google::protobuf::internal::ParseNamedEnum<ItemType>(ItemType_descriptor(), name,
+                                           value);
+}
+enum ItemHealType : int {
+  ITEM_HEAL_TYPE_UNSPECIFIED = 0,
+  ITEM_HEAL_TYPE_FIXED = 1,
+  ITEM_HEAL_TYPE_MAX_HP_PERCENT = 2,
+  ItemHealType_INT_MIN_SENTINEL_DO_NOT_USE_ =
+      ::std::numeric_limits<::int32_t>::min(),
+  ItemHealType_INT_MAX_SENTINEL_DO_NOT_USE_ =
+      ::std::numeric_limits<::int32_t>::max(),
+};
+
+extern const uint32_t ItemHealType_internal_data_[];
+inline constexpr ItemHealType ItemHealType_MIN =
+    static_cast<ItemHealType>(0);
+inline constexpr ItemHealType ItemHealType_MAX =
+    static_cast<ItemHealType>(2);
+[[nodiscard]] inline bool ItemHealType_IsValid(int value) {
+  return 0 <= value && value <= 2;
+}
+inline constexpr int ItemHealType_ARRAYSIZE = 2 + 1;
+[[nodiscard]] const ::google::protobuf::EnumDescriptor* PROTOBUF_NONNULL
+ItemHealType_descriptor();
+[[nodiscard]] inline auto ProtobufInternalGetEnumDescriptor(ItemHealType) {
+  return ItemHealType_descriptor();
+}
+template <typename T>
+[[nodiscard]] const ::std::string& ItemHealType_Name(T value) {
+  static_assert(::std::is_same<T, ItemHealType>::value ||
+                    ::std::is_integral<T>::value,
+                "Incorrect type passed to ItemHealType_Name().");
+  return ItemHealType_Name(static_cast<ItemHealType>(value));
+}
+template <>
+[[nodiscard]] inline const ::std::string& ItemHealType_Name(ItemHealType value) {
+  return ::google::protobuf::internal::NameOfDenseEnum<ItemHealType_descriptor, 0, 2>(
+      static_cast<int>(value));
+}
+[[nodiscard]] inline bool ItemHealType_Parse(
+    ::absl::string_view name, ItemHealType* PROTOBUF_NONNULL value) {
+  return ::google::protobuf::internal::ParseNamedEnum<ItemHealType>(ItemHealType_descriptor(), name,
                                            value);
 }
 using ::google::protobuf::internal::generated_enum::AbslParseFlag;
@@ -313,6 +359,8 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ItemRow final : public ::google::pr
     kEquipScaleXFieldNumber = 21,
     kEquipScaleYFieldNumber = 22,
     kEquipScaleZFieldNumber = 23,
+    kUseHealTypeFieldNumber = 24,
+    kUseHealMaxHpPercentFieldNumber = 25,
   };
   // string name = 2 [json_name = "name", (.pandora.config.v1.excel_col) = "\345\220\215\347\247\260", (.pandora.config.v1.excel_required) = true];
   void clear_name() ;
@@ -569,12 +617,32 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ItemRow final : public ::google::pr
   void _internal_set_equip_scale_z(float value);
 
   public:
+  // .pandora.config.v1.ItemHealType use_heal_type = 24 [json_name = "useHealType", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\261\273\345\236\213"];
+  void clear_use_heal_type() ;
+  [[nodiscard]] ::pandora::config::v1::ItemHealType use_heal_type() const;
+  void set_use_heal_type(::pandora::config::v1::ItemHealType value);
+
+  private:
+  ::pandora::config::v1::ItemHealType _internal_use_heal_type() const;
+  void _internal_set_use_heal_type(::pandora::config::v1::ItemHealType value);
+
+  public:
+  // uint32 use_heal_max_hp_percent = 25 [json_name = "useHealMaxHpPercent", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\231\276\345\210\206\346\257\224", (.pandora.config.v1.excel_default) = "0"];
+  void clear_use_heal_max_hp_percent() ;
+  [[nodiscard]] ::uint32_t use_heal_max_hp_percent() const;
+  void set_use_heal_max_hp_percent(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_use_heal_max_hp_percent() const;
+  void _internal_set_use_heal_max_hp_percent(::uint32_t value);
+
+  public:
   // @@protoc_insertion_point(class_scope:pandora.config.v1.ItemRow)
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<5, 23,
-                          0, 91,
+      ::google::protobuf::internal::TcParseTable<5, 25,
+                          0, 99,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
       const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
@@ -625,6 +693,8 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ItemRow final : public ::google::pr
     float equip_scale_x_;
     float equip_scale_y_;
     float equip_scale_z_;
+    int use_heal_type_;
+    ::uint32_t use_heal_max_hp_percent_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -1611,6 +1681,54 @@ inline void ItemRow::_internal_set_equip_scale_z(float value) {
   _impl_.equip_scale_z_ = value;
 }
 
+// .pandora.config.v1.ItemHealType use_heal_type = 24 [json_name = "useHealType", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\261\273\345\236\213"];
+inline void ItemRow::clear_use_heal_type() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.use_heal_type_ = 0;
+  ClearHasBit(_impl_._has_bits_[0], 0x00800000U);
+}
+inline ::pandora::config::v1::ItemHealType ItemRow::use_heal_type() const {
+  // @@protoc_insertion_point(field_get:pandora.config.v1.ItemRow.use_heal_type)
+  return _internal_use_heal_type();
+}
+inline void ItemRow::set_use_heal_type(::pandora::config::v1::ItemHealType value) {
+  _internal_set_use_heal_type(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00800000U);
+  // @@protoc_insertion_point(field_set:pandora.config.v1.ItemRow.use_heal_type)
+}
+inline ::pandora::config::v1::ItemHealType ItemRow::_internal_use_heal_type() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return static_cast<::pandora::config::v1::ItemHealType>(_impl_.use_heal_type_);
+}
+inline void ItemRow::_internal_set_use_heal_type(::pandora::config::v1::ItemHealType value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.use_heal_type_ = value;
+}
+
+// uint32 use_heal_max_hp_percent = 25 [json_name = "useHealMaxHpPercent", (.pandora.config.v1.excel_col) = "\344\275\277\347\224\250\345\233\236\350\241\200\347\231\276\345\210\206\346\257\224", (.pandora.config.v1.excel_default) = "0"];
+inline void ItemRow::clear_use_heal_max_hp_percent() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.use_heal_max_hp_percent_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x01000000U);
+}
+inline ::uint32_t ItemRow::use_heal_max_hp_percent() const {
+  // @@protoc_insertion_point(field_get:pandora.config.v1.ItemRow.use_heal_max_hp_percent)
+  return _internal_use_heal_max_hp_percent();
+}
+inline void ItemRow::set_use_heal_max_hp_percent(::uint32_t value) {
+  _internal_set_use_heal_max_hp_percent(value);
+  SetHasBit(_impl_._has_bits_[0], 0x01000000U);
+  // @@protoc_insertion_point(field_set:pandora.config.v1.ItemRow.use_heal_max_hp_percent)
+}
+inline ::uint32_t ItemRow::_internal_use_heal_max_hp_percent() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.use_heal_max_hp_percent_;
+}
+inline void ItemRow::_internal_set_use_heal_max_hp_percent(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.use_heal_max_hp_percent_ = value;
+}
+
 // -------------------------------------------------------------------
 
 // ItemTableData
@@ -1688,6 +1806,12 @@ struct is_proto_enum<::pandora::config::v1::ItemType> : std::true_type {};
 template <>
 inline const EnumDescriptor* PROTOBUF_NONNULL GetEnumDescriptor<::pandora::config::v1::ItemType>() {
   return ::pandora::config::v1::ItemType_descriptor();
+}
+template <>
+struct is_proto_enum<::pandora::config::v1::ItemHealType> : std::true_type {};
+template <>
+inline const EnumDescriptor* PROTOBUF_NONNULL GetEnumDescriptor<::pandora::config::v1::ItemHealType>() {
+  return ::pandora::config::v1::ItemHealType_descriptor();
 }
 
 }  // namespace protobuf

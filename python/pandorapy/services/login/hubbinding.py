@@ -16,9 +16,19 @@
 判据本身不难验:票据是"把已由权威算好的判定结果搬到 DS 的唯一不可伪造通道",
 删掉兑换点的核对,搬运通道就退化成"谁拿到谁能用"。
 
-关于 v2:`dsticket.py` 的解析器把 `version` 硬编码成 1,所以 Python 侧只可能走
-legacy 分支。Go 的 v2 分支(`CheckCurrentB1`)这里**刻意不移植** —— 移植一条永远
-走不到的分支,只会让人以为 v2 已经支持了。等 `version` 真能解出 2 再补。
+三个入口对应 Go 的三条:
+
+  | 入口 | Go | 用在哪 | strict 凭据 | 全 tuple |
+  |---|---|---|---|---|
+  | `check_current`          | `CheckCurrent`          | legacy HS256 票兑换 | 是 | 否 |
+  | `check_current_b1`       | `CheckCurrentB1`        | v2 RS256 hub 票兑换 | 是 | 否 |
+  | `check_current_admission`| `CheckCurrentAdmission` | Redis authority 在线准入 | 由 marker 状态决定 | 是 |
+
+v2 分支是**真实现**,不是占位:`dsticket.py`(公共层 RS256)解出的 claims 带
+`version=2` + `ds_instance_epoch` + `release_track`,`biz.TicketUsecase` 按 alg 分发到
+这里。它有意不带 callback credential(gen/jti/writer_epoch),所以 `check_current_b1`
+先用票内四要件对上 assignment 权威,再**从权威记录里取**当前凭据补成完整 binding 去跑
+常规活性校验 —— 不是"v2 没带就跳过活性校验"(那样已 draining 的 shard 也会放行)。
 """
 
 from __future__ import annotations
@@ -54,7 +64,12 @@ def hub_shard_projection_key(pod: str) -> str:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class HubAssignmentBinding:
-    """一张 Hub 票据里携带的归属五要件(+ 灰度轨道)。"""
+    """一张 Hub 票据里携带的归属五要件(+ 灰度轨道)。
+
+    `exp_ms` / `kid` / `token_sha256` 只在**在线准入**(admission)路径上参与比对:
+    票据本身不带这三项(它们属于调用方当前的 callback credential),所以只有
+    `require_full_active=True` 的入口会要求它们非空并与 Redis active 逐字节一致。
+    """
 
     pod_name: str = ""
     instance_uid: str = ""
@@ -64,6 +79,9 @@ class HubAssignmentBinding:
     assignment_id: str = ""
     writer_epoch: int = 0
     release_track: str = ""
+    exp_ms: int = 0
+    kid: str = ""
+    token_sha256: str = ""
 
     def complete(self) -> bool:
         return bool(
@@ -134,7 +152,112 @@ class RedisHubAssignmentChecker:
         )
 
     async def check_current(self, player_id: int, expected: HubAssignmentBinding) -> None:
-        await self._check_current(player_id, expected, expected, strict_assignment_credential=True)
+        await self._check_current(
+            player_id,
+            expected,
+            expected,
+            strict_assignment_credential=True,
+            require_full_active=False,
+        )
+
+    async def check_current_admission(
+        self,
+        player_id: int,
+        stable: HubAssignmentBinding,
+        active_expected: HubAssignmentBinding,
+        strict_assignment_credential: bool,
+    ) -> None:
+        """在线准入专用门 —— Go `CheckCurrentAdmission`。
+
+        `strict_assignment_credential` 由 admission marker 状态决定:
+          * marker missing(首次准入)→ True,票内凭据必须就是 Redis 当前凭据;
+          * marker existing(同一次 admission 重试)→ False,允许普通 token 轮换
+            (gen/jti 变了),但稳定身份与 assignment 仍必须一致。
+        把重试当首次处理会让**一次正常的凭据轮换**把已经准入成功的玩家拒在门外。
+
+        `require_full_active=True`:在线准入必须把调用方自报的完整 active tuple
+        (exp/kid/token 指纹)与 Redis 逐字节对上 —— 否则一个拿到旧 gen 的副本可以
+        拿新 assignment 过门。
+        """
+        await self._check_current(
+            player_id,
+            stable,
+            active_expected,
+            strict_assignment_credential=strict_assignment_credential,
+            require_full_active=True,
+        )
+
+    async def check_current_b1(
+        self,
+        player_id: int,
+        pod_name: str,
+        instance_uid: str,
+        instance_epoch: int,
+        assignment_id: str,
+        release_track: str,
+    ) -> None:
+        """v2(RS256)hub 票的归属门 —— Go `CheckCurrentB1`。
+
+        ★ v2 票**有意不携带** callback credential(gen/jti/writer_epoch):它只钉稳定实例
+        与 assignment。所以这里的做法是先用票内四要件对上 assignment 权威,再**从权威
+        记录里取**当前 gen/jti/writer_epoch 补成完整 binding 去跑常规活性校验 ——
+        不是“因为 v2 没带就跳过活性校验”。跳过的话,已 draining / 心跳停止的 shard
+        仍会放行（只要 assignment 还没迁走）。
+
+        `release_track` 必填且必须是 stable/canary:空值被解释成“隐式默认轨道”
+        会让 §9.21 的轨道粘滞在历史数据上静默失效。
+        """
+        if (
+            player_id == 0
+            or not pod_name
+            or not instance_uid
+            or instance_epoch == 0
+            or not assignment_id
+            or release_track not in (RELEASE_TRACK_STABLE, RELEASE_TRACK_CANARY)
+        ):
+            raise errcode.PandoraError(
+                errcode.ErrLoginTicketInvalid, "hub v2 assignment binding incomplete"
+            )
+        if self._rdb is None:
+            raise errcode.PandoraError(
+                errcode.ErrUnavailable, "hub assignment authority unavailable"
+            )
+        payload = await self._get_bytes(
+            hub_player_assignment_key(player_id), "read hub assignment authority failed"
+        )
+        if payload is None:
+            raise errcode.PandoraError(errcode.ErrLoginTicketInvalid, "hub assignment not found")
+        rec = self._parse(
+            hubpb.HubAssignmentStorageRecord, payload, "decode hub assignment authority failed"
+        )
+        if (
+            rec.player_id != player_id
+            or rec.assignment_id != assignment_id
+            or rec.hub_pod_name != pod_name
+            or rec.hub_instance_uid != instance_uid
+            or rec.auth_epoch != instance_epoch
+            or rec.release_track != release_track
+        ):
+            raise errcode.PandoraError(
+                errcode.ErrLoginTicketInvalid, "hub v2 ticket no longer matches current assignment"
+            )
+        current = HubAssignmentBinding(
+            pod_name=pod_name,
+            instance_uid=instance_uid,
+            protocol_epoch=instance_epoch,
+            credential_gen=int(rec.auth_gen),
+            credential_jti=rec.auth_jti,
+            assignment_id=assignment_id,
+            writer_epoch=int(rec.auth_writer_epoch),
+            release_track=release_track,
+        )
+        await self._check_current(
+            player_id,
+            current,
+            current,
+            strict_assignment_credential=True,
+            require_full_active=False,
+        )
 
     async def _check_current(
         self,
@@ -143,6 +266,7 @@ class RedisHubAssignmentChecker:
         active: HubAssignmentBinding,
         *,
         strict_assignment_credential: bool,
+        require_full_active: bool = False,
     ) -> None:
         # ── ① 票内自洽:两份期望必须同源且完整 ──────────────────────────
         if (
@@ -172,6 +296,12 @@ class RedisHubAssignmentChecker:
         ):
             raise errcode.PandoraError(
                 errcode.ErrLoginTicketInvalid, "hub first admission credential changed"
+            )
+        if require_full_active and (
+            active.exp_ms <= 0 or not active.kid or not active.token_sha256
+        ):
+            raise errcode.PandoraError(
+                errcode.ErrLoginTicketInvalid, "hub current active credential binding incomplete"
             )
         if self._rdb is None:
             raise errcode.PandoraError(errcode.ErrUnavailable, "hub assignment authority unavailable")
@@ -283,6 +413,16 @@ class RedisHubAssignmentChecker:
             raise errcode.PandoraError(
                 errcode.ErrLoginTicketInvalid, "hub assignment credential is no longer active"
             )
+        if require_full_active and (
+            int(act.exp_ms) != active.exp_ms
+            or act.kid != active.kid
+            or not constant_time_eq(act.token_sha256, active.token_sha256)
+        ):
+            # 调用方自报的完整 active tuple 与 Redis 不一致:凭据轮换半途或副本拿着旧 tuple。
+            # token 指纹走恒时间比较(对齐 Go 的 subtle.ConstantTimeCompare)。
+            raise errcode.PandoraError(
+                errcode.ErrLoginTicketInvalid, "hub current active credential full tuple changed"
+            )
 
     async def _get_bytes(self, key: str, fail_msg: str) -> bytes | None:
         try:
@@ -326,4 +466,26 @@ def binding_from_claims(claims) -> HubAssignmentBinding:
         assignment_id=claims.hub_assignment_id,
         writer_epoch=claims.ds_writer_epoch,
         release_track=getattr(claims, "release_track", "") or "",
+    )
+
+
+def binding_from_admission(admission, assignment_id: str) -> HubAssignmentBinding:
+    """把已被 Redis active 权威证明的**调用方身份**转成 binding —— Go `hubBindingFromAdmission`。
+
+    `assignment_id` 不来自 admission(调用方不知道玩家的归属版本),而是从**票内**取:
+    这正是“票把权威算好的归属版本搬到 DS”的环节,拿 admission 里的东西填会让
+    Transfer / Release 后的旧票自动“对上”。
+    """
+    return HubAssignmentBinding(
+        pod_name=admission.pod_name,
+        instance_uid=admission.instance_uid,
+        protocol_epoch=admission.protocol_epoch,
+        credential_gen=admission.credential_gen,
+        credential_jti=admission.credential_jti,
+        assignment_id=assignment_id,
+        writer_epoch=admission.writer_epoch,
+        release_track=admission.release_track,
+        exp_ms=admission.exp_ms,
+        kid=admission.kid,
+        token_sha256=admission.token_sha256,
     )

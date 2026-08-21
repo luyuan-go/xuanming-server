@@ -467,6 +467,26 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         uc.set_monster_exp_table(ct_store)
         uc.set_battle_item_catalog(ct_store)
 
+        # —— player 经验入账器(实时成长,弱依赖)——
+        # player_addr 空 → 击杀经验不入账,但进度出箱经验行**积压不丢**(行已随
+        # ReportProgress 同事务落库),配好地址重启就补发。AddExperience 是系统接口,
+        # 走内网 insecure 直连(复用 MMR reader 的地址)。
+        if cfg.battle.player_addr:
+            exp_granter = bcli.GrpcExperienceGranter(cfg.battle.player_addr)
+            closables.append(exp_granter)
+            uc.set_experience_granter(exp_granter)
+            logger.info(
+                "experience_granter_grpc",
+                player_addr=cfg.battle.player_addr,
+                progress_enabled=cfg.battle.progress_enabled,
+            )
+        else:
+            logger.warning(
+                "experience_granter_disabled",
+                hint="player_addr 未配置 → 击杀经验不入账"
+                "(进度出箱积压不丢,配好地址重启补发)",
+            )
+
         # ── ⑲ 背包满溢出转邮件(弱依赖)──────────────────────────────────
         # 传源键 battle_drop:{match}:{player} 至 mail,领取时 GrantInstances 同键去重
         # (直发与邮件链至多一次)。
@@ -498,33 +518,18 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                     hint=brepo.MISSION_SCHEMA_HINT,
                 )
                 return 1
-            # ⚠️ Go 在这里还会注入 GrpcMissionReporter 并起 RunMissionForwarder。
-            # 任务事实**只由 ReportProgress 产生**,而该通道 Python 侧未实现 →
-            # 一行 battle_mission_outbox 都不会产生,起转发器只是空转。
-            # schema 闸照跑:它校验的是部署契约,漏掉会让一份缺迁移的环境在 Go 上拒启、
-            # Python 上放行。
-            logger.warning(
-                "mission_forward_disabled",
-                mission_addr=cfg.battle.mission_addr,
-                hint="mission_addr 已配置且出箱表就绪,但 Python 版未实现实时进度通道 → "
-                "不产生任务出箱行,任务进度不受战斗事实驱动。需要任务转发请用 Go 版跑本服务",
-            )
+            # 任务事实**只由 ReportProgress 产生**。reporter 注入与否同时决定了
+            # 「产不产出箱行」与「转不转发」—— 两者必须同一个开关,否则会出现
+            # 「照产不投」的无界堆积(§9.24)。
+            mission_reporter = bcli.GrpcMissionReporter(cfg.battle.mission_addr)
+            closables.append(mission_reporter)
+            uc.set_mission_reporter(mission_reporter)
+            logger.info("mission_forward_grpc", mission_addr=cfg.battle.mission_addr)
         else:
             logger.warning(
                 "mission_forward_disabled",
                 hint="mission_addr 未配置 → 不产生任务出箱行,任务进度不受战斗事实驱动",
             )
-
-        # 实时进度通道未实现的**唯一启动期判据**(§14.2 同 inventory 的 bag 域处理):
-        # 不打这条的话,配了 progress_enabled: true 的环境启动日志一片正常,
-        # 而 DS 的进度上报会成批拿 ERR_INVALID_STATE —— 排查只能从 DS 侧往回追。
-        logger.warning(
-            "battle_progress_channel_not_implemented",
-            progress_enabled=cfg.battle.progress_enabled,
-            hint="Python 版未实现 ReportProgress(实时进度通道);DS 会收到 ERR_INVALID_STATE "
-            "并停流回退局后结算路径。结算侧的水位收口与掉落抑制**是完整的**。"
-            "progress_enabled=true 的环境不要 Go/Python 混部(会丢停流后那段掉落)",
-        )
 
         svc = bsvc.BattleResultService(uc)
 
@@ -628,6 +633,10 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         background = [_make_consumer_task(kc, topic) for kc, topic in consumers]
         background.append(uc.run_outbox_publisher)
         background.append(uc.run_drop_publisher)
+        background.append(uc.run_progress_publisher)
+        # 任务事实转发:独立于进度出箱(故障域隔离,见 progress.py 的
+        # run_mission_forwarder 注释);mission_addr 未配时内部直接返回,不空转。
+        background.append(uc.run_mission_forwarder)
         background.append(uc.run_match_release_publisher)
         background.append(uc.run_retention_sweep)
         # ★ 用 (name, factory) 二元组而不是裸 lambda:匿名 lambda 在 safego 的兜底日志里

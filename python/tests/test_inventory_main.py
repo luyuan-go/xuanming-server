@@ -325,6 +325,64 @@ def test_allowed_attrs_match_go_source(repo_root: pathlib.Path) -> None:
     assert "1_000_000" in src and icat.MAX_POOL_TOTAL_WEIGHT == 1_000_000
 
 
+def test_item_heal_type_and_value_combinations_are_fail_closed() -> None:
+    """固定值/最大生命百分比必须唯一成组，坏组合不能在 Python 迁移栈漏过。"""
+    from pandora.config.v1 import item_pb2 as ipb
+
+    icat._validate_item_heal(ipb.ItemRow(id=1, usable=True, use_heal_hp=50))
+    icat._validate_item_heal(
+        ipb.ItemRow(
+            id=2,
+            usable=True,
+            use_heal_type=icat.ITEM_HEAL_TYPE_FIXED,
+            use_heal_hp=50,
+        )
+    )
+    icat._validate_item_heal(
+        ipb.ItemRow(
+            id=3,
+            usable=True,
+            use_heal_type=icat.ITEM_HEAL_TYPE_MAX_HP_PERCENT,
+            use_heal_max_hp_percent=25,
+        )
+    )
+
+    invalid = [
+        ipb.ItemRow(id=4, usable=True),
+        ipb.ItemRow(id=5, usable=True, use_heal_hp=50, use_heal_max_hp_percent=20),
+        ipb.ItemRow(id=6, usable=True, use_heal_hp=icat.MAX_CLIENT_FIXED_HEAL_HP + 1),
+        ipb.ItemRow(id=7, usable=False, use_heal_hp=50),
+        ipb.ItemRow(
+            id=8,
+            usable=True,
+            use_heal_type=icat.ITEM_HEAL_TYPE_MAX_HP_PERCENT,
+            use_heal_hp=50,
+            use_heal_max_hp_percent=20,
+        ),
+        ipb.ItemRow(
+            id=9,
+            usable=True,
+            use_heal_type=icat.ITEM_HEAL_TYPE_MAX_HP_PERCENT,
+        ),
+        ipb.ItemRow(
+            id=10,
+            usable=True,
+            use_heal_type=icat.ITEM_HEAL_TYPE_MAX_HP_PERCENT,
+            use_heal_max_hp_percent=101,
+        ),
+        ipb.ItemRow(
+            id=11,
+            usable=False,
+            use_heal_type=icat.ITEM_HEAL_TYPE_MAX_HP_PERCENT,
+            use_heal_max_hp_percent=20,
+        ),
+        ipb.ItemRow(id=12, usable=True, use_heal_type=99, use_heal_max_hp_percent=20),
+    ]
+    for row in invalid:
+        with pytest.raises(icat.ConfigTableError):
+            icat._validate_item_heal(row)
+
+
 def _tables(items: dict, affix: dict, attrs: dict | None = None) -> icat.Tables:
     from pandora.config.v1 import equipment_affix_pb2 as apb
     from pandora.config.v1 import item_pb2 as ipb
