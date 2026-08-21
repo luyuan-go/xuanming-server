@@ -86,7 +86,7 @@
     理由见 `biz_base` 该函数的注释。
 
 ═══════════════════════════════════════════════════════════════════════════════
-本模块**依赖但尚未移植**的 mixin 方法(移植者必须按此契约实现)
+本模块依赖的兄弟 mixin 方法(由 `biz.py` 组合进同一个 `AllocatorUsecase`)
 ═══════════════════════════════════════════════════════════════════════════════
 
     async def wait_battle_ready(match_id, pod_name, allocation_id) -> AllocateResult
@@ -469,7 +469,7 @@ class AllocateMixin:
     #   repo / alloc / cfg / model_b / auth_repo / authoritative_alloc / ds_signer
     #   ds_credential_ttl_sec / release_policy / allocation_ledger / owner_auth
     #   battle_ttl_sec() / ready_wait_timeout_sec() / heartbeat_timeout_ms()
-    # 这几个由尚未移植的 ReleaseMixin 提供(契约见模块头):
+    # 这几个由 ReleaseMixin 提供(契约见模块头):
     #   wait_battle_ready() / fail_ready_wait_timeout() / cleanup_allocated_battle()
 
     # ── 小工具 ───────────────────────────────────────────────────────────

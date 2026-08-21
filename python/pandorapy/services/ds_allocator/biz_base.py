@@ -67,6 +67,7 @@ from typing import Any, Protocol, runtime_checkable
 from pandora.config.v1 import level_pb2 as configpb
 from pandora.ds.v1 import allocator_pb2 as dspb
 
+from pandorapy import auth as pauth
 from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy import releasetrack, safego
@@ -382,8 +383,8 @@ class BattleCredentialSigner(Protocol):
     签发方法 —— 这是刻意的能力收窄,不是接口洁癖:签战斗回调凭据的代码路径一旦
     顺手拿到玩家票据签发权,一个 DS 侧漏洞就能升级成"给任意玩家签任意进场票"。
 
-    ★ `ttl_sec` 是**秒**(Go 是 `time.Duration`);返回值对应 Go 的
-      `auth.HubCredentialResult`,该类型尚未移植,故标注为 `Any`(见交付报告)。
+    ★ `ttl_sec` 是**秒**(Go 是 `time.Duration`);返回值是
+      `pandorapy.auth.HubCredentialResult`(对应 Go 的 `auth.HubCredentialResult`)。
     """
 
     def sign_battle_credential(
@@ -395,7 +396,7 @@ class BattleCredentialSigner(Protocol):
         gen: int,
         jti: str,
         ttl_sec: float,
-    ) -> Any: ...
+    ) -> pauth.HubCredentialResult: ...
 
 
 @runtime_checkable

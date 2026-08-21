@@ -62,10 +62,12 @@ import pathlib
 import sys
 
 import asyncmy
+from pandora.bag.v1 import bag_pb2_grpc as baggrpc
 from pandora.config.v1 import configtable_pb2_grpc as cfggrpc
 from pandora.inventory.v1 import inventory_pb2_grpc as invgrpc
 
 from pandorapy import dbguard
+from pandorapy import dsauth
 from pandorapy import godur
 from pandorapy import log as plog
 from pandorapy import mysqlx
@@ -74,6 +76,10 @@ from pandorapy import safego
 from pandorapy import server as pserver
 from pandorapy import sessiongate
 from pandorapy import snowflake_etcd as psnowflake_etcd
+from pandorapy.services.inventory import bag_biz as bbiz
+from pandorapy.services.inventory import bag_owner as bowner
+from pandorapy.services.inventory import bag_repo as brepo
+from pandorapy.services.inventory import bag_service as bsvc
 from pandorapy.services.inventory import biz as ibiz
 from pandorapy.services.inventory import budgets as ibudgets
 from pandorapy.services.inventory import catalog as icat
@@ -88,13 +94,31 @@ HTTP_DEFAULT_PORT = 21015
 # 货币 / 道具 / 流水 / 托管所在的库。
 TRADE_DB = "pandora_trade"
 
+# 背包域(pandora.bag.v1)独立库:与 trade 分库,连接参数走 cfg.bag 自己那套。
+BAG_DB = "pandora_bag"
+
 # 实例背包表是**后补的**:既有 MySQL volume / PVC 不会自动重放 init SQL,
 # 缺表时实例背包全链路必炸。缺表提示直接指向迁移 SQL,省得值班的人翻仓库。
 SCHEMA_HINT = "deploy/mysql-init/08-inventory-tables.sql"
 INSTANCE_TABLE = "player_item_instance"
 
+# 背包域同样是后建库:缺表时背包域全链路必炸,fail-fast 并指向迁移 SQL。
+BAG_SCHEMA_HINT = "deploy/mysql-init/14-bag-tables.sql"
+BAG_TABLES = (
+    "bag_meta",
+    "bag_checkpoint",
+    "bag_section",
+    "bag_journal",
+    "bag_generation",
+    "bag_migration",
+    "bag_capacity",
+)
+
 # 会话权威 Redis 的启动期 Ping 超时,与 Go 侧 sessiongate.MustBuild 同为 3s。
 SESSION_GATE_PING_TIMEOUT_SEC = 3.0
+
+# 背包流水清理单轮的超时,与 Go 的 runBagJournalSweep 同为 30s。
+BAG_SWEEP_TIMEOUT_SEC = 30.0
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -114,7 +138,9 @@ def _new_inventory_repo(pool, conn_cfg: dict) -> irepo.MySQLInventoryRepo:  # no
     return irepo.MySQLInventoryRepo(pool, db=schema)
 
 
-async def _run_capacity_guard(pool, schema: str, interval_sec: float) -> None:
+async def _run_capacity_guard(
+    pool, schema: str, interval_sec: float, budgets  # noqa: ANN001
+) -> None:
     """容量巡检(§9.24):**只告警不阻断**。
 
     容量超限是"要去查的问题",不是"服务不能跑的理由" ——
@@ -122,8 +148,10 @@ async def _run_capacity_guard(pool, schema: str, interval_sec: float) -> None:
 
     走 information_schema 估算(毫秒级、不锁表、不扫数据),放启动路径安全;
     绝不用 COUNT(*)(千万行表几十秒,会拖垮滚动更新)。
+
+    ★ budgets 是参数而不是写死 trade:trade 与 bag 是**两个库两套预算**,
+      共用一份会让 bag 的三个 blob 列(深度失控的高风险点)完全没有巡检。
     """
-    budgets = ibudgets.trade_budgets()
 
     async def _once() -> None:
         async with pool.acquire() as conn:
@@ -135,23 +163,150 @@ async def _run_capacity_guard(pool, schema: str, interval_sec: float) -> None:
     await safego.loop("db_capacity_guard", interval_sec, _once)
 
 
-def _warn_bag_domain_skipped(logger, cfg: iconf.Config) -> None:  # noqa: ANN001
-    """bag.dsn 配了但 Python 侧没有 BagService —— 必须留一条刺眼的 WARN。
+async def _run_bag_journal_sweep(uc: bbiz.BagUsecase, interval_sec: float, batch: int) -> None:
+    """周期清理超保留期背包流水(§9.24;多副本各自跑,DELETE 幂等无需锁)。
 
-    为什么不是 fail-fast:同一份 yaml 要同时喂 Go 和 Python(迁移期两栈并存),
-    拒启会让 dev 环境的 Python 版直接起不来。
-    为什么不能静默:配了 bag.dsn 的环境里,DS 与 mail 的背包域调用会收到
-    UNIMPLEMENTED,而启动日志一片正常 —— 排查起来只能从客户端往回追。
+    对应 Go 的 runBagJournalSweep:单轮包 30s 超时 —— 没有超时的话,一轮卡在
+    半死不活的库上会让这条循环**永远不再有下一轮**,而日志一片安静。
     """
-    logger.warning(
-        "bag_domain_not_implemented",
-        dsn=mysqlx.mask_dsn(cfg.bag.dsn),
-        owner_addr=cfg.bag.owner_addr,
-        hint=(
-            "bag.dsn 已配置,但 Python 版 inventory 尚未实现 pandora.bag.v1 BagService;"
-            "本进程不注册该服务,背包域请求会收到 UNIMPLEMENTED。需要背包域请用 Go 版跑 inventory"
-        ),
+
+    async def _once() -> None:
+        try:
+            await asyncio.wait_for(uc.run_journal_sweep(batch), timeout=BAG_SWEEP_TIMEOUT_SEC)
+        except asyncio.CancelledError:
+            # ★ 取消必须穿透:CancelledError 是 BaseException,吞掉之后停机时
+            # 这条循环退不出去,§9.16 的「先摘流量 → 再排空在途」失效。
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            plog.get().error("bag_journal_sweep_failed", err=str(exc))
+
+    await safego.loop("bag_journal_sweep", interval_sec, _once)
+
+
+async def _setup_bag_domain(  # noqa: C901 —— 与 Go 同为一串线性启动闸
+    logger,  # noqa: ANN001
+    cfg: iconf.Config,
+    inv_repo: irepo.MySQLInventoryRepo,
+    closables: list,
+) -> tuple[bsvc.BagService, bbiz.BagUsecase, object, str] | None:
+    """装配背包域(pandora.bag.v1,bag-domain.md phase 1 由本进程承载)。
+
+    对应 Go 侧 main.go 的 `if cfg.Bag.DSN != ""` 整段,闸的**先后次序与 Go 相同**
+    (§16.8:启动闸顺序本身就是契约,重排会让同一份坏配置在两栈上报不同的第一个错误):
+
+        bag_mysql_connect_failed        fail-fast  Go 侧是 MustNewClient 的 panic
+        bag_mysql_strict_mode_required  fail-fast  三个 blob 列最怕静默截断
+        bag_schema_check_failed         fail-fast  pandora_bag 是后建库
+        bag_owner_authorizer_ready      INFO       五要件② 已装配
+        bag_owner_addr_required         fail-fast  生产禁止无授权写
+        bag_owner_unverified            WARN       仅 dev 显式放行
+        ds_auth_guard_init_failed       fail-fast  mode=permissive/enforce 但缺 secret
+        bag_ds_guard_ready              INFO       五要件① 已装配
+
+    返回 (bag_service, bag_usecase, bag_pool, bag_schema);失败返回 None(调用方 exit 1)。
+    """
+    conn_cfg = mysqlx.parse_go_dsn(cfg.bag.dsn, default_db=BAG_DB)
+    bag_client_conf = cfg.bag.mysql_client_conf()
+    try:
+        # 池参数与主库同样走 mysqlx 统一翻译:只传 DSN 会**静默丢掉**中心 MySQL 的
+        # TLS 身份与小池参数(配了不生效且不报错)。
+        mysqlx.assert_pool_conf_supported(bag_client_conf)
+        bag_pool = await asyncmy.create_pool(
+            **mysqlx.pool_kwargs(bag_client_conf, conn_cfg, autocommit=True)
+        )
+    except asyncio.CancelledError:
+        # ★ 取消必须穿透:CancelledError 是 BaseException,会被下面那条宽 except 吞掉。
+        # 启动路径上吞掉会把 Ctrl-C / 上层取消翻译成某道闸的失败,报出假的失败原因。
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        logger.error(
+            "bag_mysql_connect_failed", err=str(exc), dsn=mysqlx.mask_dsn(cfg.bag.dsn)
+        )
+        return None
+    closables.append(_PoolCloser(bag_pool))
+
+    async with bag_pool.acquire() as conn:
+        # 背包库同样断言严格模式:三个 blob 列(snapshot/section/payload)是最怕静默截断的
+        # ——截断后 proto 解不出来,该玩家背包直接读不出来。
+        try:
+            await asyncio.wait_for(dbguard.assert_strict_mode(conn), timeout=5.0)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            logger.error("bag_mysql_strict_mode_required", err=str(exc))
+            return None
+        # 启动期 schema gate:pandora_bag 是后建库,既有 MySQL volume 不会自动重放 init SQL;
+        # 缺表时背包域全链路必炸,fail-fast 并指向迁移 SQL。
+        try:
+            await asyncio.wait_for(
+                mysqlx.check_tables(conn, BAG_SCHEMA_HINT, *BAG_TABLES), timeout=5.0
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            logger.error("bag_schema_check_failed", err=str(exc))
+            return None
+
+    bag_schema = mysqlx.require_mysql_identifier(
+        str(conn_cfg.get("db") or ""), kind="schema"
     )
+    bag_repo = brepo.MySQLBagRepo(bag_pool, db=bag_schema)
+    bag_uc = bbiz.BagUsecase(bag_repo, cfg.bag)
+    # 容量购买扣费(§5.3):经济域同进程直用 inventory repo(trade 库 ledger 幂等)。
+    bag_uc.set_capacity_charger(inv_repo)
+
+    # 五要件② owner 授权(phase 2 写权威切换):背包写路径逐调校验当前 ADMITTED owner。
+    # owner_addr 缺省且未显式开 allow_unverified_owner → 拒启(生产禁止无授权写)。
+    if cfg.bag.owner_addr:
+        owner_auth = bowner.GrpcOwnerAuthorizer(cfg.bag.owner_addr)
+        closables.append(owner_auth)
+        bag_uc.set_owner_authorizer(owner_auth)
+        logger.info("bag_owner_authorizer_ready", owner_addr=cfg.bag.owner_addr)
+    elif not cfg.bag.allow_unverified_owner:
+        logger.error(
+            "bag_owner_addr_required",
+            hint="bag.owner_addr required (CLAUDE.md §9.6 要件②), "
+            "or set bag.allow_unverified_owner for dev only",
+        )
+        return None
+    else:
+        logger.warning(
+            "bag_owner_unverified",
+            hint="bag writes accepted WITHOUT owner authorization (dev only, never in production)",
+        )
+
+    bag_svc = bsvc.BagService(bag_uc)
+    # 五要件① DS 凭据身份:ds_auth.mode=enforce 时验签抽取 pod/uid 供 owner target 全等校验。
+    try:
+        ds_guard = dsauth.guard_from_conf(cfg.ds_auth)
+    except asyncio.CancelledError:
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        logger.error("ds_auth_guard_init_failed", err=str(exc))
+        return None
+    if ds_guard is not None:
+        bag_svc.set_ds_guard(ds_guard)
+        logger.info("bag_ds_guard_ready", mode=ds_guard.mode.value)
+
+    return bag_svc, bag_uc, bag_pool, bag_schema
+
+
+class _PoolCloser:
+    """把 asyncmy 池包成 `close()` 协程,好与 GrpcOwnerAuthorizer 共用同一条收尾链。
+
+    asyncmy 的 `close()` 是同步的、`wait_closed()` 才是协程 —— 直接丢进 closables
+    会在停机时静默不等连接排空。
+    """
+
+    __slots__ = ("_pool",)
+
+    def __init__(self, pool) -> None:  # noqa: ANN001
+        self._pool = pool
+
+    async def close(self) -> None:
+        self._pool.close()
+        with contextlib.suppress(Exception):
+            await self._pool.wait_closed()
 
 
 async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与 Go 同为线性启动闸
@@ -304,6 +459,10 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
     logger.info("mysql_connected", dsn=mysqlx.mask_dsn(raw_dsn))
 
     node_holder = None
+    # 背包域自带的可关闭资源(bag 库连接池、owner 授权连接)统一挂这里,
+    # 与主库 pool 共用同一条 finally 收尾链 —— 少了它,SIGTERM 后 bag 库连接
+    # 不排空就退进程,在途事务被 MySQL 侧当连接中断回滚(§9.16 “先摘流量 → 排空在途”)。
+    closables: list = []
     try:
         async with pool.acquire() as conn:
             # ── ⑬ 严格模式断言(§9.24)────────────────────────────────────
@@ -415,9 +574,37 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         svc = isvc.InventoryService(uc)
         ct_admin = ictadmin.ConfigTableAdminService(ct_store)
 
-        # 背包域:Python 侧未实现,配了就打刺眼的 WARN(见函数头注释)。
+        # ── 背包域(pandora.bag.v1,bag-domain.md phase 1 由本进程承载)──────
+        # bag.dsn 为空 = 未启用(不注册 BagService,现网行为不变,安全默认)。
+        bag_svc = None
+        bag_uc = None
+        bag_pool = None
+        bag_schema = ""
         if cfg.bag.dsn:
-            _warn_bag_domain_skipped(logger, cfg)
+            # ⚠️ 存量迁移作业(D5)在 Python 侧没有对应实现:它读 legacy trade 表快照
+            # 再往 bag 库落位,是一次性数据搬运,不属于 BagService 请求链。
+            # 静默跳过的后果是运维以为迁移在跑、实际一行没搬,contract 阶段冻结旧写路径后
+            # 玩家的存量道具凭空消失 —— 所以配了就拒启,而不是打个 WARN 放行。
+            if cfg.bag.legacy_migration_enabled:
+                logger.error(
+                    "bag_legacy_migration_unsupported",
+                    hint="bag.legacy_migration_enabled=true 需要一次性存量迁移作业;"
+                    "本进程不提供该作业,静默跳过会让存量道具搬不过去。"
+                    "请用 Go 版跑完迁移后把该开关置回 false,再用本进程承载 BagService",
+                )
+                return 1
+            bag_parts = await _setup_bag_domain(logger, cfg, repo, closables)
+            if bag_parts is None:
+                return 1
+            bag_svc, bag_uc, bag_pool, bag_schema = bag_parts
+            logger.info(
+                "bag_domain_enabled",
+                dsn=mysqlx.mask_dsn(cfg.bag.dsn),
+                max_journal_batch=cfg.bag.max_journal_batch,
+                hourly_journal_quota=cfg.bag.hourly_journal_quota,
+                section_capacities=len(cfg.bag.section_capacities),
+                journal_retention_days=cfg.bag.journal_retention_days,
+            )
 
         # ── ⑱ 会话现行性门(R5 复审 P0-1,INC-20260722-004)────────────────
         # 校验客户端面请求的 jti == login 会话权威(pandora:sess,node.redis_client
@@ -475,10 +662,14 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         )
         invgrpc.add_InventoryServiceServicer_to_server(svc, grpc_server)
         cfggrpc.add_ConfigTableAdminServiceServicer_to_server(ct_admin, grpc_server)
+        # 背包域条件注册(对齐 Go 侧 `cfg.Bag.DSN != ""` 才注册):
+        # bag.dsn 为空 = 未启用,不注册 BagService,现网行为不变。
+        reflection_names = [isvc.GRPC_SERVICE_FULL_NAME, ictadmin.GRPC_SERVICE_FULL_NAME]
+        if bag_svc is not None:
+            baggrpc.add_BagServiceServicer_to_server(bag_svc, grpc_server)
+            reflection_names.append(bsvc.GRPC_SERVICE_FULL_NAME)
         if cfg.server.grpc.enable_reflection:
-            pserver.enable_reflection(
-                grpc_server, [isvc.GRPC_SERVICE_FULL_NAME, ictadmin.GRPC_SERVICE_FULL_NAME]
-            )
+            pserver.enable_reflection(grpc_server, reflection_names)
 
         http_app = pserver.build_http_app(SERVICE_NAME)
 
@@ -505,6 +696,31 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                 runtime="python",  # 灰度期用它在 Grafana 里区分两个实现
             )
 
+        background: list = [
+            # 保留期清理:多副本各自跑,DELETE 幂等无需锁(对齐 mail sweep)。
+            ("inventory_retention_sweep", lambda: safego.loop(
+                "inventory_retention_sweep", sweep_interval, uc.sweep_retention
+            )),
+            # 容量巡检挂**同一间隔**(§16.10:不新建 timer 状态机)。
+            (
+                "capacity_guard",
+                lambda: _run_capacity_guard(
+                    pool, conn_cfg["db"], sweep_interval, ibudgets.trade_budgets()
+                ),
+            ),
+        ]
+        if bag_pool is not None:
+            # trade 与 bag 是**两个库两套预算**:共用一份会把 bag 表当成“未登记表”
+            # 而 trade 表在 bag 库里永远查不到,两边都报假警。挂同一间隔,不新建 timer。
+            background.append(
+                (
+                    "bag_capacity_guard",
+                    lambda: _run_capacity_guard(
+                        bag_pool, bag_schema, sweep_interval, ibudgets.bag_budgets()
+                    ),
+                )
+            )
+
         await pserver.run(
             service_name=SERVICE_NAME,
             grpc_server=grpc_server,
@@ -513,17 +729,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             http_addr=cfg.server.http.addr,
             http_default_port=HTTP_DEFAULT_PORT,
             on_ready=_on_ready,
-            background=[
-                # 保留期清理:多副本各自跑,DELETE 幂等无需锁(对齐 mail sweep)。
-                ("inventory_retention_sweep", lambda: safego.loop(
-                    "inventory_retention_sweep", sweep_interval, uc.sweep_retention
-                )),
-                # 容量巡检挂**同一间隔**(§16.10:不新建 timer 状态机)。
-                (
-                    "capacity_guard",
-                    lambda: _run_capacity_guard(pool, conn_cfg["db"], sweep_interval),
-                ),
-            ],
+            background=background,
         )
         if node_holder is not None:
             # 正常退出:停续约并断开 etcd。**刻意不 revoke** —— 立刻释放会让新副本
@@ -531,6 +737,10 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             await node_holder.close()
         return 0
     finally:
+        # 后进先出:bag owner 连接先于 bag 池关闭,顺序与获取时相反。
+        for closable in reversed(closables):
+            with contextlib.suppress(Exception):
+                await closable.close()
         pool.close()
         with contextlib.suppress(Exception):
             await pool.wait_closed()

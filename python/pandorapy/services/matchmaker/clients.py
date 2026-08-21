@@ -16,26 +16,41 @@
                         本文件只负责透传结果 / 错误,**不吞错误** —— 吞掉就等于替
                         调用方做了 fail-open 的决定。
 
-  ds_allocator          见 StubDSAllocator 的说明与 main.py 的 ⑬ 号闸:
-                        Python 侧尚未实现真实分配链(缺 battle 票据签发),
-                        配了 ds_allocator_addr 一律**拒启**,绝不静默回落打桩。
+  ds_allocator          真实分配链(GrpcDSAllocator)是正确性路径:调 AllocateBattle 拉一台
+                        battle DS,再由 matchmaker **自己**签 battle DSTicket ——
+                        不变量 §3「票据是进场权威的唯一搬运通道」+ §9.6「DS 不可信」
+                        决定了票不能由 DS 或分配器自签。
+                        StubDSAllocator **只在 ds_allocator_addr 留空时**装配;两者的
+                        选择只看这一个配置,绝不因签发器建不起来而互相降级
+                        (签发器三档装配见 main.py 闸⑫)。
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 
 import grpc
 
 from pandora.common.v1 import errcode_pb2 as commonpb
+from pandora.config.v1 import level_pb2 as levelpb
+from pandora.ds.v1 import allocator_pb2 as dspb
+from pandora.ds.v1 import allocator_pb2_grpc as dsgrpc
 from pandora.locator.v1 import locator_pb2 as locatorpb
 from pandora.locator.v1 import locator_pb2_grpc as locatorgrpc
 from pandora.team.v1 import team_pb2 as teampb
 from pandora.team.v1 import team_pb2_grpc as teamgrpc
 
+from pandorapy import battleabort
+from pandorapy import dsmetadata
+from pandorapy import dsticket as pdsticket
 from pandorapy import errcode
 from pandorapy import internalrpcauth
+from pandorapy import log as plog
+from pandorapy import placement
+from pandorapy import releasetrack
+from pandorapy.services.login import dsticket as ldsticket
 
 # team 侧会把 lease 钳到 [2s,15s];5s 是保守值,只需覆盖
 # 「BeginTeamMatch 返回 → 本次 StartMatch 把 claim 落地」这一小段。
@@ -44,6 +59,14 @@ ROSTER_LOCK_LEASE_MS = 5_000
 
 # 内网直连 gRPC 的默认超时(Go 侧 pkg/grpcclient.DefaultTimeout = 15s)。
 DEFAULT_RPC_TIMEOUT_SEC = 15.0
+
+# ds_allocator 的 abort RPC 全限定名。与 Go 的
+# `dsv1.DSAllocatorService_AbortPreactiveBattle_FullMethodName` 逐字一致 ——
+# 它是签名体的一部分,写错一个字符的后果是**每一次补偿都验签失败**,
+# 而那时 DS 已经拉起来了(泄漏一台机器,且 match 卡在 ABORTING)。
+ABORT_PREACTIVE_BATTLE_FULL_METHOD = (
+    "/pandora.ds.v1.DSAllocatorService/AbortPreactiveBattle"
+)
 
 
 def roster_lock_operation_id(team_id: int, captain_id: int) -> str:

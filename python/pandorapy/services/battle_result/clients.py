@@ -26,6 +26,8 @@ from pandora.mail.v1 import mail_pb2 as mail_pb
 from pandora.mail.v1 import mail_pb2_grpc as mail_grpc
 from pandora.match.v1 import match_pb2 as match_pb
 from pandora.match.v1 import match_pb2_grpc as match_grpc
+from pandora.mission.v1 import mission_pb2 as mission_pb
+from pandora.mission.v1 import mission_pb2_grpc as mission_grpc
 from pandora.player.v1 import player_pb2 as player_pb
 from pandora.player.v1 import player_pb2_grpc as player_grpc
 
@@ -35,6 +37,14 @@ from pandorapy import errcode
 # 两栈不一致会让同一件事在收件箱里长出两种样子)。
 OVERFLOW_MAIL_TITLE = "战斗掉落"
 OVERFLOW_MAIL_BODY = "背包已满,战斗掉落的装备已放入邮件,请清理背包后领取。"
+
+# 单次 RPC 有界超时(§9 不变量 19/20:不允许无人驱动的静默等待)。
+# 取值对齐 Go 的 `pkg/grpcclient.DefaultTimeout` = 15s —— MustDialInsecure 把它挂在
+# kratos client 上,所以 Go 侧每个内网 RPC 都自带这个 deadline。Python 的
+# `grpc.aio` 没有连接级默认 deadline,必须**每次调用显式传** timeout,
+# 否则下游半死(TCP 通但不回包)时协程会永远挂着:出箱发布器整条循环就此停住,
+# 而 health 照答 SERVING、日志零输出。
+GRPC_DEFAULT_TIMEOUT_SEC = 15.0
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -118,6 +128,123 @@ class GrpcInstanceGranter:
             )
         )
         _raise_on_code(resp.code, "inventory grant instances")
+
+    async def consume_battle_item(
+        self, player_id: int, item_config_id: int, count: int, idempotency_key: str
+    ) -> None:
+        """持久扣减已被可信进度事实确认的局内消耗。对应 Go 的 ConsumeBattleItem。"""
+        resp = await self._stub.ConsumeBattleItem(
+            inv_pb.ConsumeBattleItemRequest(
+                player_id=player_id,
+                item_config_id=item_config_id,
+                count=count,
+                idempotency_key=idempotency_key,
+            ),
+            timeout=GRPC_DEFAULT_TIMEOUT_SEC,
+        )
+        _raise_on_code(resp.code, "inventory consume battle item")
+
+    async def discard_battle_item(
+        self, player_id: int, item_config_id: int, count: int, idempotency_key: str
+    ) -> None:
+        """持久扣减可信进度事实确认的副本内堆叠物丢弃。对应 Go 的 DiscardBattleItem。"""
+        resp = await self._stub.DiscardBattleItem(
+            inv_pb.DiscardBattleItemRequest(
+                player_id=player_id,
+                item_config_id=item_config_id,
+                count=count,
+                idempotency_key=idempotency_key,
+            ),
+            timeout=GRPC_DEFAULT_TIMEOUT_SEC,
+        )
+        _raise_on_code(resp.code, "inventory discard battle item")
+
+
+class GrpcExperienceGranter:
+    """把击杀经验幂等入账到 player。对应 Go 的 data.GrpcExperienceGranter。
+
+    幂等键 = `progress:{match_id}:{seq}:{player_id}:exp`,同一批末 seq 的经验聚合行
+    只入账一次(player 侧 `exp_history` uk 去重)。
+
+    ★ 经验值本身由**服务端**从怪物配置表换算(§9 不变量 6:DS 只报事实不报数值),
+      这里只负责把算好的 delta 送过去。
+    """
+
+    __slots__ = ("_channel", "_stub")
+
+    def __init__(self, addr: str) -> None:
+        self._channel = grpc.aio.insecure_channel(addr)
+        self._stub = player_grpc.PlayerServiceStub(self._channel)
+
+    async def close(self) -> None:
+        await self._channel.close()
+
+    async def add_experience(
+        self, player_id: int, exp_delta: int, reason: str, idempotency_key: str
+    ) -> None:
+        resp = await self._stub.AddExperience(
+            player_pb.AddExperienceRequest(
+                player_id=player_id,
+                exp_delta=exp_delta,
+                reason=reason,
+                idempotency_key=idempotency_key,
+            ),
+            timeout=GRPC_DEFAULT_TIMEOUT_SEC,
+        )
+        _raise_on_code(resp.code, "player add experience")
+
+
+class GrpcMissionReporter:
+    """把战斗事实转发给 mission 推进任务进度。对应 Go 的 data.GrpcMissionReporter。
+
+    幂等键 `progress:{match_id}:{seq}:{player_id}:mission` 由 biz 给定,mission 侧
+    `mission_fact_receipts`(uk + 请求指纹)吸收 at-least-once 重放。
+
+    ★ 一出箱行一事实(facts 恒为长度 1 的列表):幂等键是**按行**生成的,
+      一次请求塞多条事实会让"部分成功"无法用一个键表达 —— mission 侧收据要么全记
+      要么全不记,重投时另一半就会双计。
+    """
+
+    __slots__ = ("_channel", "_stub")
+
+    def __init__(self, addr: str) -> None:
+        self._channel = grpc.aio.insecure_channel(addr)
+        self._stub = mission_grpc.MissionServiceStub(self._channel)
+
+    async def close(self) -> None:
+        await self._channel.close()
+
+    async def report_mission_fact(  # noqa: PLR0913 —— 与 Go 同为扁平参数
+        self,
+        player_id: int,
+        category: int,
+        slot_value: int,
+        amount: int,
+        idempotency_key: str,
+    ) -> None:
+        """转发单条事实。
+
+        返回正常 = 已入账**或**幂等命中(`already=True` 同样是成功,调用方照常删出箱行);
+        非 OK code 抬成异常让调用方退避重投。
+        """
+        resp = await self._stub.ReportMissionFacts(
+            mission_pb.ReportMissionFactsRequest(
+                player_id=player_id,
+                facts=[
+                    mission_pb.MissionFact(
+                        condition_category=category,
+                        condition_ids=[slot_value],
+                        amount=amount,
+                    )
+                ],
+                idempotency_key=idempotency_key,
+            ),
+            timeout=GRPC_DEFAULT_TIMEOUT_SEC,
+        )
+        _raise_on_code(
+            resp.code,
+            f"report mission fact player={player_id} key={idempotency_key}",
+        )
 
 
 class GrpcMailSender:

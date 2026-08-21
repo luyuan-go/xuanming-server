@@ -23,10 +23,19 @@ import grpc
 from pandora.common.v1 import errcode_pb2
 from pandora.hub.v1 import allocator_pb2, allocator_pb2_grpc
 from pandora.locator.v1 import locator_pb2, locator_pb2_grpc
+from pandora.match.v1 import match_pb2, match_pb2_grpc
 from pandora.owner.v1 import owner_pb2, owner_pb2_grpc
 from pandora.player.v1 import player_pb2, player_pb2_grpc
 
 from pandorapy import errcode
+from pandorapy import internalrpcauth
+
+#: matchmaker 只读权威的 gRPC full method 名。它是 internalrpcauth 签名载荷的一部分,
+#: 与 matchmaker 侧校验用的字符串**必须逐字相同**(签的是方法名,不是 stub 对象);
+#: 写错不会报 "method not found",只会全量 ERR_PERMISSION_DENY。
+MATCH_RESOLVE_PLAYER_MATCH_CONTEXT_METHOD = (
+    "/pandora.match.v1.MatchService/ResolvePlayerMatchContext"
+)
 
 # locator 在登录链上的独立子预算。prod 登录总 deadline 5s,MySQL/Redis 基线已占 1~2s,
 # 链上还有 matchmaker 探测与 AssignHub;locator 慢化(GC/failover)时若无子预算,
@@ -354,3 +363,105 @@ class GrpcOwnerClient:
             raise errcode.PandoraError(
                 int(resp.code), "owner release rejected player=%d", player_id
             )
+
+
+# ── matchmaker 只读耐久权威 ─────────────────────────────────────────────────
+#
+# 存在的理由(Go `internal/data/match_client.go` 头注释,P0 修复 2026-07-15):
+# locator 是**presence 投影**(30s TTL,会蒸发);matchmaker 的 player claim + match
+# 记录才是"玩家是否属于一场活跃对局"的**耐久事实**(claim 由 ReleaseMatch 显式释放)。
+# presence 未命中 BATTLE 时再查一次这里,封两个窗口:
+#   · READY 与 locator 投影之间(notifyBattle 之前 / 失败)把玩家误路由回 Hub;
+#   · locator TTL 恰好蒸发但对局仍活跃 → Hub/Battle 双在场。
+
+#: 登录链上 matchmaker 探测的**独立子预算**(Go `matchResolveTimeout`)。
+#: 每次非战斗登录都同步查一次本 RPC(封上述窗口的必要查询,不得移除);matchmaker 是
+#: 压测下最繁忙的服务,其 P99 慢化若无子预算会吃光 prod 登录 5s deadline。
+#: ★ 超时**不得**降级成 presence-only:那等于用一次抖动换一次双在场。到期只是让失败
+#: 提前、客户端更快进入退避重试,fail-closed 与否由 biz 按 profile 决定。
+#: 取值:只读 Redis 记录查询,健康 P99 几十 ms,取保守偏大值 3s;待实测复核。
+MATCH_RESOLVE_TIMEOUT_SEC = 3.0
+
+
+@dataclasses.dataclass(slots=True)
+class PlayerMatchAuthority:
+    """`ResolvePlayerMatchContext` 的最小 client 视角产出 —— Go `data.PlayerMatchAuthority`。
+
+    `state` 是 matchmaker 三态:
+      UNSPECIFIED = 读取错误 / 索引漂移(fail-closed,B1 下可重试)
+      NONE        = 明确无活跃撮合 / 对局
+      ACTIVE      = 有活跃 claim(排队 / 确认 / 分配 / READY)
+    """
+
+    state: int = 0
+    stage: int = 0
+    match_id: int = 0
+    battle_ds_addr: str = ""
+    #: 撮合命名空间的 canonical 值(如 5v5_ranked / pve_coop),来自 matchmaker 持久记录。
+    #: 冷启动客户端要用它恢复 x-pandora-game-mode 路由头;**绝不允许 login 按 PVE/PVP 猜**。
+    game_mode: str = ""
+    #: 本局副本编号(g_关卡.xlsx 关卡 id);0 = 未指定 / 默认。缺失时客户端有地图名反查兜底,
+    #: 不 fail-closed。
+    map_id: int = 0
+
+
+class GrpcMatchContextResolver:
+    """login → matchmaker 只读权威(零副作用,不改任何撮合状态)。"""
+
+    __slots__ = ("_channel", "_stub", "_signer")
+
+    def __init__(self, addr: str, signer: internalrpcauth.Signer | None = None) -> None:
+        self._channel = grpc.aio.insecure_channel(addr)
+        self._stub = match_pb2_grpc.MatchServiceStub(self._channel)
+        # signer:login→matchmaker 内部东西向鉴权(pkg/internalrpcauth)。matchmaker 侧
+        # ResolvePlayerMatchContext 强制校验 login 服务身份 HMAC + Redis nonce 防重放。
+        # None = 不签名(仅容忍 matchmaker 未启用 resume auth 的裸 dev 环境;启用环境会被
+        # ERR_PERMISSION_DENY 拒),main 装配时对 addr 已配但 secret 缺失打启动告警。
+        self._signer = signer
+
+    async def close(self) -> None:
+        with contextlib.suppress(Exception):
+            await self._channel.close()
+
+    async def resolve_player_match_context(self, player_id: int) -> PlayerMatchAuthority:
+        """每次调用签一份新鲜的 request-bound 凭证(方法 + player_id + 时间戳 + 一次性 nonce)。"""
+        metadata = None
+        if self._signer is not None:
+            try:
+                metadata = self._signer.sign_metadata(
+                    MATCH_RESOLVE_PLAYER_MATCH_CONTEXT_METHOD, player_id
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                raise errcode.PandoraError(
+                    errcode.ErrInternal,
+                    "sign matchmaker resume-auth credential: %s",
+                    exc,
+                ) from exc
+        try:
+            resp = await self._stub.ResolvePlayerMatchContext(
+                match_pb2.ResolvePlayerMatchContextRequest(player_id=player_id),
+                timeout=MATCH_RESOLVE_TIMEOUT_SEC,
+                metadata=metadata,
+            )
+        except asyncio.CancelledError:
+            raise
+        except grpc.aio.AioRpcError as exc:
+            raise errcode.PandoraError(
+                errcode.ErrInternal, "matchmaker ResolvePlayerMatchContext rpc: %s", exc
+            ) from exc
+        if resp.code != errcode_pb2.OK:
+            raise errcode.PandoraError(
+                int(resp.code),
+                "matchmaker ResolvePlayerMatchContext code=%d",
+                int(resp.code),
+            )
+        return PlayerMatchAuthority(
+            state=int(resp.state),
+            stage=int(resp.stage),
+            match_id=int(resp.match_id),
+            battle_ds_addr=resp.battle_ds_addr,
+            game_mode=resp.game_mode,
+            map_id=int(resp.map_id),
+        )

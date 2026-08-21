@@ -1,6 +1,6 @@
 {
-  "version": 20260819004,
-  "generated_at_ms": 1787206608075,
+  "version": 20260820001,
+  "generated_at_ms": 1787274128140,
   "generator": "configtable-gen@0.1.0",
   "source_rev": "svn-r2147",
   "tables": [
@@ -78,7 +78,7 @@
       "name": "item",
       "file": "item.json",
       "proto": "pandora.config.v1.ItemTableData",
-      "checksum": "sha256:58edba9a5dc62420f77048274c4cf87049b69a720d1ea31dd72d4500f611217b",
+      "checksum": "sha256:f73cb078c79ce6615623a43cb0d3f214d22b56f052ea85153753f4f09be7ffd5",
       "rows": 185
     },
     {

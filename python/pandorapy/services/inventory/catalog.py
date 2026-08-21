@@ -43,6 +43,12 @@ ALLOWED_ATTRS: dict[int, str] = {3: "Atk", 7: "MoveSpeedRate", 9: "Defense"}
 # 装备类型枚举 —— 从 pb 引用,**不手抄数值**(本仓刚修完 13 处手抄错位)。
 ITEM_TYPE_EQUIPMENT: int = _item_pb2.ITEM_TYPE_EQUIPMENT
 
+# item.proto / pkg/configtable/item.go 的回血组合契约，直接引用生成枚举避免跨语言漂移。
+ITEM_HEAL_TYPE_UNSPECIFIED: int = _item_pb2.ITEM_HEAL_TYPE_UNSPECIFIED
+ITEM_HEAL_TYPE_FIXED: int = _item_pb2.ITEM_HEAL_TYPE_FIXED
+ITEM_HEAL_TYPE_MAX_HP_PERCENT: int = _item_pb2.ITEM_HEAL_TYPE_MAX_HP_PERCENT
+MAX_CLIENT_FIXED_HEAL_HP = (1 << 31) - 1
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ItemDefinition:
@@ -238,6 +244,9 @@ def validate_inventory_tables(t: Tables) -> None:
                 f"role_attr_map id {attr_id} must be {code_name!r} for equipment gameplay semantics"
             )
 
+    for item in t.items.values():
+        _validate_item_heal(item)
+
     # pool_id → (attr_count, {attr_id}, total_weight)
     pool_attr_count: dict[int, int] = {}
     pool_attrs: dict[int, set[int]] = {}
@@ -292,6 +301,31 @@ def validate_inventory_tables(t: Tables) -> None:
             raise ConfigTableError(
                 f"equipment_affix pool {pool_id} is orphaned (no item references it)"
             )
+
+
+def _validate_item_heal(item: _item_pb2.ItemRow) -> None:
+    """与 Go validateItemRow 相同的回血类型/数值组合门禁。"""
+    if item.use_heal_type in (ITEM_HEAL_TYPE_UNSPECIFIED, ITEM_HEAL_TYPE_FIXED):
+        if item.use_heal_max_hp_percent != 0:
+            raise ConfigTableError(f"item {item.id} fixed heal requires use_heal_max_hp_percent=0")
+        if item.use_heal_hp > MAX_CLIENT_FIXED_HEAL_HP:
+            raise ConfigTableError(f"item {item.id} use_heal_hp exceeds client int32 max")
+        if item.usable and item.use_heal_hp == 0:
+            raise ConfigTableError(f"item {item.id} usable fixed heal requires use_heal_hp>0")
+        if not item.usable and item.use_heal_hp != 0:
+            raise ConfigTableError(f"item {item.id} non-usable item cannot configure fixed heal")
+        return
+
+    if item.use_heal_type == ITEM_HEAL_TYPE_MAX_HP_PERCENT:
+        if not item.usable:
+            raise ConfigTableError(f"item {item.id} percent heal requires usable=true")
+        if item.use_heal_hp != 0:
+            raise ConfigTableError(f"item {item.id} percent heal requires use_heal_hp=0")
+        if not 1 <= item.use_heal_max_hp_percent <= 100:
+            raise ConfigTableError(f"item {item.id} use_heal_max_hp_percent must be within 1..100")
+        return
+
+    raise ConfigTableError(f"item {item.id} has unknown use_heal_type={item.use_heal_type}")
 
 
 # ── biz 侧只读视图 ────────────────────────────────────────────────────────

@@ -22,8 +22,8 @@ services/runtime/player_locator/cmd/locator/main.go。
     ⑧  departure_event_enabled_but_no_kafka  开了离场事件却没 broker           fail-fast
     ⑨  departure_event_producer_init_failed  离场事件 producer 建不起来        fail-fast
     ⑩  cellroute_init_failed                 cell 路由表装配失败               fail-fast
-    ⑪  ds_auth_guard_init_failed             DS 回调令牌守卫建不起来           fail-fast
-    ⑫  ds_auth_fence_acquire_failed          DS 授权 capability 抢不到         fail-fast
+    ⑪  ds_auth_guard_init_failed              DS 回调令牌守卫建不起来           fail-fast
+    ⑫  ds_auth_fence_acquire_failed           DS 授权 capability 抢不到         fail-fast
 
   弱依赖三条**刻意只 WARN**,不得改成 fail-fast(改了会让好友在线态推送这种
   可降级增强把整个 presence 主链路一起拖停):
@@ -35,21 +35,16 @@ services/runtime/player_locator/cmd/locator/main.go。
      整条链**看起来在跑却永不触发**,排查时还会误以为是消费方的问题。
      宁可不 Ready 让编排器重试。关闭时 last-seen 照常记录,消费方走兜底复查。
 
-★ 与 Go 的两处**已知差异**(都是 fail-fast,不是静默降级,详见交付说明):
+★ 与 Go 的**一处已知差异**(fail-fast,不是静默降级):
     - 闸⑩ 在 Python 侧提前到了配置加载阶段:`cell_route.mode` 非空由
       `pandorapy.config.BaseConf` 的 pydantic 校验器拒绝。事件名仍是
       cellroute_init_failed(Loki 告警按事件名建),只是位置比 Go 早。
-    - 闸⑪/⑫:Python 侧尚无 DS 回调令牌守卫与 dsauthfence capability 实现,
-      `ds_auth.mode != off` 或 `authority_mode=redis` 时**拒绝启动**。
-      绝不能"当成 off 继续跑" —— 那是把 fail-closed 的令牌校验降级成 fail-open。
-      dev / 当前生产档是 mode=off + authority_mode=legacy,Go 侧此时守卫本身
-      也是 no-op,两个实现行为一致。
 
 后台循环(全部走 pandorapy.safego:裸 create_task 的协程死掉后进程照跑、
 health 照答 SERVING、**零日志**):
     - presence fan-out tick(去抖结算 + 合并 flush);presence.enabled=false 时不起。
-    - DS 授权 fence 失租守望(authority_mode=redis 专用)—— Python 侧未实现,
-      因为闸⑫已经把该模式挡在启动之外,不存在"起来了但没人守望"的状态。
+    - DS 授权 fence 失租守望(authority_mode=redis 专用)—— capability 失效到进程
+      退出之间的唯一传导路径,漏挂等于把 fail-closed 退化成 fail-open。
 
 运行:
     cd services/runtime/player_locator
@@ -67,12 +62,15 @@ from pandorapy import config as pconfig
 import argparse
 import asyncio
 import contextlib
+import os
 import pathlib
 import sys
 
 
 from pandora.locator.v1 import locator_pb2, locator_pb2_grpc
 
+from pandorapy import dsauth
+from pandorapy import dsauthfence
 from pandorapy import godur
 from pandorapy import kafka_topics
 from pandorapy import kafkax
@@ -82,6 +80,7 @@ from pandorapy import redisx
 from pandorapy import safego
 from pandorapy import server as pserver
 from pandorapy.services.player_locator import conf as lconf
+from pandorapy.services.player_locator import hub_credential as lhubcred
 from pandorapy.services.player_locator import presence as lpresence
 from pandorapy.services.player_locator import repo as lrepo
 from pandorapy.services.player_locator import service as lsvc
@@ -90,6 +89,14 @@ from pandorapy.services.player_locator import usecase as lusecase
 SERVICE_NAME = "player_locator"
 HTTP_DEFAULT_PORT = 21006
 GRPC_SERVICE_FULL_NAME = "pandora.locator.v1.PlayerLocatorService"
+
+# ── dsauthfence capability 契约 ──────────────────────────────────────────────
+#
+# ★ 不手抄字面量,直接取 dsauthfence 的生产 writer 策略表:etcd 侧对 feature 集合是
+#   **精确相等**比较,多一个 / 少一个 / 拼错一个字母都不是"降级注册",而是直接注册
+#   不上 → fail-closed。player_locator 在该表里是空元组(它只读授权权威、不写),
+#   写死 `()` 与查表在今天等价,但表一旦为本服务加上 feature,查表会自动跟上。
+DS_AUTH_FENCE_FEATURES = dsauthfence.REQUIRED_POLICY_V2_FEATURES[SERVICE_NAME]
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -152,6 +159,36 @@ class KafkaDepartureNotifier:
 
 def _producer_conf(kafka: lconf.KafkaConf) -> kafkax.ProducerConf:
     return kafkax.producer_conf_from(kafka)
+
+
+def _exit_process() -> None:
+    """capability 失租 / 旧 epoch 时的 fail-stop —— 对应 Go 那处 `os.Exit(1)`。
+
+    ★ 用 `os._exit` 而不是 `sys.exit`:此刻身处一个后台 task 里,`sys.exit` 只会让
+      **那个 task** 结束,进程照跑、gRPC 照答 SERVING —— 而"进程还在但已经证明不了
+      自己该写"正是双写者窗口本身(§9.22)。
+    ★ 独立成模块级函数只为可测:测试把它替换掉,否则真调 `os._exit` 会让 pytest
+      当场消失且不产生任何报告。
+    """
+    os._exit(1)
+
+
+async def _watch_fence_lost(fence: dsauthfence.Holder) -> None:
+    """capability 失租守望 —— 对应 Go 的 `go func(){ <-fence.Lost(); …; os.Exit(1) }`。
+
+    ★ 这**不是**"用定时器掩盖时序"(§16.10):没有轮询、没有猜测,只是把 Holder 已经
+      判定好的失效事件翻译成进程退出。到期动作是**停止一切写**,不是"假设已经好了
+      继续往下走" —— 判别口诀的那一半正好相反。
+    ★ 失租原因先于 `lost` 置位写入(见 `Holder._signal_lost`),所以这里读到的 reason
+      必然非空,不会打出一条"失租了但不知道为什么"的日志。
+    """
+    await fence.lost.wait()
+    plog.get().error(
+        "ds_auth_fence_lost",
+        reason=fence.lost_reason(),
+        hint="立即退出，禁止失租/旧 epoch 副本继续接受 Hub 写回",
+    )
+    _exit_process()
 
 
 async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与 Go 同为线性启动闸
@@ -233,6 +270,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
 
     presence_producer: kafkax.KeyOrderedProducer | None = None
     departure_producer: kafkax.KeyOrderedProducer | None = None
+    fence: dsauthfence.Holder | None = None
     try:
         repo = lrepo.RedisLocationRepo(rdb)
 
@@ -317,48 +355,99 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                 "departure_event_enabled", topic=kafka_topics.TOPIC_PLAYER_PRESENCE
             )
 
+        # ── 装配链 ────────────────────────────────────────────────────────
+        # ★ svc 必须先于闸⑪/⑫构造:两道闸的产物(守卫 / 终态门)都要注入到它身上,
+        #   与 Go 的 `svc := service.NewLocatorService(uc)` 位置同序(main.go:172)。
+        svc = lsvc.LocatorService(uc)
+
         # ── 闸⑪ DS 回调令牌守卫 ───────────────────────────────────────────
-        # mode=off(默认)→ 不校验,与 Go 的 nil guard 行为一致。
-        # mode!=off:Python 侧尚未实现该 middleware —— **拒绝启动**。
-        # 静默当成 off 继续跑 = 把 fail-closed 的令牌校验降级成 fail-open:
-        # 任何能到达 :8444 的东西都能改别人的位置投影,而 yaml 写着 enforce。
-        if cfg.ds_auth.enabled():
+        # 校验 Hub DS 经 :8444 的 SetLocation(HUB) / RefreshHubLocations / ReportDisconnect。
+        # mode=off(默认)→ guard 为 None,不校验(Go 的 nil dsGuard 同义)。
+        # mode=permissive/enforce 但 secret 未配 → guard_from_conf 抛错,这里 fail-fast:
+        # 那正是这道门要防的东西 —— 声称校验却实际不校验。
+        try:
+            ds_guard = dsauth.guard_from_conf(cfg.ds_auth)
+        except ValueError as exc:
+            logger.error("ds_auth_guard_init_failed", err=str(exc))
+            return 1
+        # Go 的 dsGuard 恒非 nil(off 档是个"什么都放行"的守卫);Python 的
+        # guard_from_conf 在 off 档返回 None。两者语义等价,判据统一用解析后的档位。
+        guard_mode = dsauth.parse_mode(cfg.ds_auth.mode)
+        if ds_guard is None and guard_mode is not dsauth.Mode.OFF:
+            # 守卫构造不出来却不是 off 档 = 声称校验实际不校验,必须拒。
             logger.error(
                 "ds_auth_guard_init_failed",
-                mode=cfg.ds_auth.mode,
-                err="python runtime has no DS callback token guard "
-                    "(pkg/middleware.DSCallbackGuard not ported)",
-                hint="用 Go 版跑这个服务,或先把 DS 回调令牌校验实现出来;"
-                     "绝不能把 mode=permissive/enforce 当成 off 继续跑",
+                err=f"ds_auth.mode={guard_mode.value} but no guard could be built",
+                hint="绝不能把 mode=permissive/enforce 当成 off 继续跑",
             )
             return 1
-        # ⚠️ 这里**不能**打 `ds_callback_guard_ready`。
-        #
-        # Go 侧那条日志的条件是 `if dsGuard != nil`(main.go:184),即**装配出了守卫**
-        # 才打;而 Python 走到这一行时恰恰是 mode=off / 空(enabled 档在上面已经拒启),
-        # 也就是**没有守卫**。沿用同一个事件名会让运维在 Loki 上看到
-        # "DS 回调守卫就绪",而真相是这台副本根本不校验 DS 回调 —— 语义正好相反。
-        logger.info(
-            "ds_callback_guard_disabled",
-            mode=cfg.ds_auth.mode.strip().lower() or "off",
-            hint="mode=off:本服务不校验 DS 回调令牌(与 Go 的 off 档同行为)",
-        )
+        svc.set_ds_callback_guard(ds_guard)
+        if ds_guard is not None:
+            # ★ 事件名与打点条件都照 Go(`if dsGuard != nil`,main.go:184):**装配出了
+            #   守卫**才打。off 档打同一个事件会让运维在 Loki 上看到"DS 回调守卫就绪",
+            #   而真相是这台副本根本不校验 DS 回调 —— 语义正好相反。
+            logger.info("ds_callback_guard_ready", mode=ds_guard.mode.value)
+        else:
+            logger.info(
+                "ds_callback_guard_disabled",
+                mode=guard_mode.value,
+                hint="mode=off:本服务不校验 DS 回调令牌(与 Go 的 off 档同行为)",
+            )
+
+        # Model B 跨服务终态门:JWT 验签之后再读 Redis 唯一授权权威,只有当前 active
+        # 凭据可执行 SetLocation(HUB) / RefreshHubLocations / ReportDisconnect。
+        # legacy / off / permissive 保持原行为(checker 不注入)。
+        if guard_mode is dsauth.Mode.ENFORCE and cfg.ds_auth.authority_mode_redis():
+            svc.set_hub_credential_state_checker(
+                lhubcred.new_hub_credential_state_checker(
+                    lhubcred.RedisHubAuthReader(rdb),
+                    cfg.ds_auth.active_heartbeat_max_age_td().total_seconds(),
+                )
+            )
+            logger.info("hub_active_credential_checker_ready", authority_mode="redis")
 
         # ── 闸⑫ DS 授权 capability(authority_mode=redis)──────────────────
-        # Go 在这里向 etcd 注册带租约的 capability 并守望失租;Python 侧未实现。
-        # 注:闸⑤已要求 redis 模式必须 mode=enforce,因此实际会先被闸⑪拦下;
-        # 这道仍然保留 —— 少了它,将来若闸⑪被实现,这里会变成静默缺口。
+        # 向 etcd 注册带租约的 capability:它是"本副本此刻还有没有写权"的唯一机械凭证。
+        # ★ 位置在闸⑪之后是契约:Go 的注释写得很直白 ——「critical dependencies 与
+        #   active checker 全部装配成功后才注册 capability」。反过来先抢 capability
+        #   再发现守卫配错,会让一个证明了自己该写、却根本不校验来路的副本短暂在线。
+        # ★ 身份不从 hostname / image tag 推:两者都可伪造、可漂移,而 capability key
+        #   的唯一性正建立在 PodUID 上(acquire_runtime 只认 Downward API 环境变量)。
+        # ★ features 取 dsauthfence 的生产 writer 策略表(player_locator 是空元组):
+        #   etcd 侧是**精确相等**比较,多一个 / 少一个都不是"降级注册"而是注册不上。
         if cfg.ds_auth.authority_mode_redis():
-            logger.error(
-                "ds_auth_fence_acquire_failed",
-                err="python runtime has no dsauthfence capability lease "
-                    "(pkg/dsauthfence.AcquireRuntime not ported)",
-                hint="失租 / 旧 epoch 副本必须立即退出,禁止继续接受 Hub 写回",
+            try:
+                fence = await dsauthfence.acquire_runtime(
+                    dsauthfence.RuntimeConfig(
+                        endpoints=list(cfg.ds_auth.fence.etcd_endpoints),
+                        prefix=cfg.ds_auth.fence.etcd_prefix,
+                        service=SERVICE_NAME,
+                        keyset_revision=cfg.ds_auth.fence.keyset_revision,
+                        writer_epoch=dsauthfence.PROTOCOL_EPOCH_V2,
+                        features=DS_AUTH_FENCE_FEATURES,
+                        lease_ttl_sec=cfg.ds_auth.fence.etcd_lease_ttl_sec,
+                        dial_timeout_sec=(
+                            cfg.ds_auth.fence.etcd_dial_timeout_td().total_seconds()
+                        ),
+                    )
+                )
+            except asyncio.CancelledError:
+                # ★ 取消必须穿透:CancelledError 是 BaseException,被下面那条宽 except
+                # 吞掉之后取消就**不再传播** —— Ctrl-C / 上层取消会被翻译成
+                # "capability 抢不到"这种假原因,§9.16 的排空在途也一并失效。
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                logger.error(
+                    "ds_auth_fence_acquire_failed",
+                    err=str(exc),
+                    hint="失租 / 旧 epoch 副本必须立即退出,禁止继续接受 Hub 写回",
+                )
+                return 1
+            logger.info(
+                "ds_auth_fence_ready",
+                required_writer_epoch=fence.required_epoch(),
+                reclaimed_stale_capability=fence.reclaimed,
             )
-            return 1
-
-        # ── 装配链 ────────────────────────────────────────────────────────
-        svc = lsvc.LocatorService(uc)
 
         # auth_required=False:本服务的 RPC 由内网 DS / login / matchmaker 调用,
         # 不直接暴露给玩家(Go 的 NewGRPCServer 同样没挂 AuthRequired);
@@ -408,6 +497,11 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
 
             background.append(presence_fanout_tick)
 
+        if fence is not None:
+            # 失租守望必须与对外服务同生命周期:它是 capability 失效到进程退出之间
+            # 唯一的传导路径,漏挂等于把 fail-closed 退化成 fail-open。
+            background.append(("ds_auth_fence_lost_watch", lambda: _watch_fence_lost(fence)))
+
         await pserver.run(
             service_name=SERVICE_NAME,
             grpc_server=grpc_server,
@@ -420,6 +514,11 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         )
         return 0
     finally:
+        # ★ capability 租约排最前:它是"本副本还有没有写权"的唯一凭证,必须在任何
+        #   其它资源被拆掉之前主动交还,好让继任副本尽早接管(否则要空等一个 TTL)。
+        if fence is not None:
+            with contextlib.suppress(Exception):
+                await fence.close()
         for producer in (presence_producer, departure_producer):
             if producer is not None:
                 with contextlib.suppress(Exception):

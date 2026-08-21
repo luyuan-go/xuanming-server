@@ -22,16 +22,16 @@
   它是后端内部 / 运维查询接口,Go 侧同样如此,且 Envoy 未对客户端暴露该路由。
   如果将来要对客户端开放,必须改成从鉴权上下文取,否则任何玩家都能查别人的战绩。
 
-★ **ReportProgress 在 Python 侧未实现**(实时进度通道整体未迁移,见 main.py 的启动 WARN)。
-  返回 ERR_INVALID_STATE —— 这不是随手挑的码,而是 Go 在 `progress_enabled=false` 时
-  返回的**同一个码**,DS 收到即停流并回退到局后结算路径(realtime-progression.md)。
-  选 ERR_NOT_IMPLEMENTED 会让 DS 走到没有约定处置的分支;选 OK 会让 DS 以为事实已入账
-  (那才是真正会丢经验和掉落的选择)。
+★ **ReportProgress 鉴权复用 ReportResult 的 DS 回调链**:Guard 的 battle 令牌绑 match_id;
+  `authority_mode=redis` 时另过 Redis active 校验并取**权威 roster**(玩家越权直接拒)。
+  对局结算后 credential 进入终态 + 水位表打终局标记,双重保证迟到进度一律拒
+  (僵尸 DS fencing)。checker 未注入(dev / mode=off)→ roster=None,biz 跳过成员校验。
 """
 
 from __future__ import annotations
 
 import asyncio
+import typing
 
 import grpc
 from pandora.battle.v1 import battle_pb2, battle_pb2_grpc
@@ -41,6 +41,10 @@ from pandorapy import dsauth, errcode
 from pandorapy import log as plog
 from pandorapy.protoenum import enum_name
 from pandorapy.services.battle_result import biz as bbiz
+from pandorapy.services.battle_result import progress as bprog
+
+if typing.TYPE_CHECKING:  # pragma: no cover —— 仅类型注解,运行期不引入依赖
+    from pandorapy.services.battle_result import credential as bcred
 
 GRPC_SERVICE_FULL_NAME = "pandora.battle.v1.BattleResultService"
 
@@ -52,16 +56,27 @@ DS_TYPE_BATTLE = "battle"
 class BattleResultService(battle_pb2_grpc.BattleResultServiceServicer):
     """实现 BattleResultServiceServicer。对应 Go 的 service.BattleResultService。"""
 
-    __slots__ = ("_uc", "_ds_guard")
+    __slots__ = ("_uc", "_ds_guard", "_credential_checker")
 
     def __init__(self, uc: bbiz.BattleResultUsecase) -> None:
         self._uc = uc
         # None = mode=off,不校验(与 Go 的 dsGuard==nil 等价)。
         self._ds_guard: dsauth.DSCallbackGuard | None = None
+        # None = authority_mode 非 redis(与 Go 的 battleCredentialChecker==nil 等价):
+        # 不过 Redis active 终态门,也不取权威 roster。
+        self._credential_checker: "bcred.BattleCredentialStateChecker | None" = None
 
     def set_ds_callback_guard(self, guard: dsauth.DSCallbackGuard | None) -> None:
         """注入 DS 回调令牌守卫(main 按 ds_auth 配置构建;None 表示 off)。"""
         self._ds_guard = guard
+
+    def set_battle_credential_state_checker(
+        self, checker: "bcred.BattleCredentialStateChecker | None"
+    ) -> None:
+        """注入 Redis active credential 终态门(对应 Go 的
+        SetBattleCredentialStateChecker)。只在 authority_mode=redis 下注入。
+        """
+        self._credential_checker = checker
 
     # ── DS 回调面 ─────────────────────────────────────────────────────────
 
@@ -123,14 +138,11 @@ class BattleResultService(battle_pb2_grpc.BattleResultServiceServicer):
         request: battle_pb2.ReportProgressRequest,
         context: grpc.aio.ServicerContext,
     ) -> battle_pb2.ReportProgressResponse:
-        """战斗中实时进度事实上报。
+        """战斗中实时进度事实上报(realtime-progression.md §3/§4.1)。
 
-        ⚠️ **Python 侧未实现实时进度通道**。这里仍然完整跑鉴权链再拒:
-        跳过鉴权直接拒会让"伪造令牌的 DS"和"合法 DS 撞上未实现"在日志里长一个样,
-        而前者是安全信号。
-
-        拒绝码 ERR_INVALID_STATE 与 Go 在 `progress_enabled=false` 时返回的**完全相同**,
-        DS 收到即停流、回退到局后结算路径。acked_seq=0 表示"一条都没入账"。
+        鉴权复用 ReportResult 的 DS 回调链:Guard 的 battle 令牌绑 match_id;
+        authority_mode=redis 时另过 Redis active 校验并取权威 roster(玩家越权直接拒)。
+        对局结算后 credential 进入终态 + 水位表打终局标记,双重保证迟到进度一律拒。
         """
         if request.match_id == 0 or not request.events:
             plog.get().warning(
@@ -141,25 +153,59 @@ class BattleResultService(battle_pb2_grpc.BattleResultServiceServicer):
             )
             return battle_pb2.ReportProgressResponse(code=errcode_pb2.ERR_INVALID_ARG)
 
-        code = self._check_battle_credential(context, request.match_id)
+        claims, credential, code = self._check_battle_credential_full(
+            context, request.match_id
+        )
+        del claims  # 本方法只需 credential;保留解包形状与 Go 的三返回值一致
         if code != 0:
             _log_ds_auth_reject("ReportProgress", "check_credential", request.match_id, "", code)
             return battle_pb2.ReportProgressResponse(code=code)
-        # 每批一条 WARN(不是每事件):量级 = DS 批次数,不构成噪音,
-        # 而"DS 一直在发进度但服务端一条都没收"必须在服务端可见 ——
-        # 只在 DS 侧可见的话,运维会把它当成网络问题排查。
-        plog.get().warning(
-            "battle_progress_channel_unavailable",
-            match_id=request.match_id,
-            events=len(request.events),
-            hint="Python 版 battle_result 未实现实时进度通道;DS 应停流并回退局后结算路径"
-            "(与 progress_enabled=false 同一处置)。需要实时通道请用 Go 版跑本服务",
-        )
-        # acked_seq=0 = 一条都没入账。带非零 acked_seq 会让 UE 释放 action claim,
-        # 那是"服务端已确定处理过这个 seq"的语义 —— 这里没有。
-        return battle_pb2.ReportProgressResponse(
-            code=errcode_pb2.ERR_INVALID_STATE, acked_seq=0
-        )
+
+        # roster:Redis active 校验副产物(canonical BattleStorageRecord),biz 用它拒绝
+        # 非本场玩家的进度事实。checker 未启用(dev / mode off)→ roster=None,
+        # biz 跳过成员校验。
+        roster: list[int] | None = None
+        if self._credential_checker is not None:
+            if credential is None:
+                # guard 放行但 claims 不构成完整 Model-B credential(缺 instance_uid /
+                # gen / writer_epoch 之类)。Model-B 下这不是"降级放行",而是越权信号。
+                _log_ds_auth_reject(
+                    "ReportProgress", "credential_nil", request.match_id, "", 0
+                )
+                return battle_pb2.ReportProgressResponse(
+                    code=errcode_pb2.ERR_UNAUTHORIZED
+                )
+            try:
+                proof = await self._credential_checker.authorize_result(
+                    request.match_id, credential
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                _log_ds_auth_reject(
+                    "ReportProgress",
+                    "authorize_result",
+                    request.match_id,
+                    credential.pod,
+                    _to_proto_code(exc),
+                )
+                return battle_pb2.ReportProgressResponse(code=_to_proto_code(exc))
+            roster = list(proof.player_ids)
+
+        try:
+            acked = await self._uc.report_progress(
+                request.match_id, roster, list(request.events)
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            # isolated consume/discard 的 durable terminal failure 已经是一个被服务端
+            # 明确处理的 seq:带回 acked_seq 让 UE 释放该 action claim,但保留本地物品。
+            # 瞬时失败返回 acked=0,UE 保持同 seq/同 payload 重试。
+            return battle_pb2.ReportProgressResponse(
+                code=_to_proto_code(exc), acked_seq=bprog.progress_acked_seq(exc)
+            )
+        return battle_pb2.ReportProgressResponse(code=errcode_pb2.OK, acked_seq=acked)
 
     # ── 查询面 ────────────────────────────────────────────────────────────
 
@@ -215,6 +261,24 @@ class BattleResultService(battle_pb2_grpc.BattleResultServiceServicer):
         if self._ds_guard is None:
             return 0
         return self._ds_guard.check(
+            context,
+            dsauth.DSScope(ds_type=DS_TYPE_BATTLE, match_id=match_id, require_token=True),
+        )
+
+    def _check_battle_credential_full(  # noqa: ANN001
+        self, context, match_id: int
+    ) -> tuple[
+        dsauth.DSCallbackClaims | None, dsauth.VerifiedCredential | None, int
+    ]:
+        """同上,但额外带回 Model-B 的 active credential(对应 Go 的
+        `dsGuard.CheckBattleCredential`)。
+
+        guard 为 None(mode=off)时返回 (None, None, 0):此时 credential checker 也不可能
+        被注入(main 只在 authority_mode=redis 下注入,而那条路径强制 guard 非 off)。
+        """
+        if self._ds_guard is None:
+            return None, None, 0
+        return self._ds_guard.check_credential(
             context,
             dsauth.DSScope(ds_type=DS_TYPE_BATTLE, match_id=match_id, require_token=True),
         )

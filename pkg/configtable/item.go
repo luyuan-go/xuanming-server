@@ -14,6 +14,10 @@ import (
 // 视图结构与通用访问 API(All/ByID/Exists/Count/ByIDs/RandOne/Where/First)在
 // item_table.gen.go(tools/configtable-gen 生成,勿手改)。
 
+const (
+	maxClientFixedHealHP uint32 = 1<<31 - 1
+)
+
 // validateItemRow 逐行业务校验(生成的 newItemTable 调用;
 // 主键非零/唯一已由生成代码兜住,类型/必填/枚举已由生成器在导表阶段校验)。
 //
@@ -96,9 +100,39 @@ func validateItemRow(row *configpb.ItemRow) error {
 		}
 	}
 
-	// 配成「可使用但回血 0」的消耗品在副本内点了没有任何效果,属策划配置事故,不静默放行。
-	if row.GetUsable() && row.GetUseHealHp() == 0 {
-		return fmt.Errorf("可使用(usable)为真但使用回血量(use_heal_hp)为 0,该道具使用后无任何效果")
+	// 回血类型与数值必须形成唯一合法组合。百分比使用独立列，使旧 DS 看到新类型时
+	// use_heal_hp=0 并 fail-closed，不会把 20% 错当成固定回血 20 点。
+	switch row.GetUseHealType() {
+	case configpb.ItemHealType_ITEM_HEAL_TYPE_UNSPECIFIED,
+		configpb.ItemHealType_ITEM_HEAL_TYPE_FIXED:
+		if row.GetUseHealMaxHpPercent() != 0 {
+			return fmt.Errorf("固定回血类型要求使用回血百分比(use_heal_max_hp_percent)为 0,实为 %d",
+				row.GetUseHealMaxHpPercent())
+		}
+		if row.GetUseHealHp() > maxClientFixedHealHP {
+			return fmt.Errorf("固定使用回血量(use_heal_hp=%d)超过客户端 int32 上限 %d",
+				row.GetUseHealHp(), maxClientFixedHealHP)
+		}
+		if row.GetUsable() && row.GetUseHealHp() == 0 {
+			return fmt.Errorf("可使用(usable)为真但固定使用回血量(use_heal_hp)为 0,该道具使用后无任何效果")
+		}
+		if !row.GetUsable() && row.GetUseHealHp() != 0 {
+			return fmt.Errorf("不可使用道具不得配置固定使用回血量(use_heal_hp=%d)", row.GetUseHealHp())
+		}
+	case configpb.ItemHealType_ITEM_HEAL_TYPE_MAX_HP_PERCENT:
+		if !row.GetUsable() {
+			return fmt.Errorf("最大生命百分比回血要求可使用(usable)为真")
+		}
+		if row.GetUseHealHp() != 0 {
+			return fmt.Errorf("最大生命百分比回血要求固定使用回血量(use_heal_hp)为 0,实为 %d",
+				row.GetUseHealHp())
+		}
+		if percent := row.GetUseHealMaxHpPercent(); percent == 0 || percent > 100 {
+			return fmt.Errorf("最大生命回血百分比(use_heal_max_hp_percent)必须在 1..100,实为 %d", percent)
+		}
+	default:
+		return fmt.Errorf("未知使用回血类型(use_heal_type=%d),仅支持 0=未配置/旧版固定、1=固定值、2=最大生命百分比",
+			row.GetUseHealType())
 	}
 	return nil
 }

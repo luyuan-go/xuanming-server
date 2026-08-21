@@ -573,7 +573,7 @@ async def test_guard_rejection_leaves_audit_log() -> None:
     assert rej[0]["reported_pod"] == "battle-pod-1"
 
 
-# ── ReportProgress(Python 侧未实现)────────────────────────────────────────
+# ── ReportProgress ──────────────────────────────────────────────────────────
 
 
 def _progress_req(match_id=1001, events=1) -> battle_pb2.ReportProgressRequest:
@@ -583,30 +583,57 @@ def _progress_req(match_id=1001, events=1) -> battle_pb2.ReportProgressRequest:
     )
 
 
-async def test_report_progress_returns_invalid_state_not_ok() -> None:
-    """★ 必须回 ERR_INVALID_STATE(与 Go 在 progress_enabled=false 时**同一个码**)。
+class _ProgressUsecase(FakeUsecase):
+    """把 biz 的裁决结果透传给 service —— 本用例锁的是 service 的**转码**这一段。
+
+    ★ 初版这条用例断的是"Python 未实现 → 恒回 ERR_INVALID_STATE"的桩行为,
+      而 `FakeUsecase` 压根没有 `report_progress`。实时进度通道移植完成后,
+      service 会真的去调 `self._uc.report_progress(...)` —— 老 fake 上这一调用抛
+      AttributeError,被 `except BaseException` 兜住转成 ERR_UNKNOWN。
+      也就是说这条用例过去测的是桩,现在必须改测"biz 抛什么码,service 就回什么码"。
+    """
+
+    def __init__(self, exc: BaseException | None = None, acked: int = 0):
+        super().__init__()
+        self.exc = exc
+        self.acked = acked
+        self.progress_calls: list[tuple[int, list | None, int]] = []
+
+    async def report_progress(self, match_id, roster, events):  # noqa: ANN001
+        self.progress_calls.append((match_id, roster, len(events)))
+        if self.exc is not None:
+            raise self.exc
+        return self.acked
+
+
+async def test_report_progress_propagates_invalid_state_not_ok() -> None:
+    """★ 通道关闭(progress_enabled=false)必须回 ERR_INVALID_STATE,且 acked_seq=0。
 
     回 OK 会让 DS 以为事实已入账 —— 那才是真正会丢经验和掉落的选择;
     回 ERR_NOT_IMPLEMENTED 会让 DS 走到没有约定处置的分支。
+    `acked_seq` 必须是 0:带非零值 = "服务端已处理过这个 seq",通道关闭时没有。
     """
-    with capture_logs() as logs:
-        resp = await _svc().ReportProgress(_progress_req(), FakeContext())
+    uc = _ProgressUsecase(
+        errcode.PandoraError(errcode.ErrInvalidState, "realtime progress channel disabled")
+    )
+    resp = await _svc(uc).ReportProgress(_progress_req(), FakeContext())
     assert resp.code == errcode_pb2.ERR_INVALID_STATE
-    assert resp.acked_seq == 0  # 带非零 acked_seq = "服务端已处理过这个 seq",这里没有
-    assert [e for e in logs if e["event"] == "battle_progress_channel_unavailable"]
+    assert resp.acked_seq == 0
+    assert uc.progress_calls == [(1001, None, 1)], "鉴权过了就必须真的把批次交给 biz"
 
 
 async def test_report_progress_still_runs_auth_chain_first() -> None:
-    """★ 未实现也要先跑鉴权:跳过的话"伪造令牌的 DS"和"合法 DS 撞上未实现"
+    """★ 鉴权必须跑在 biz 之前:跳过的话"伪造令牌的 DS"和"合法 DS 撞上业务拒"
     在日志里长一个样,而前者是安全信号。
     """
-    svc = _svc()
+    uc = _ProgressUsecase()
+    svc = _svc(uc)
     svc.set_ds_callback_guard(_guard("enforce"))
     with capture_logs() as logs:
         resp = await svc.ReportProgress(_progress_req(), FakeContext({"x-pandora-ds-gateway": "1"}))
-    assert resp.code == errcode_pb2.ERR_UNAUTHORIZED  # 鉴权拒,不是未实现拒
+    assert resp.code == errcode_pb2.ERR_UNAUTHORIZED  # 鉴权拒
     assert [e for e in logs if e["event"] == "ds_auth_rejected"]
-    assert not [e for e in logs if e["event"] == "battle_progress_channel_unavailable"]
+    assert uc.progress_calls == [], "鉴权没过就绝不能把批次交给 biz"
 
 
 async def test_report_progress_empty_batch_rejected() -> None:

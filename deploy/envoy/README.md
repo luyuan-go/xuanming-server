@@ -34,6 +34,7 @@
 | `friend_cluster` | friend | host.docker.internal:20004 | h2c | route 15s |
 | `chat_cluster`   | chat | host.docker.internal:20005 | h2c | route 15s |
 | `trade_cluster`  | trade | host.docker.internal:20012 | h2c | route 15s |
+| `auction_cluster` | auction | host.docker.internal:20016 | h2c | route 15s |
 | `leaderboard_cluster` | leaderboard | host.docker.internal:20007 | h2c | route 15s |
 | `dialogue_cluster` | dialogue | host.docker.internal:20013 | h2c | route 15s | ⚠️ **本行是漂移**:`envoy.yaml` 里并不存在该 cluster / route,dialogue 当前未接入客户端面网关(2026-08-11 核实)。要放行需照 friend 补 route + jwt_authn 规则 + cluster 三件套。 |
 | `mission_cluster` | mission | host.docker.internal:20019 | h2c | route 15s |
@@ -202,4 +203,4 @@ grpcurl -plaintext 127.0.0.1:20014 describe pandora.push.v1.PushService
 - [ ] 加 `envoy.filters.http.ratelimit`(对接独立 ratelimit service)
 - [ ] CORS `allow_origin_string_match` 收紧到具体域名(去掉 `.*`)
 - [ ] 接 OpenTelemetry tracing collector(对齐 docs/design/infra.md)
-- [ ] 当前静态配置已有 17 个 cluster；后续继续增长或进入多环境动态路由时，评估 Envoy CDS / xDS 下发
+- [ ] 当前静态配置已有 19 个 cluster；后续继续增长或进入多环境动态路由时，评估 Envoy CDS / xDS 下发

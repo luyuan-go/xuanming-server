@@ -42,6 +42,19 @@ TRADE_DB = "pandora_trade"
 # EnsureAuctionEscrow 的重试次数(与 Go 的 ensureAuctionEscrowMaxAttempts 同值)。
 ENSURE_AUCTION_ESCROW_MAX_ATTEMPTS = 3
 
+# 背包容量购买在 inventory_ledger 里的 op 标识(与 Go 的 bagCapacityChargeOp 同字面量)。
+BAG_CAPACITY_CHARGE_OP = "buy_capacity"
+
+
+def bag_capacity_charge_key(bag_type: int, tier: int) -> str:
+    """购买扣费幂等键。对应 Go 的 BagCapacityChargeKey。
+
+    每玩家 uk(player_id, idempotency_key) 下按 段×档 唯一 —— 与 Go **逐字节一致**,
+    分叉即等于跨栈重试会重复扣费。
+    """
+    return f"bagcap:{bag_type}:{tier}"
+
+
 _MAX_INT64 = (1 << 63) - 1
 
 
@@ -262,6 +275,40 @@ class MySQLInventoryRepo(InstanceRepoMixin, TransferRepoMixin):
             new_gold = await rsql.read_gold_tx(cur, player_id)
             await rsql.update_ledger_result(cur, player_id, idempotency_key, 0, new_gold)
             return new_gold, False
+
+    # ── 背包容量购买扣费(bag-domain.md §5.3 两步 saga 第①步)────────────────
+
+    async def charge_bag_capacity(
+        self, player_id: int, bag_type: int, tier: int, slots: int, price_gold: int
+    ) -> tuple[bool, int]:
+        """购买扣费(trade 库单事务)。对应 Go 的 MySQLInventoryRepo.ChargeBagCapacity。
+
+        首次 → 扣 price_gold 并记账;同 key 重试(already=True)→ **零扣费**,
+        返回首次那一刻的余额快照(不是当前余额:玩家之后花了钱,重放不能显示新余额,
+        否则同一笔购买两次响应给出两个"成功但不同"的答案)。
+
+        幂等身份 = (player_id, bag_type, 第 tier 档),与 bag 库的档数 CAS 共用 ——
+        两步之间崩溃时重试同 tier:①回放零扣费 → ②补应用,不存在"扣钱未到账"终态。
+
+        ★ key / op / 指纹三者与 Go **逐字节一致**:它们是跨栈幂等的全部依据。
+          Go 版扣过一次、Python 版重试时算出别的 key,就会**再扣一次钱**。
+        """
+        key = bag_capacity_charge_key(bag_type, tier)
+        fingerprint = fp.hash_hex(
+            f"bagcap|{player_id}|{bag_type}|{tier}|{slots}|{price_gold}"
+        )
+        detail = f"buy capacity bag={bag_type} tier={tier} slots={slots} gold={price_gold}"
+        async with rsql.transaction(self._pool) as cur:
+            already, _remaining, snap_gold = await rsql.claim_ledger(
+                cur, player_id, key, BAG_CAPACITY_CHARGE_OP, fingerprint, detail
+            )
+            if already:
+                return True, snap_gold
+            remaining = await rsql.deduct_gold_tx(cur, player_id, price_gold)
+            # result_remaining 记的是本次买到的格子数(Go 同):它是审计时"这笔钱换了什么"
+            # 的唯一凭据 —— 光有 gold 余额看不出买的是哪一档。
+            await rsql.update_ledger_result(cur, player_id, key, slots, remaining)
+            return False, remaining
 
     async def _deduct_with_ledger(
         self,

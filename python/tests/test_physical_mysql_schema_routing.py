@@ -19,6 +19,7 @@ from pandorapy.services.chat import main as chat_main
 from pandorapy.services.data_service import main as data_main
 from pandorapy.services.friend import main as friend_main
 from pandorapy.services.guild import main as guild_main
+from pandorapy.services.inventory import budgets as inventory_budgets
 from pandorapy.services.inventory import main as inventory_main
 from pandorapy.services.leaderboard import main as leaderboard_main
 from pandorapy.services.login import data as login_data
@@ -88,13 +89,18 @@ def _guard_coro(module, shape: str, pool: _Pool, schema: str):  # noqa: ANN001
         return guard(pool, schema, 3600.0)
     if shape == "auction":
         return guard(pool, schema, 7)
+    if shape == "budgets":
+        # inventory 是唯一一个**两个库**的服务(trade + bag),预算必须按库传参:
+        # 共用一份会让 bag 的三个 blob 列(深度失控的高风险点)完全没有巡检。
+        # 本用例只验"查的是物理 schema",预算内容不参与断言,给 trade 的即可。
+        return guard(pool, schema, 3600.0, inventory_budgets.trade_budgets())
     return guard(pool, schema)
 
 
 @pytest.mark.parametrize(
     ("name", "module", "shape", "canonical"),
     [
-        ("inventory", inventory_main, "interval", inventory_main.TRADE_DB),
+        ("inventory", inventory_main, "budgets", inventory_main.TRADE_DB),
         ("chat", chat_main, "interval", chat_main.CHAT_DB),
         ("auction", auction_main, "auction", auction_main.DB_SCHEMA),
         ("guild", guild_main, "interval", guild_main.GUILD_DB),
