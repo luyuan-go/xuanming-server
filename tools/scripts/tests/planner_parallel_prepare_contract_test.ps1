@@ -281,10 +281,11 @@ $unboundCommandError = & {
     try {
         Invoke-CallbackInChildScope $unboundCallback | Out-Null
     } catch {
-        $_.Exception.Message
+        $_.Exception
     }
 }
-Assert-True ($unboundCommandError -match 'Invoke-ParentOnlyPlannerCommand.*not recognized') `
+Assert-True ($unboundCommandError -is [Management.Automation.CommandNotFoundException] -and
+    $unboundCommandError.CommandName -ceq 'Invoke-ParentOnlyPlannerCommand') `
     '回归前提：GetNewClosure 不会自动捕获父脚本中定义的函数命令'
 
 $boundCommandResult = & {
