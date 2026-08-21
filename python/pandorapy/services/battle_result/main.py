@@ -16,17 +16,21 @@ legacy/off 才可选消费 pandora.battle.result。始终消费 pandora.ds.lifec
     ④  ds_auth_fence_config_invalid        fail-fast  redis 权威缺 fence 配置
     ⑤  battle_result_ingress_invalid       fail-fast  redis 权威还订阅无凭据 topic
     ⑥  battle_retention_mode_invalid       fail-fast  清理模式拼错(六个月口径静默失效)
-    ⑦  battle_authority_mode_unsupported   fail-fast  **Python 专有**,见下方"诚实差异"
-    ⑧  mysql_dsn_required                  fail-fast  权威库缺失(结算落库不可降级)
-    ⑨  mysql_connect_failed                fail-fast  Go 侧是 MustNewClient 的 panic
-    ⑩  mysql_strict_mode_required          fail-fast  非严格 sql_mode = 静默截断
-    ⑪  mmr_reader_grpc / mmr_reader_static  INFO      读真实 MMR 还是静态兜底的唯一判据
-    ⑫  player_update_producer_init_failed   WARN      弱依赖:出箱积压不丢
+    ⑦  mysql_dsn_required                  fail-fast  权威库缺失(结算落库不可降级)
+    ⑧  mysql_connect_failed                fail-fast  Go 侧是 MustNewClient 的 panic
+    ⑨  mysql_strict_mode_required          fail-fast  非严格 sql_mode = 静默截断
+    ⑩  mmr_reader_grpc / mmr_reader_static  INFO      读真实 MMR 还是静态兜底的唯一判据
+    ⑪  player_update_producer_init_failed   WARN      弱依赖:出箱积压不丢
         / player_update_producer_ready       INFO
-        / kafka_brokers_empty                WARN      (brokers 空时;闸⑯ 才是 fatal 那条)
-    ⑬  battle_recovery_outbox_schema_invalid fail-fast match_release / drop 出箱缺表
-    ⑭  battle_progress_schema_invalid       fail-fast  进度五表缺表 / 列契约漂移
+        / kafka_brokers_empty                WARN      (brokers 空时;闸㉒ 才是 fatal 那条)
+    ⑫  battle_recovery_outbox_schema_invalid fail-fast match_release / drop 出箱缺表
+    ⑬  battle_progress_schema_invalid       fail-fast  进度五表缺表 / 列契约漂移
+    ⑭  terminal_release_schema_invalid     fail-fast  Model-B 缺 000002 迁移
+        / battle_auth_redis_required         fail-fast  Model-B 缺 Redis 授权权威地址
+        / battle_auth_redis_ping_failed      fail-fast
+        / terminal_release_dependencies_ready INFO
     ⑮  match_releaser_grpc                  INFO
+        / match_releaser_required            fail-fast Model-B 下 matchmaker_addr 必配
         / match_releaser_disabled            WARN      legacy 档地址未配
     ⑯  drop_granter_grpc / drop_granter_disabled       弱依赖
     ⑰  configtable_dir_required             fail-fast  怪物击杀经验唯一权威缺失
@@ -38,38 +42,19 @@ legacy/off 才可选消费 pandora.battle.result。始终消费 pandora.ds.lifec
         / mission_forward_grpc / mission_forward_disabled
     ㉑  ds_auth_guard_init_failed            fail-fast  mode=permissive/enforce 但缺 secret
         / ds_callback_guard_ready            INFO
+        / battle_active_credential_checker_ready  INFO  Model-B Redis active 门就绪
     ㉒  kafka_brokers_empty                  fail-fast  **消费侧**:不消费就不结算
     ㉓  consume_topics_empty                 fail-fast
     ㉔  unknown_consume_topic_skipped        WARN
     ㉕  dlq_producer_init_failed             fail-fast  不可静默降级为丢消息模式
     ㉖  kafka_consumer_new_failed            fail-fast
     ㉗  no_valid_consumer                    fail-fast  consume_topics 全部无效
+    ㉘  ds_auth_fence_acquire_failed         fail-fast  Model-B capability 未到手 → 零业务写
+        / ds_auth_fence_ready                INFO
+        / ds_auth_fence_lost                 ERROR + 立即退出
 
   方向也与 Go 一致:配置表加载 warning 是 WARN 放行(脏文件不拒批次),
   容量巡检超预算只 ERROR 不阻断。
-
-★★ **诚实标注的两处差异**(不是遗漏,是本轮刻意的边界):
-
-  (A) 闸⑦ `battle_authority_mode_unsupported` —— Go 没有这道闸,Python 有。
-
-      `ds_auth.authority_mode=redis`(Model-B)需要三样 Python 侧**没有**的东西:
-      Redis active credential checker、terminal_release_outbox 的两阶段 relay、
-      dsauth etcd capability fence。缺了它们而照常启动的后果不是"少个功能":
-        · 结算 DS 的 pod **永远不会被回收**(terminal release worker 不存在)→ 资源泄漏;
-        · 失租 / 旧 epoch 的副本继续结算(fence 不存在)→ Model-B 的"唯一授权权威"前提失效。
-      两条都是静默的。所以这里选**拒绝启动**而不是 WARN 放行 ——
-      同一份 prod yaml 在 Go 上起得来、Python 上起不来,方向是响亮的。
-      **dev / legacy 档(`authority_mode: legacy`,仓库里的 battle_result-dev.yaml)不受影响。**
-
-  (B) `ReportProgress`(实时进度通道)Python 侧未实现,启动打一条
-      `battle_progress_channel_not_implemented` WARN,RPC 返回 ERR_INVALID_STATE
-      (与 Go 在 `progress_enabled=false` 时**同一个码**,DS 收到即停流回退局后结算)。
-      **但结算侧的进度收口是完整的**(repo._settle_progress_stream_tx):它打终局标记、
-      并按服务端水位决定是否抑制结算掉落 —— 少了它,一场走过实时通道的对局会被
-      实时通道发一遍掉落、再被结算路径发一遍。
-      ⚠️ 混部风险(必须知道):若同一对局的进度批次先落在 **Go 副本**、结算落在
-      **Python 副本**,DS 会在中途被 Python 拒掉停流,而结算时水位 >0 又会抑制结算掉落
-      → 停流之后那段的掉落两边都不发。**progress_enabled=true 的环境不要 Go/Python 混部**。
 
 后台循环(全部走 safego / server.run:裸 create_task 的协程死掉后进程照跑、
 health 照答 SERVING、**零日志**):
@@ -79,9 +64,12 @@ health 照答 SERVING、**零日志**):
     ④ 撮合状态释放出箱发布器(明确成功才删行)
     ⑤ 保留期清理(§9.24,本服默认**真删**,留 180 天)
     ⑥ 容量巡检(启动即一轮拿基线;超预算只告警不阻断)
+    ⑦ 实时进度出箱发布器 + 任务事实转发器(两条独立循环,故障域隔离)
+    ⑧ 终态回收发布器(Model-B 才启;两阶段 relay,见 biz.publish_terminal_release_batch)
+    ⑨ dsauthfence 失租守望(Model-B 才启;Lost → ERROR + 立即退出)
 
-  Go 还有 RunProgressPublisher / RunMissionForwarder / RunTerminalReleasePublisher,
-  随各自通道一起未迁移(见上方差异 A/B)。
+★ `ReportProgress` / Model-B 授权链 / 终态回收 / fence 均已移植,本服与 Go 侧
+  再无功能差异;`ds_auth.authority_mode` 两档(legacy / redis)行为一致。
 
 运行:
     cd services/battle/battle_result
@@ -99,14 +87,16 @@ from pandorapy import config as pconfig
 import argparse
 import asyncio
 import contextlib
+import os
 import pathlib
 import sys
 
 import asyncmy
 from pandora.battle.v1 import battle_pb2_grpc
 
-from pandorapy import dbguard, dsauth, godur, kafka_topics, kafkax, mysqlx, safego
+from pandorapy import dbguard, dsauth, dsauthfence, godur, kafka_topics, kafkax, mysqlx
 from pandorapy import log as plog
+from pandorapy import redisx, safego
 from pandorapy import server as pserver
 from pandorapy.services.battle_result import biz as bbiz
 from pandorapy.services.battle_result import budgets as bbudgets
@@ -114,8 +104,10 @@ from pandorapy.services.battle_result import catalog as bcat
 from pandorapy.services.battle_result import clients as bcli
 from pandorapy.services.battle_result import conf as bconf
 from pandorapy.services.battle_result import consumer as bcons
+from pandorapy.services.battle_result import credential as bcred
 from pandorapy.services.battle_result import repo as brepo
 from pandorapy.services.battle_result import service as bsvc
+from pandorapy.services.battle_result import terminal_release_repo as bterminal
 
 SERVICE_NAME = "battle_result"
 HTTP_DEFAULT_PORT = 21022
@@ -132,6 +124,14 @@ DLQ_RETRY_BACKOFF_SEC = 0.5
 # 库半死不活(TCP 通但不回包)时,没有超时的话进程会**挂在这里不退** ——
 # 表现是 Pod 一直卡在启动中,而 k8s 只看到「未 Ready」,排障的人根本不知道卡在哪道闸上。
 STARTUP_DB_TIMEOUT_SEC = 5.0
+
+# Model-B 授权权威 Redis 的启动期 Ping 超时(Go main.go 同为 3s)。
+REDIS_PING_TIMEOUT_SEC = 3.0
+
+# dsauthfence capability 声明的 feature 集(Go `Features: []string{...}`)。
+# ★ etcd 侧是**精确相等**比较:多一个 / 少一个 / 拼错一个字母都不是"降级注册",
+#   而是直接注册不上 —— 进程拿不到 capability 就拒启,零业务写。
+DS_AUTH_FENCE_FEATURES = ("battle-terminal-outbox-v1",)
 
 # 容量巡检间隔(Go 的 runCapacityGuard 用固定 1h ticker)。
 CAPACITY_GUARD_INTERVAL_SEC = 3600.0
@@ -183,6 +183,35 @@ async def _run_capacity_guard(pool, schema: str = BATTLE_DB) -> None:  # noqa: A
     # 启动即一轮拿基线(上线时就已超限当场可见),再进周期循环(与 Go 的 runCapacityGuard 同序)。
     await safego.run_once("db_capacity_guard_initial", _once)
     await safego.loop("db_capacity_guard", CAPACITY_GUARD_INTERVAL_SEC, _once)
+
+
+def _exit_process() -> None:
+    """capability 失租 / 旧 epoch 时的 fail-stop —— 对应 Go 那处 `os.Exit(1)`。
+
+    ★ 用 `os._exit` 而不是 `sys.exit`:此刻身处一个后台 task 里,`sys.exit` 只会让
+      **那个 task** 结束,进程照跑、gRPC 照答 SERVING —— 而"进程还在但已经证明不了
+      自己该写"正是双写者窗口本身(§9.22)。结算路径上这意味着失租副本继续写战绩、
+      继续发终态回收,Model-B 的"唯一授权权威"前提当场失效。
+    ★ 独立成模块级函数只为可测:测试把它替换掉,否则真调 os._exit 会让 pytest 当场
+      消失且不产生任何报告。
+    """
+    os._exit(1)
+
+
+async def _watch_fence_lost(fence: dsauthfence.Holder) -> None:
+    """capability 失租守望 —— 对应 Go 的 `go func(){ <-fence.Lost(); …; os.Exit(1) }`。
+
+    ★ 这**不是**"用定时器掩盖时序"(§16.10):没有轮询、没有猜测,只是把 Holder 已经
+      判定好的失效事件翻译成进程退出。到期动作是**停止一切写**,不是"假设已经好了
+      继续往下走" —— 判别口诀的那一半正好相反。
+    """
+    await fence.lost.wait()
+    plog.get().error(
+        "ds_auth_fence_lost",
+        reason=fence.lost_reason(),
+        hint="立即退出，禁止失租/旧 epoch 副本继续结算",
+    )
+    _exit_process()
 
 
 async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与 Go 同为线性启动闸
@@ -241,19 +270,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         )
         return 1
 
-    # ── ⑦ authority_mode(Python 专有闸,见模块头差异 A)──────────────────
-    if cfg.ds_auth.authority_mode_redis():
-        logger.error(
-            "battle_authority_mode_unsupported",
-            authority_mode=cfg.ds_auth.authority_mode,
-            hint="Python 版 battle_result 未实现 Model-B:缺 Redis active credential checker、"
-            "terminal_release_outbox 两阶段 relay、dsauth etcd fence。"
-            "带病启动会让结算 DS 的 pod 永不回收、且失租副本仍能结算(两者都静默)。"
-            "请用 Go 版跑本服务,或把 ds_auth.authority_mode 设为 legacy",
-        )
-        return 1
-
-    # ── ⑧ MySQL 强依赖(结算落库不可降级)────────────────────────────────
+    # ── ⑦ MySQL 强依赖(结算落库不可降级)────────────────────────────────
     raw_dsn = cfg.node.mysql_client.dsn
     if not raw_dsn:
         logger.error("mysql_dsn_required", hint="node.mysql_client.dsn required (pandora_battle)")
@@ -281,7 +298,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         # 启动路径上吞掉会把 Ctrl-C / 上层取消翻译成某道闸的失败,报出假的失败原因。
         raise
     except BaseException as exc:  # noqa: BLE001
-        # ⑨ Go 侧这里是 mysqlx.MustNewClient 的 panic(它内部 Ping 过)。
+        # ⑧ Go 侧这里是 mysqlx.MustNewClient 的 panic(它内部 Ping 过)。
         logger.error("mysql_connect_failed", err=str(exc), dsn=mysqlx.mask_dsn(raw_dsn))
         return 1
     logger.info("mysql_connected", dsn=mysqlx.mask_dsn(raw_dsn))
@@ -289,9 +306,14 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
     producers: list[kafkax.KeyOrderedProducer] = []
     consumers: list[tuple[kafkax.KeyOrderedConsumer, str]] = []
     closables: list[object] = []
+    # ★ 必须在 try **之前**声明:它们在 finally 里被读。写在 try 内部的话,
+    # 任何在赋值行之前失败的闸都会让 finally 招 NameError,
+    # 把真正的退出原因顶掉。
+    auth_redis = None
+    fence = None
     try:
         async with pool.acquire() as conn:
-            # ── ⑩ 严格模式断言(§9.24)────────────────────────────────────
+            # ── ⑨ 严格模式断言(§9.24)────────────────────────────────────
             # 非严格 sql_mode 下超长写入会被 MySQL **静默截断**(err=nil 但数据被砍断),
             # 等于无声的数据损坏 —— drop 出箱的 CSV 被砍掉尾部 = 玩家少拿几件掉落,
             # 而全链零报错。这是唯一值得因数据库检查而 fail-fast 的场景。
@@ -305,7 +327,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                 logger.error("mysql_strict_mode_required", err=str(exc))
                 return 1
 
-        # ── ⑪ MMR reader ────────────────────────────────────────────────
+        # ── ⑩ MMR reader ────────────────────────────────────────────────
         # player_addr 空 → 静态 base_mmr 兜底。这条 INFO 是"到底读没读真实 MMR"的唯一判据:
         # 静态兜底下两队均分恒等 → 胜 +K/2、负 -K/2,看起来完全正常。
         if cfg.battle.player_addr:
@@ -320,7 +342,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                 hint="player_addr 未配置 → StaticMMRReader 兜底",
             )
 
-        # ── ⑫ player.update producer(弱依赖)───────────────────────────
+        # ── ⑪ player.update producer(弱依赖)───────────────────────────
         # init 失败则出箱积压等 producer 可用,**不丢**(行已随结算同事务落库)。
         pusher = None
         producer_conf = kafkax.producer_conf_from(cfg.kafka)
@@ -349,7 +371,7 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
                 "kafka_brokers_empty", hint="outbox publisher idle until brokers configured"
             )
 
-        # ── ⑬⑭ 出箱 / 进度 schema 探测 ──────────────────────────────────
+        # ── ⑫⑬ 出箱 / 进度 schema 探测 ──────────────────────────────────
         repo = brepo.MySQLBattleRepo(pool)
         try:
             await asyncio.wait_for(
@@ -378,15 +400,69 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             )
             return 1
 
+        # ── ⑭ Model-B 终态回收依赖(authority_mode=redis 才建)────────────
+        #
+        # 三件事必须在 Ready **之前**全部落定,否则失败点会推迟到首个 ReportResult:
+        #   ① terminal_release_outbox 的精确 v2 schema 已迁移 —— 结算事务会往这张表
+        #      写服务端 proof,缺表 = 每一场结算在最后一步回滚,战绩全丢;
+        #   ② ds_allocator 的 relay —— 它是**唯一**能做永久 terminal + UID delete 的通道,
+        #      不构造就等于结算 DS 的 pod 永不回收(静默资源泄漏);
+        #   ③ Redis 授权权威可达 —— active credential 门读它,不通就等于门恒开或恒关。
+        terminal_relay = None
+        if cfg.ds_auth.authority_mode_redis():
+            try:
+                await asyncio.wait_for(
+                    repo.validate_terminal_release_schema(), timeout=STARTUP_DB_TIMEOUT_SEC
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                logger.error(
+                    "terminal_release_schema_invalid",
+                    err=str(exc),
+                    hint=bterminal.TERMINAL_RELEASE_SCHEMA_HINT,
+                )
+                return 1
+            terminal_relay = bcli.GrpcTerminalReleaseRelay(cfg.battle.ds_allocator_addr)
+            closables.append(terminal_relay)
+
+            rc = cfg.node.redis_client
+            if not rc.host and not rc.addrs:
+                # 与 Kafka 不同,这里没有"弱依赖降级"可选:门读不到权威时既不能默认放行
+                # (等于 Model-B 授权链不存在),也不能默认拒绝(等于全服无法结算)。
+                logger.error("battle_auth_redis_required")
+                return 1
+            auth_redis = redisx.new_universal_client(rc)
+            try:
+                await asyncio.wait_for(auth_redis.ping(), timeout=REDIS_PING_TIMEOUT_SEC)
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                logger.error("battle_auth_redis_ping_failed", err=str(exc))
+                return 1
+            logger.info(
+                "terminal_release_dependencies_ready",
+                ds_allocator_addr=cfg.battle.ds_allocator_addr,
+                grace=cfg.battle.terminal_release_grace,
+            )
+
         # ── ⑮ matchmaker releaser ───────────────────────────────────────
         # 结算/废弃落库后调 matchmaker.ReleaseMatch 释放残留撮合状态,修复
         # 「结算返回 Hub 后玩家无法再次匹配(StartMatch 4002)」。
-        # (Go 在 authority_mode=redis 下此项为强依赖 fail-fast;那条路径已被闸⑦拦下。)
         releaser = None
         if cfg.battle.matchmaker_addr:
             releaser = bcli.GrpcMatchReleaser(cfg.battle.matchmaker_addr)
             closables.append(releaser)
             logger.info("match_releaser_grpc", matchmaker_addr=cfg.battle.matchmaker_addr)
+        elif cfg.ds_auth.authority_mode_redis():
+            # Model-B 下 match / ticket / player claim 是**持久**的且刻意没有非终态 TTL:
+            # 静默关掉出箱消费者 = 每个已结算玩家的撮合状态永远挂着,回 Hub 再匹配恒撞 4002。
+            logger.error(
+                "match_releaser_required",
+                hint="Redis authority requires battle.matchmaker_addr; "
+                "durable claims have no fallback TTL",
+            )
+            return 1
         else:
             logger.warning(
                 "match_releaser_disabled",
@@ -395,6 +471,11 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             )
 
         uc = bbiz.BattleResultUsecase(repo, mmr_reader, pusher, releaser, cfg.battle)
+        if terminal_relay is not None:
+            # 战斗 DS 绝不在 ReportResult 同步响应路径回收:Model-B 把完整服务端 proof
+            # 与战绩同事务写终态出箱,先留 grace 让 DS 通知客户端,再由 worker 经
+            # ds_allocator 做永久 terminal + UID delete → MySQL durable ACK → finalize。
+            uc.set_terminal_release_relay(terminal_relay)
 
         # ── ⑯ inventory 掉落发放器(弱依赖)──────────────────────────────
         if cfg.battle.inventory_addr:
@@ -532,6 +613,17 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             )
 
         svc = bsvc.BattleResultService(uc)
+        if auth_redis is not None:
+            # Model-B 的 active credential 门:Guard 只证明"令牌本身合法",这道门才证明
+            # "**这台** DS 此刻仍是该对局的授权写者"(phase/epoch/gen/jti/sha/心跳新鲜度),
+            # 并用服务端快照构造 terminal-release proof。缺它 = 旧 epoch 的 DS 也能结算。
+            svc.set_battle_credential_state_checker(
+                bcred.new_battle_credential_state_checker(
+                    bcred.RedisBattleAuthReader(auth_redis),
+                    cfg.ds_auth.active_heartbeat_max_age_td().total_seconds(),
+                )
+            )
+            logger.info("battle_active_credential_checker_ready", authority_mode="redis")
 
         # ── ㉑ DS 回调令牌守卫 ──────────────────────────────────────────
         # 校验 Battle DS 经 :8444 的 ReportResult / ReportProgress。
@@ -609,6 +701,39 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             logger.error("no_valid_consumer", hint="consume_topics 全部无效")
             return 1
 
+        # ── ㉘ dsauthfence capability(Model-B;必须早于任何外部副作用)────
+        #
+        # publisher 与 consumer 都会产生外部副作用(改玩家资产、回收 DS pod、释放撮合
+        # 状态)。capability 未到手前一条都不许启动 —— 拿不到就是"证明不了自己该写",
+        # 那种副本继续写就是双写者窗口本身(§9.22)。
+        #
+        # ★ 位置是契约:它排在 background 组装与 pserver.run 之前。顺序一换,
+        #   "capability 还没到手就已经在结算"的窗口就真实存在了。
+        if cfg.ds_auth.authority_mode_redis():
+            try:
+                fence = await dsauthfence.acquire_runtime(
+                    dsauthfence.RuntimeConfig(
+                        endpoints=list(cfg.ds_auth.fence.etcd_endpoints),
+                        prefix=cfg.ds_auth.fence.etcd_prefix,
+                        service=SERVICE_NAME,
+                        keyset_revision=cfg.ds_auth.fence.keyset_revision,
+                        writer_epoch=dsauthfence.PROTOCOL_EPOCH_V2,
+                        features=DS_AUTH_FENCE_FEATURES,
+                        lease_ttl_sec=cfg.ds_auth.fence.etcd_lease_ttl_sec,
+                        dial_timeout_sec=cfg.ds_auth.fence.etcd_dial_timeout_td().total_seconds(),
+                    )
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                logger.error("ds_auth_fence_acquire_failed", err=str(exc))
+                return 1
+            logger.info(
+                "ds_auth_fence_ready",
+                required_writer_epoch=fence.required_epoch(),
+                reclaimed_stale_capability=fence.reclaimed,
+            )
+
         # ── gRPC / HTTP ─────────────────────────────────────────────────
         # auth_required=False 对应 Go 的 pmw.AuthOptional():ReportResult 是 DS 回调
         # (无玩家 JWT),用 AuthRequired 会把它整个挡在门外;DS 身份由 ds_auth 守卫校验。
@@ -644,6 +769,14 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         background.append(
             ("db_capacity_guard", lambda: _run_capacity_guard(pool, conn_cfg["db"]))
         )
+        if terminal_relay is not None:
+            # 终态回收:relay 为 None(legacy)时内部直接返回并打
+            # terminal_release_publisher_disabled,这里仍按 Go 的判据只在 Model-B 挂。
+            background.append(uc.run_terminal_release_publisher)
+        if fence is not None:
+            background.append(
+                ("ds_auth_fence_lost_watch", lambda: _watch_fence_lost(fence))
+            )
 
         def _on_ready() -> None:
             logger.info(
@@ -687,6 +820,12 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         for closable in closables:
             with contextlib.suppress(Exception):
                 await closable.close()  # type: ignore[attr-defined]
+        if fence is not None:
+            with contextlib.suppress(Exception):
+                await fence.close()
+        if auth_redis is not None:
+            with contextlib.suppress(Exception):
+                await auth_redis.aclose()
         pool.close()
         with contextlib.suppress(Exception):
             await pool.wait_closed()

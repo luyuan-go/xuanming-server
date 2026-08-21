@@ -45,6 +45,7 @@ from pandora.match.v1 import match_pb2
 from pandorapy import dbguard, errcode, mysqlx
 from pandorapy import log as plog
 from pandorapy.services.battle_result import progress_repo as bprogress
+from pandorapy.services.battle_result import terminal_release_repo as bterminal
 
 # 本服的权威库(容量巡检 / 保留期 metric 的 db 标签)。
 BATTLE_DB = "pandora_battle"
@@ -216,12 +217,14 @@ _EXPIRED_BATTLES_WHERE = "created_at < FROM_UNIXTIME(%s / 1000)"
 _SETTLED_PROGRESS_WHERE = "settled_at_ms > 0 AND settled_at_ms < %s"
 
 
-class MySQLBattleRepo(bprogress.ProgressRepoMixin):
+class MySQLBattleRepo(bprogress.ProgressRepoMixin, bterminal.TerminalReleaseRepoMixin):
     """基于 asyncmy 连接池的战斗结算仓储。对应 Go 的 data.MySQLBattleRepo。
 
     实时进度 / 任务事实出箱的方法在 `progress_repo.ProgressRepoMixin`(与 Go 拆
-    progress_repo.go / mission_outbox_repo.go 同因),这里继承进来 —— 对外仍是
-    **同一个 repo 对象**,biz 侧调用点与 Go 一一对应。
+    progress_repo.go / mission_outbox_repo.go 同因),Model-B 两阶段终态回收在
+    `terminal_release_repo.TerminalReleaseRepoMixin`(对应 Go 的
+    terminal_release_schema.go),这里继承进来 —— 对外仍是**同一个 repo 对象**,
+    biz 侧调用点与 Go 一一对应。
     """
 
     __slots__ = ("_pool",)

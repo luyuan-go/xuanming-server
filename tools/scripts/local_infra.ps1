@@ -70,6 +70,7 @@ $CacheDir = Join-Path $Root 'cache'     # 下载的压缩包
 . (Join-Path $PSScriptRoot 'lib/local_infra_state.ps1')
 . (Join-Path $PSScriptRoot 'lib/planner_mysql_startup.ps1')
 . (Join-Path $PSScriptRoot 'lib/planner_infra_fast_start.ps1')
+. (Join-Path $PSScriptRoot 'lib/planner_start_timing.ps1')
 $LocalInfraLifecyclePlan = Get-PandoraLocalInfraLifecyclePlan -ProjectRoot $ProjectRoot
 $CentralMysqlManaged = $LocalInfraLifecyclePlan.Mode -ceq 'central-managed'
 
@@ -966,19 +967,25 @@ function New-PlannerInfraStartState {
         [Parameter(Mandatory)][string]$ExpectedExecutable,
         [Parameter(Mandatory)][string[]]$RequiredCommandLineTokens,
         [AllowNull()]$CompletionData = $null,
-        [int64]$StartedAtMilliseconds = [Environment]::TickCount64
+        [bool]$Reused = $false,
+        [int64]$StartedAtMilliseconds = [Environment]::TickCount64,
+        [int64]$TimingStartedAtMilliseconds = $StartedAtMilliseconds
     )
     return [pscustomobject]@{
         Name = $Name
         Ports = @($Ports)
         Process = $Process
         StartedAtMilliseconds = $StartedAtMilliseconds
+        TimingStartedAtMilliseconds = $TimingStartedAtMilliseconds
         TimeoutMilliseconds = [int64]$TimeoutSeconds * 1000
         ListenerOwnerKind = $ListenerOwnerKind
         ExpectedExecutable = $ExpectedExecutable
         RequiredCommandLineTokens = @($RequiredCommandLineTokens)
         CompletionData = $CompletionData
+        Reused = $Reused
         Ready = $false
+        ReadyAtMilliseconds = [int64]0
+        FinishedAtMilliseconds = [int64]0
         Failure = ''
     }
 }
@@ -1001,7 +1008,9 @@ function Assert-PlannerInfraExistingState($State) {
         Fail "$($State.Name) 端口已监听，但 PID/映像/启动参数不属于本工作区当前登记；拒绝极速复用。"
     }
     $State.Ready = $true
-    Complete-PlannerInfraStartState $State
+    $State.ReadyAtMilliseconds = [Environment]::TickCount64
+    $State.FinishedAtMilliseconds = $State.ReadyAtMilliseconds
+    return $State
 }
 
 function Complete-PlannerInfraStartState($State) {
@@ -1012,11 +1021,11 @@ function Complete-PlannerInfraStartState($State) {
             } catch {
                 Write-Err "MySQL 起来了但账号 '$MysqlUser' 连不上:$($_.Exception.Message)"
                 Show-ComponentFailure -Name 'mysql' -Port 0 -Proc $null
-                exit 1
+                throw 'MySQL 协议探活失败。'
             }
             $owner = Get-OwnedMysqlListenerProcess $MysqlPort
             if (-not $owner -or $owner.Id -ne $State.Process.Id) {
-                Fail "MySQL :$MysqlPort 虽可连接，但监听 PID 不等于本次启动的 $($State.Process.Id)；拒绝落端口状态。"
+                throw "MySQL :$MysqlPort 虽可连接，但监听 PID 不等于本次启动的 $($State.Process.Id)；拒绝落端口状态。"
             }
             Set-PandoraLocalInfraPortState -ProjectRoot $ProjectRoot -MysqlPort $MysqlPort `
                 -MysqlProcessId $owner.Id -MysqlExecutable $owner.Path -MysqlDefaultsFile (Get-MysqlIniPath) | Out-Null
@@ -1028,7 +1037,7 @@ function Complete-PlannerInfraStartState($State) {
             if ($LASTEXITCODE -ne 0 -or ($pong -join "`n").Trim() -cne 'PONG') {
                 Write-Err "Redis :$RedisPort listener 已出现但 PING 失败:$($pong -join ' ')"
                 Show-ComponentFailure -Name 'redis' -Port $RedisPort -Proc $State.Process
-                exit 1
+                throw 'Redis 协议探活失败。'
             }
             Write-Ok "Redis :$RedisPort"
         }
@@ -1985,6 +1994,7 @@ ALTER USER '$MysqlUser'@'127.0.0.1' IDENTIFIED BY '$MysqlUserPwd';
 
 function Start-LocalMysql {
     param([switch]$DeferReady)
+    $componentStartedAt = [Environment]::TickCount64
     $mysqld = Find-Tool 'mysql' 'mysqld.exe'
     if (-not $mysqld) { Fail '找不到 mysqld.exe,先跑 -Action provision。' }
     $baseDir = Split-Path -Parent (Split-Path -Parent $mysqld)   # <dist>/mysql/mysql-8.4.6-winx64
@@ -2008,6 +2018,11 @@ function Start-LocalMysql {
         Set-PandoraLocalInfraPortState -ProjectRoot $ProjectRoot -MysqlPort $MysqlPort `
             -MysqlProcessId $owned.Id -MysqlExecutable $owned.Path -MysqlDefaultsFile (Get-MysqlIniPath) | Out-Null
         Write-Ok "MySQL :$MysqlPort 已在运行(归属与账号已验证)"
+        if ($DeferReady) {
+            Add-PandoraPlannerTiming -Name '基础设施·MySQL' `
+                -ElapsedMilliseconds ([Environment]::TickCount64 - $componentStartedAt) `
+                -Status '复用' -Detail '已在运行'
+        }
         return
     }
 
@@ -2049,7 +2064,7 @@ function Start-LocalMysql {
         return New-PlannerInfraStartState -Name 'mysql' -Ports @($MysqlPort) -Process $proc `
             -TimeoutSeconds 90 -ListenerOwnerKind direct -ExpectedExecutable $mysqld `
             -RequiredCommandLineTokens @((Get-MysqlIniPath), '--no-monitor') `
-            -StartedAtMilliseconds $startedAt
+            -StartedAtMilliseconds $startedAt -TimingStartedAtMilliseconds $componentStartedAt
     }
     Wait-Port -Name 'mysql' -Port $MysqlPort -TimeoutSec 90 -Proc $proc
 
@@ -2075,6 +2090,7 @@ function Start-LocalMysql {
 
 function Start-LocalRedis {
     param([switch]$DeferReady)
+    $componentStartedAt = [Environment]::TickCount64
     if (Test-PortOpen $RedisPort) {
         if ($DeferReady) {
             $existingExe = Find-Tool 'redis' 'redis-server.exe'
@@ -2085,7 +2101,8 @@ function Start-LocalRedis {
             $existingState = New-PlannerInfraStartState -Name 'redis' -Ports @($RedisPort) `
                 -Process $existingProc -TimeoutSeconds 30 -ListenerOwnerKind direct `
                 -ExpectedExecutable $existingExe -RequiredCommandLineTokens @(
-                    '--port', "$RedisPort", (Join-Path $DataDir 'redis'))
+                    '--port', "$RedisPort", (Join-Path $DataDir 'redis')) -Reused $true `
+                -StartedAtMilliseconds $componentStartedAt
             Assert-PlannerInfraExistingState $existingState
             return
         }
@@ -2117,7 +2134,7 @@ function Start-LocalRedis {
         return New-PlannerInfraStartState -Name 'redis' -Ports @($RedisPort) -Process $proc `
             -TimeoutSeconds 30 -ListenerOwnerKind direct -ExpectedExecutable $exe `
             -RequiredCommandLineTokens @('--port', "$RedisPort", $dataRedis) `
-            -StartedAtMilliseconds $startedAt
+            -StartedAtMilliseconds $startedAt -TimingStartedAtMilliseconds $componentStartedAt
     }
     Wait-Port -Name 'redis' -Port $RedisPort -TimeoutSec 30 -Proc $proc
     Write-Ok "Redis :$RedisPort"
@@ -2155,6 +2172,13 @@ transaction.state.log.replication.factor=1
 transaction.state.log.min.isr=1
 auto.create.topics.enable=true
 group.initial.rebalance.delay.ms=0
+# 策划机由停止脚本强制结束 JVM；默认 9 秒 broker lease 会让下一次 KRaft 注册反复收到
+# DUPLICATE_BROKER_REGISTRATION。这里只服务本机单节点测试链，2 秒 lease + 500ms heartbeat
+# 已用“同一数据目录强停后立即重启”对照验证；不进入 Docker/K8s/线上配置。
+broker.session.timeout.ms=2000
+broker.heartbeat.interval.ms=500
+# 默认每 500ms 写一条空闲 metadata no-op，长期开着会无意义膨胀单机元数据日志。
+metadata.max.idle.interval.ms=0
 num.network.threads=3
 num.io.threads=8
 log.retention.hours=48
@@ -2205,6 +2229,7 @@ function ConvertTo-ProcArg {
 
 function Start-LocalKafka {
     param([switch]$DeferReady)
+    $componentStartedAt = [Environment]::TickCount64
     if (Test-PortOpen $KafkaPort) {
         if ($DeferReady) {
             $existingJava = Find-Tool 'jre' 'java.exe'
@@ -2215,7 +2240,8 @@ function Start-LocalKafka {
             $existingState = New-PlannerInfraStartState -Name 'kafka' -Ports @($KafkaPort, $KafkaCtrlPort) `
                 -Process $existingProc -TimeoutSeconds 120 -ListenerOwnerKind child `
                 -ExpectedExecutable $existingJava -RequiredCommandLineTokens @(
-                    'kafka.Kafka', (Join-Path $CfgDir 'kafka.properties'))
+                    'kafka.Kafka', (Join-Path $CfgDir 'kafka.properties')) -Reused $true `
+                -StartedAtMilliseconds $componentStartedAt
             Assert-PlannerInfraExistingState $existingState
             return
         }
@@ -2268,7 +2294,8 @@ function Start-LocalKafka {
     if ($DeferReady) {
         return New-PlannerInfraStartState -Name 'kafka' -Ports @($KafkaPort, $KafkaCtrlPort) -Process $proc `
             -TimeoutSeconds 120 -ListenerOwnerKind child -ExpectedExecutable $java `
-            -RequiredCommandLineTokens @('kafka.Kafka', $props) -StartedAtMilliseconds $startedAt
+            -RequiredCommandLineTokens @('kafka.Kafka', $props) -StartedAtMilliseconds $startedAt `
+            -TimingStartedAtMilliseconds $componentStartedAt
     }
     Wait-Port -Name 'kafka' -Port $KafkaPort -TimeoutSec 120 -Proc $proc
     Write-Ok "Kafka :$KafkaPort"
@@ -2368,6 +2395,7 @@ function Get-EnvoyFingerprint([string]$CfgPath) {
 
 function Start-LocalEnvoy {
     param([switch]$DeferReady)
+    $componentStartedAt = [Environment]::TickCount64
     $exe = Join-Path $DistDir 'envoy/envoy.exe'
     if (-not (Test-Path -LiteralPath $exe)) { Fail ' 找不到 envoy.exe,先跑 -Action provision。' }
 
@@ -2393,7 +2421,8 @@ function Start-LocalEnvoy {
             $existingState = New-PlannerInfraStartState -Name 'envoy' -Ports @(8443, 8444) `
                 -Process $existingProc -TimeoutSeconds 30 -ListenerOwnerKind direct `
                 -ExpectedExecutable $exe -RequiredCommandLineTokens @($cfg) `
-                -CompletionData ([pscustomobject]@{ FingerprintFile = $fpFile; Fingerprint = $fp })
+                -CompletionData ([pscustomobject]@{ FingerprintFile = $fpFile; Fingerprint = $fp }) -Reused $true `
+                -StartedAtMilliseconds $componentStartedAt
             Assert-PlannerInfraExistingState $existingState
             return
         }
@@ -2483,7 +2512,7 @@ function Start-LocalEnvoy {
             -RequiredCommandLineTokens @($cfg) -CompletionData ([pscustomobject]@{
                 FingerprintFile = $fpFile
                 Fingerprint = $fp
-            }) -StartedAtMilliseconds $startedAt
+            }) -StartedAtMilliseconds $startedAt -TimingStartedAtMilliseconds $componentStartedAt
     }
     Wait-Port -Name 'envoy' -Port 8443 -TimeoutSec 30 -Proc $proc
 
@@ -2498,6 +2527,26 @@ function Start-LocalEnvoy {
 }
 
 # ===== 动作 =====
+
+function Add-PlannerInfraStateTiming($State, [string]$Status, [string]$Detail = '') {
+    $displayName = switch ([string]$State.Name) {
+        'mysql' { 'MySQL' }
+        'redis' { 'Redis' }
+        'kafka' { 'Kafka' }
+        'envoy' { 'Envoy' }
+        default { [string]$State.Name }
+    }
+    $finishedAt = if ([int64]$State.FinishedAtMilliseconds -gt 0) {
+        [int64]$State.FinishedAtMilliseconds
+    } elseif ($Status -ne '失败' -and [int64]$State.ReadyAtMilliseconds -gt 0) {
+        [int64]$State.ReadyAtMilliseconds
+    } else {
+        [Environment]::TickCount64
+    }
+    Add-PandoraPlannerTiming -Name "基础设施·$displayName" `
+        -ElapsedMilliseconds ([Math]::Max([int64]0, $finishedAt - [int64]$State.TimingStartedAtMilliseconds)) `
+        -Status $Status -Detail $Detail
+}
 
 function Invoke-PlannerInfraFastStart {
     $batchStartedAt = [Environment]::TickCount64
@@ -2517,6 +2566,7 @@ function Invoke-PlannerInfraFastStart {
             return Test-PlannerInfraStateReady -State $State -Listeners $Listeners
         } -OnFailure {
             param($State, [string]$Reason)
+            Add-PlannerInfraStateTiming -State $State -Status '失败' -Detail $Reason
             if ($Reason -eq 'process-exited') {
                 $exitCode = try { $State.Process.ExitCode } catch { '?' }
                 Write-Err "$($State.Name) 启动后立即退出 (exit $exitCode)。"
@@ -2524,14 +2574,39 @@ function Invoke-PlannerInfraFastStart {
                 Write-Err "$($State.Name) 在 $([int]($State.TimeoutMilliseconds / 1000))s 内没有完成精确 listener 归属验证:$($State.Ports -join ',')。"
             }
             Show-ComponentFailure -Name $State.Name -Port ([int]$State.Ports[0]) -Proc $State.Process
-            exit 1
         } -Sleep {
             param([int]$Milliseconds)
             Start-Sleep -Milliseconds $Milliseconds
         } -GetElapsedMilliseconds { return [int64][Environment]::TickCount64 } `
-        -PollMilliseconds 100)
+        -StopOnFirstFailure -PollMilliseconds 100)
 
-    foreach ($state in $states) { Complete-PlannerInfraStartState $state }
+    $infraFailed = $false
+    foreach ($state in $states) {
+        if ($state.Failure) {
+            $infraFailed = $true
+            $failureDetail = if ($state.Failure -eq 'batch-aborted') {
+                '同批其他组件失败，停止等待'
+            } else { [string]$state.Failure }
+            Add-PlannerInfraStateTiming -State $state -Status '失败' -Detail $failureDetail
+            continue
+        }
+        $status = '失败'
+        $detail = '组件就绪后的协议探活/收尾失败'
+        try {
+            Complete-PlannerInfraStartState $state
+            $status = if ([bool]$state.Reused) { '复用' } else { '完成' }
+            $detail = if ([bool]$state.Reused) { '已在运行' } else { '' }
+        } catch {
+            $infraFailed = $true
+            $detail = "${detail}:$($_.Exception.Message)"
+        } finally {
+            # listener ready 之后还有 Redis PING / MySQL SELECT 1 / Envoy 指纹落盘；
+            # 成功与失败都在收尾完成后封口，避免明细漏时。
+            $state.FinishedAtMilliseconds = [Environment]::TickCount64
+            Add-PlannerInfraStateTiming -State $state -Status $status -Detail $detail
+        }
+    }
+    if ($infraFailed) { exit 1 }
     Write-Ok ("策划极速基础设施批量就绪:{0:N2}s" -f (([Environment]::TickCount64 - $batchStartedAt) / 1000.0))
 }
 
@@ -2543,7 +2618,7 @@ function Invoke-Up {
     # receipt miss 必须让本轮完整走一次旧串行路径；不能由本轮 provision 刚写出的 receipt
     # 反过来把首次安装/修复误判为“已安装、已初始化”的并发场景。
     $receiptReadyBeforeProvision = Test-PlannerPackageSetReady
-    Invoke-ProvisionAll
+    Invoke-PandoraPlannerTimedStep -Name '依赖准备' -Action { Invoke-ProvisionAll }
     if (-not $CentralMysqlManaged) {
         $script:MysqlPort = Resolve-LocalMysqlPort
         Write-Ok "免 Docker MySQL 选用独立端口 :$MysqlPort(Docker dev 的 :3307 保持原样)"
@@ -2559,15 +2634,17 @@ function Invoke-Up {
         Invoke-PlannerInfraFastStart
     } else {
         if (-not $CentralMysqlManaged) {
-            Start-LocalMysql
+            Invoke-PandoraPlannerTimedStep -Name '基础设施·MySQL' -Action { Start-LocalMysql }
         }
-        Start-LocalRedis
-        Start-LocalKafka
-        Start-LocalEnvoy
+        Invoke-PandoraPlannerTimedStep -Name '基础设施·Redis' -Action { Start-LocalRedis }
+        Invoke-PandoraPlannerTimedStep -Name '基础设施·Kafka' -Action { Start-LocalKafka }
+        Invoke-PandoraPlannerTimedStep -Name '基础设施·Envoy' -Action { Start-LocalEnvoy }
     }
     Write-Host ''
     Write-Host '  本机基础设施已就绪(免 Docker)' -ForegroundColor Green
-    Invoke-Status
+    # fast coordinator 已用 exact listener PID/exe/参数 + 协议探活验过全部组件；
+    # 立刻再跑一遍 status 只会重复 netstat/CIM/TCP，不增加任何新证据。
+    if (-not $PlannerFastStart) { Invoke-Status }
 }
 
 function Invoke-Down {

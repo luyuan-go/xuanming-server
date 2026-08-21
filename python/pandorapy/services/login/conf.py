@@ -198,6 +198,17 @@ class DSTicketConf(BaseModel):
     def verifier_enabled(self) -> bool:
         return self.jwks_file != ""
 
+    def ttl_td(self) -> _dt.timedelta:
+        """票据有效期。零值 = 由签发器取 DSTicketDefaultTTL(120s)。
+
+        ★ conf 层**不填默认**,与 Go 一致:默认值在 `dsticket.DSTicketSigner.new`
+        里。在这里替它填一个,会让「conf 层看到的 TTL」与「签发器实际用的 TTL」
+        在某次改动后悄悄分叉。
+        ⚠️ 别和 `JWTConf.ds_ticket_ttl`(legacy HS256,默认 5m)混:v2 生产档是
+        120s 默认 / 180s 硬上限(CLAUDE.md §9 不变量 3),按 5m 推安全窗口会错 2.5 倍。
+        """
+        return pconfig.parse_duration(self.ttl)
+
 
 class LocatorClientConf(BaseModel):
     """login → player_locator。留空仅允许 local/off 档。"""

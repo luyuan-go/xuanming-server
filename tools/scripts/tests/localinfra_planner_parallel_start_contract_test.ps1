@@ -69,6 +69,12 @@ Assert-True ($fastBody -match 'Invoke-PandoraPlannerInfraBatch') `
     '[RED] fast coordinator 没有进入统一 listener 轮询'
 Assert-True ($fastBody -notmatch 'Start-Job|Start-ThreadJob|ForEach-Object\s+-Parallel') `
     'fast coordinator 禁止切换 runspace/job'
+Assert-True ($functionsByName['New-PlannerInfraStartState'].Body.Extent.Text -match 'TimingStartedAtMilliseconds') `
+    '[RED] 组件明细起点必须与 listener deadline 起点分离'
+foreach ($name in @('Start-LocalMysql', 'Start-LocalRedis', 'Start-LocalKafka', 'Start-LocalEnvoy')) {
+    Assert-True ($functionsByName[$name].Body.Extent.Text -match '-TimingStartedAtMilliseconds\s+\$componentStartedAt') `
+        "[RED] $name 明细耗时必须包含进程拉起前的组件准备"
+}
 
 $upBody = $functionsByName['Invoke-Up'].Body.Extent.Text
 $receiptIndex = $upBody.IndexOf('Test-PlannerPackageSetReady', [StringComparison]::Ordinal)
@@ -79,8 +85,10 @@ Assert-True ($upBody -match 'Test-PandoraPlannerInfraBatchEligibility') `
     '[RED] Invoke-Up 没有使用 fast/Force/receipt/初始化资格闸'
 Assert-True ($upBody -match 'Invoke-PlannerInfraFastStart') `
     '[RED] Invoke-Up 没有接入 fast coordinator'
+Assert-True ($upBody -match 'if\s*\(-not\s+\$PlannerFastStart\)\s*\{\s*Invoke-Status\s*\}') `
+    '[RED] 策划 fast 成功后不得再重复执行整套端口/归属状态查询'
 foreach ($legacyCall in @('Start-LocalMysql', 'Start-LocalRedis', 'Start-LocalKafka', 'Start-LocalEnvoy')) {
-    Assert-True ($upBody -match "(?m)^\s+$legacyCall\s*$") `
+    Assert-True ($upBody -match "Invoke-PandoraPlannerTimedStep\s+-Name\s+'[^']+'\s+-Action\s+\{\s*$legacyCall\s*\}") `
         "[RED] 普通/首次路径必须保留原串行调用:$legacyCall"
 }
 
@@ -246,6 +254,10 @@ Assert-Equal 4 $clock.Launches '必须拉起四个虚拟组件'
 Assert-Equal 4 $states.Count '必须返回四个组件状态'
 Assert-True (@($states | Where-Object { -not $_.Ready }).Count -eq 0) '全部组件都应 ready'
 Assert-Equal 17500 $clock.Milliseconds '批量等待总耗时必须等于最慢组件，而非逐项求和'
+foreach ($state in $states) {
+    Assert-Equal $readyAt[$state.Name] $state.ReadyAtMilliseconds "必须记录组件 ready 时刻:$($state.Name)"
+    Assert-Equal $readyAt[$state.Name] $state.FinishedAtMilliseconds "成功组件完成时刻应等于 ready 时刻:$($state.Name)"
+}
 Assert-True ($clock.Snapshots -le 176) '每轮只能抓一份共享 listener 快照'
 Assert-True ($events[0] -eq 'launch:mysql' -and $events[3] -eq 'launch:envoy' -and
     $events[4] -eq 'snapshot:0') '必须全部 launch 后才开始统一轮询'
@@ -268,6 +280,22 @@ $exitStates = @(Invoke-PandoraPlannerInfraBatch -Launchers @({
 Assert-Equal 200 $exitClock.Milliseconds '进程退出应在下一轮立刻收敛'
 Assert-Equal 'redis:process-exited' $exitFailures[0] '必须保留组件与退出原因'
 Assert-Equal 'process-exited' $exitStates[0].Failure '状态必须 fail-closed'
+Assert-Equal 200 $exitStates[0].FinishedAtMilliseconds '进程退出耗时必须来自注入虚拟时钟'
+
+$abortClock = [pscustomobject]@{ Milliseconds = [int64]0 }
+$abortStates = @(Invoke-PandoraPlannerInfraBatch -Launchers @(
+    { [pscustomobject]@{ Name = 'redis'; Ports = @(6380); Process = [pscustomobject]@{ Id = 211 }; StartedAtMilliseconds = [int64]0; TimeoutMilliseconds = [int64]30000; Ready = $false; Failure = '' } }
+    { [pscustomobject]@{ Name = 'kafka'; Ports = @(9093); Process = [pscustomobject]@{ Id = 212 }; StartedAtMilliseconds = [int64]0; TimeoutMilliseconds = [int64]120000; Ready = $false; Failure = '' } }
+) -GetListenerRecords { return @() } `
+    -TestProcessExited { param($State) return $State.Name -eq 'redis' -and $abortClock.Milliseconds -ge 200 } `
+    -TestStateReady { param($State, $Listeners) return $false } `
+    -OnFailure { param($State, $Reason) } `
+    -Sleep { param($Milliseconds) $abortClock.Milliseconds += $Milliseconds } `
+    -GetElapsedMilliseconds { return [int64]$abortClock.Milliseconds } -StopOnFirstFailure -PollMilliseconds 100)
+Assert-Equal 200 $abortClock.Milliseconds '首个组件失败后必须立即收敛，不等 Kafka 长超时'
+Assert-Equal 'process-exited' (@($abortStates | Where-Object Name -eq 'redis')[0].Failure) '根因组件必须保留真实失败'
+Assert-Equal 'batch-aborted' (@($abortStates | Where-Object Name -eq 'kafka')[0].Failure) '同批未就绪组件必须显式封存为中止'
+Assert-Equal 200 (@($abortStates | Where-Object Name -eq 'kafka')[0].FinishedAtMilliseconds) '同批中止组件必须保留实际已等待时间'
 
 # 每个组件保留自己的 deadline；短超时 Redis 失败不应把 Kafka 的 120 秒边界改短，
 # 也不能让 Kafka 的长边界反过来放宽 Redis。
@@ -293,6 +321,8 @@ $deadlineStates = @(Invoke-PandoraPlannerInfraBatch -Launchers @(
 Assert-Equal 500 $deadlineClock.Milliseconds '独立 deadline 后仍应等待未失败的 Kafka'
 Assert-Equal 'ready-timeout' (@($deadlineStates | Where-Object Name -eq 'redis')[0].Failure) 'Redis 应按自己的短边界失败'
 Assert-True (@($deadlineStates | Where-Object Name -eq 'kafka')[0].Ready) 'Kafka 应继续等待到自身 ready'
+Assert-Equal 300 (@($deadlineStates | Where-Object Name -eq 'redis')[0].FinishedAtMilliseconds) 'Redis timeout 应锁在自身 deadline'
+Assert-Equal 500 (@($deadlineStates | Where-Object Name -eq 'kafka')[0].FinishedAtMilliseconds) 'Kafka ready 应锁在自身完成时刻'
 Assert-Equal 'redis:ready-timeout' $deadlineFailures[0] 'deadline 失败必须带组件名'
 
 # listener 快照查询失败必须原样抛出，不能被解释成“端口还没开”而继续轮询。

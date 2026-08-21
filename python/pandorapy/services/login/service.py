@@ -590,48 +590,65 @@ class LoginService(login_pb2_grpc.LoginServiceServicer):
             return login_pb2.IssueDSTicketResponse(code=errcode.as_code(exc))
 
         ds_type = request.ds_type
-        if ds_type in (ldsticket.DS_TYPE_HUB, ldsticket.DS_TYPE_BATTLE):
-            # ★ fail-closed(见文件头诚实边界)。绝不用"签票 + 空地址"顶替:
-            #   hub    → 客户端拿到空地址 / allocator 未登记的自签票,Hub DS 一律拒;
-            #   battle → 跳过 roster 权威门,谁报 match_id 谁就能拿到那局的进场票。
-            plog.get().warning(
-                "ds_ticket_issue_route_not_implemented",
-                player_id=player_id,
-                ds_type=ds_type,
-                hint=(
-                    "Python 版未移植 ResolveHubEndpointFromMatch / ResolveBattleEndpoint"
-                    "(locator presence + matchmaker 三态门 / roster 权威门);"
-                    "需要这两条路由请用 Go 版跑 login"
-                ),
-            )
-            return login_pb2.IssueDSTicketResponse(
-                code=errcode.as_code(
-                    errcode.PandoraError(
-                        errcode.ErrNotImplemented,
-                        "ds_type=%s routing not implemented in this build",
-                        ds_type,
-                    )
+        caller_jti = _session_jti(context)
+
+        # ★ 交付终检(Go 的 fenceTicketDelivery,三条分支共用)。
+        # 预检通过后、分配 / 签票期间会话可能已被新登录轮换(检查与副作用之间的 TOCTOU)。
+        # 票已签但从未离开服务端 = 旧在途请求未取得可用票据。
+        async def _fence_delivery() -> Exception | None:
+            try:
+                await self._login.require_current_session_token(
+                    player_id, request.session_token
                 )
+            except Exception as exc:  # noqa: BLE001
+                plog.get().warning(
+                    "ds_ticket_delivery_fenced", player_id=player_id, ds_type=ds_type
+                )
+                return exc
+            return None
+
+        if ds_type == ldsticket.DS_TYPE_HUB:
+            # target_id 历史上携带来源 match;**现在仅作日志参考** —— 路由权威是
+            # locator 租约 + match 三态门(biz._guard_hub_route_against_active_battle)。
+            # 信客户端报的那个 = 让客户端自己声明"我这局打完了",直接绕开双在场门。
+            try:
+                addr, ticket, _ = await self._login.resolve_hub_endpoint_from_match(
+                    player_id, request.target_id, caller_jti
+                )
+            except Exception as exc:  # noqa: BLE001
+                return login_pb2.IssueDSTicketResponse(code=errcode.as_code(exc))
+            fenced = await _fence_delivery()
+            if fenced is not None:
+                return login_pb2.IssueDSTicketResponse(code=errcode.as_code(fenced))
+            return login_pb2.IssueDSTicketResponse(
+                code=errcode_pb2.OK, ticket=ticket, hub_ds_addr=addr
             )
 
-        caller_jti = _session_jti(context)
+        if ds_type == ldsticket.DS_TYPE_BATTLE:
+            # 地址与票都只来自 roster 权威门(biz.resolve_battle_endpoint):
+            # 调用方给的 match_id 只是"要哪一局"的选择,不是成员资格证明。
+            # ★ 与 Go 同:battle 分支**不回 addr** —— 客户端此刻已连着那台 DS
+            # (重连场景),回地址只会给它一个可被旧值覆盖的机会。
+            try:
+                _addr, ticket, _ = await self._login.resolve_battle_endpoint(
+                    player_id, request.target_id, caller_jti
+                )
+            except Exception as exc:  # noqa: BLE001
+                return login_pb2.IssueDSTicketResponse(code=errcode.as_code(exc))
+            fenced = await _fence_delivery()
+            if fenced is not None:
+                return login_pb2.IssueDSTicketResponse(code=errcode.as_code(fenced))
+            return login_pb2.IssueDSTicketResponse(code=errcode_pb2.OK, ticket=ticket)
+
         try:
             ticket, _ = await self._ticket.issue_ds_ticket(
                 player_id, ds_type, request.target_id, caller_jti
             )
         except Exception as exc:  # noqa: BLE001
             return login_pb2.IssueDSTicketResponse(code=errcode.as_code(exc))
-        # 交付终检:签票与响应写出之间会话可能已被轮换。票已签但从未离开服务端
-        # = 旧在途请求未取得可用票据。
-        try:
-            await self._login.require_current_session_token(
-                player_id, request.session_token
-            )
-        except Exception as exc:  # noqa: BLE001
-            plog.get().warning(
-                "ds_ticket_delivery_fenced", player_id=player_id, ds_type=ds_type
-            )
-            return login_pb2.IssueDSTicketResponse(code=errcode.as_code(exc))
+        fenced = await _fence_delivery()
+        if fenced is not None:
+            return login_pb2.IssueDSTicketResponse(code=errcode.as_code(fenced))
         return login_pb2.IssueDSTicketResponse(code=errcode_pb2.OK, ticket=ticket)
 
     async def VerifyDSTicket(  # noqa: N802
@@ -639,21 +656,98 @@ class LoginService(login_pb2_grpc.LoginServiceServicer):
         request: login_pb2.VerifyDSTicketRequest,
         context: grpc.aio.ServicerContext,
     ) -> login_pb2.VerifyDSTicketResponse:
-        """off/legacy 档的票据兑换点。
+        """票据兑换点。两档:off/legacy 直验;Redis authority 先过 DS 权威门。
 
-        Redis admission 权威支未移植 —— main.py 在 authority_mode=redis 时直接拒启
-        (`ds_admission_authority_incomplete`),所以这里不需要也不能有"半个权威门"。
+        ★ Redis 档的四步顺序是**契约**,不能重排:
+          ① DS Bearer 验签 + 请求 pod scope → ② Redis active 权威 →
+          ③ 玩家票 claims 与 caller binding 精确比对 → ④ 原子 MarkUsedByAdmission。
+        把 ④ 提前 = 一次绑定不符的重放就把合法票的 jti 烧掉,玩家再也进不去。
+        ③④ 在 `TicketUsecase.verify_ds_ticket_for_admission` 内部完成。
         """
-        del context
-        try:
-            claims = await self._ticket.verify_ds_ticket(
-                request.ticket, request.ds_pod_name
+        log = plog.get()
+        if self._redis_ds_admission:
+            # 这些是**DS 调用方级**拒绝:一台 DS 的凭据 / active 权威漂移会让它上面
+            # **所有玩家**的核销整体失败。而 ErrUnauthorized 不算 server fault →
+            # access log 只记 rpc_ok(DEBUG),toProtoCode 又只回 code 不回 message,
+            # 不在这里显式打,拒绝原因在任何日志级别都不存在。
+            if not request.ds_pod_name:
+                # ds_pod_name 是 Guard 的范围输入;空值**不能**退化成"不校验 pod"。
+                log.warning("verify_ds_ticket_rejected", reason="ds_pod_name_empty")
+                return login_pb2.VerifyDSTicketResponse(code=errcode_pb2.ERR_INVALID_ARG)
+            if self._ds_guard is None or self._admission_checker is None:
+                log.error(
+                    "verify_ds_ticket_rejected",
+                    reason="ds_admission_guard_not_wired",
+                    ds_pod=request.ds_pod_name,
+                )
+                return login_pb2.VerifyDSTicketResponse(code=errcode_pb2.ERR_UNAVAILABLE)
+
+            _, credential, guard_code = self._ds_guard.check_credential(
+                context, dsauth.DSScope(pod=request.ds_pod_name, require_token=True)
             )
-        except Exception as exc:  # noqa: BLE001
-            return login_pb2.VerifyDSTicketResponse(code=errcode.as_code(exc))
-        # 兑换点会话复核在 TicketUsecase.verify_ds_ticket 内部完成(顺序是契约:
-        # 验签 → 会话门 → jti 消费;会话门若放到 jti 消费之后,被顶设备的一次重放
-        # 会把合法票的 jti 先烧掉,新设备再也进不去)。
+            if guard_code != 0:
+                log.warning(
+                    "verify_ds_ticket_rejected",
+                    reason="ds_credential_rejected",
+                    ds_pod=request.ds_pod_name,
+                    code=int(guard_code),
+                    hint=(
+                        "DS callback credential 验签/scope 失败:该 DS 上所有玩家的"
+                        "核销都会同型失败,查凭据轮换"
+                    ),
+                )
+                return login_pb2.VerifyDSTicketResponse(code=guard_code)
+            if credential is None:
+                log.warning(
+                    "verify_ds_ticket_rejected",
+                    reason="ds_credential_missing",
+                    ds_pod=request.ds_pod_name,
+                )
+                return login_pb2.VerifyDSTicketResponse(code=errcode_pb2.ERR_UNAUTHORIZED)
+
+            try:
+                admission = await self._admission_checker.check_active(
+                    request.ds_pod_name, credential
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                log.warning(
+                    "verify_ds_ticket_rejected",
+                    reason="ds_admission_not_active",
+                    ds_pod=request.ds_pod_name,
+                    admission_id=request.admission_id,
+                    err=str(exc),
+                    hint=(
+                        "DS credential 与 Redis active 权威漂移(轮换半途/心跳超时/"
+                        "投影翻转):该 DS 上所有玩家 travel 会被拒"
+                    ),
+                )
+                return login_pb2.VerifyDSTicketResponse(code=errcode.as_code(exc))
+
+            try:
+                claims = await self._ticket.verify_ds_ticket_for_admission(
+                    request.ticket,
+                    request.ds_pod_name,
+                    request.admission_id,
+                    admission,
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                return login_pb2.VerifyDSTicketResponse(code=errcode.as_code(exc))
+        else:
+            # off/legacy 完整保留既有内部 Verify 语义与单次 JTI SETNX。
+            try:
+                claims = await self._ticket.verify_ds_ticket(
+                    request.ticket, request.ds_pod_name
+                )
+            except Exception as exc:  # noqa: BLE001
+                return login_pb2.VerifyDSTicketResponse(code=errcode.as_code(exc))
+
+        # 兑换点会话复核在 TicketUsecase 内部完成(顺序是契约:验签 → 会话门 →
+        # jti 消费;会话门若放到 jti 消费之后,被顶设备的一次重放会把合法票的 jti
+        # 先烧掉,新设备再也进不去)。
         return login_pb2.VerifyDSTicketResponse(
             code=errcode_pb2.OK, claims=_claims_to_proto(claims)
         )

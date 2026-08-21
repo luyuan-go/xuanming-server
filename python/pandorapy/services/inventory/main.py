@@ -33,10 +33,10 @@ battle_result 掉落发放、player 出战校验、mission 发奖、bag 域容�
   方向也与 Go 一致:配置表加载的 warning 是 WARN 放行(脏文件不拒批次),
   容量巡检超预算只 ERROR 不阻断。
 
-★ **背包域(pandora.bag.v1)在 Python 侧尚未实现**,见文件末 `_warn_bag_domain_skipped`。
-  bag.dsn 非空时打一条显式 WARN 并跳过 BagService 注册,不 fail-fast ——
-  fail-fast 会让**同一份 dev yaml** 在 Go 上起得来、Python 上起不来,
-  而 §14.2 要求默认值保证现有行为不变。这条 WARN 是它唯一的可见性。
+★ **背包域(pandora.bag.v1)已移植**:`bag.dsn` 非空时走 `_setup_bag_domain`
+  装配并注册 BagService(`bag_domain_enabled` INFO);留空 = 不启用该域。
+  inventory 是**唯一的两库服务**(trade + bag),容量巡检预算必须按库分传
+  (共用一份会让 bag 的三个 blob 列 —— 深度失控的高风险点 —— 完全没有巡检)。
 
 后台循环两条,都走 safego(单轮异常只丢本轮,不静默弄死循环):
     - 保留期清理(每 sweep_interval 一轮)

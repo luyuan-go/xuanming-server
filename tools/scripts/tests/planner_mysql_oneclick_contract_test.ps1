@@ -9,6 +9,9 @@ $projectRoot = (Resolve-Path "$PSScriptRoot/../../..").Path
 . (Join-Path $projectRoot 'tools/scripts/lib/local_infra_state.ps1')
 
 $script:failed = 0
+$requireCentralEnvName = 'PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL'
+$hadRequireCentralEnv = Test-Path -LiteralPath "Env:$requireCentralEnvName"
+$originalRequireCentralEnv = [Environment]::GetEnvironmentVariable($requireCentralEnvName, 'Process')
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) {
         Write-Host "  [fail] $Message" -ForegroundColor Red
@@ -32,8 +35,14 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("pandora-oneclick-contract-{0}
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
     Write-Host '[1] bundle 存在即选 central，缺失才保持 local' -ForegroundColor Cyan
+    [Environment]::SetEnvironmentVariable($requireCentralEnvName, $null, 'Process')
     $local = Get-PandoraPlannerMysqlStartupMode -ProjectRoot $tempRoot
     Assert-True ($local -ceq 'local-owned') '无 central-mysql.json 时保持 local-owned'
+    [Environment]::SetEnvironmentVariable($requireCentralEnvName, '1', 'Process')
+    Assert-Throws {
+        Get-PandoraPlannerMysqlStartupMode -ProjectRoot $tempRoot | Out-Null
+    } '远端|central|bundle|本机 MySQL' '策划入口要求远端数据库时，缺 bundle 必须阻断而不是启动本机 MySQL'
+    [Environment]::SetEnvironmentVariable($requireCentralEnvName, $null, 'Process')
     $bundleDir = Join-Path $tempRoot 'installers/planner-db'
     New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
     $bundle = Join-Path $bundleDir 'central-mysql.json'
@@ -105,12 +114,25 @@ try {
     $localInfra = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/scripts/local_infra.ps1'))
     $runServices = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/scripts/run_services.ps1'))
     $start = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/scripts/start.ps1'))
+    $plannerCmd = [IO.File]::ReadAllText((Join-Path $projectRoot '策划一键启动-免Docker-测试版.cmd'))
     Assert-True ($devAll -match 'Initialize-PandoraPlannerMysqlRuntime') 'dev_all first-run 复用 enrollment/profile seam'
     Assert-True ($localInfra -match 'Get-PandoraLocalInfraLifecyclePlan') 'local_infra 生命周期由动态计划驱动'
     Assert-True ($runServices -match 'New-PandoraMysqlServiceRuntimeConfig') 'run_services 使用中心 secret YAML renderer'
     Assert-True ($runServices -match 'Remove-PandoraMysqlServiceRuntimeConfig') 'run_services 启动读取后清理 secret YAML'
     Assert-True ($start -match 'ProfileFingerprint') '-DsOnly 对比 profile fingerprint'
+    Assert-True ($plannerCmd -match 'set "PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL=1"') `
+        '策划 CMD 显式要求中心数据库，发布漏 bundle 时不得回退本机 MySQL'
+    Assert-True ($plannerCmd -match 'if not exist "%~dp0installers\\planner-db\\central-mysql\.json"') `
+        '策划 CMD 在导表和基础设施动作前检查远端 bundle'
+    Assert-True ($plannerCmd.IndexOf('if not exist "%~dp0installers\planner-db\central-mysql.json"') -lt `
+        $plannerCmd.IndexOf('call "%~dp0tools\scripts\bootstrap_pwsh.cmd"')) `
+        '远端 bundle 缺失必须在 PowerShell 自举前快速失败'
 } finally {
+    if ($hadRequireCentralEnv) {
+        [Environment]::SetEnvironmentVariable($requireCentralEnvName, $originalRequireCentralEnv, 'Process')
+    } else {
+        [Environment]::SetEnvironmentVariable($requireCentralEnvName, $null, 'Process')
+    }
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 

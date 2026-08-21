@@ -260,6 +260,27 @@ func TestMultiCallerVerifierAcceptsEachCallerWithItsOwnKey(t *testing.T) {
 	}
 }
 
+func TestMultiCallerVerifierBindsPayloadForEachIndependentCaller(t *testing.T) {
+	loginSigner, teamSigner, mv, store := newMultiCallerFixture(t)
+	payload := []byte("canonical-display-request")
+
+	loginCtx := signedIncomingWithPayload(t, loginSigner, testMethod, 42, payload)
+	if err := mv.VerifyWithPayload(loginCtx, testMethod, 42, []byte("tampered")); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("tampered payload error=%v, want ErrUnauthorized", err)
+	}
+	if len(store.seen) != 0 {
+		t.Fatal("tampered multi-caller payload consumed replay nonce")
+	}
+	if err := mv.VerifyWithPayload(loginCtx, testMethod, 42, payload); err != nil {
+		t.Fatalf("login VerifyWithPayload: %v", err)
+	}
+
+	teamCtx := signedIncomingWithPayload(t, teamSigner, testMethod, 42, payload)
+	if err := mv.VerifyWithPayload(teamCtx, testMethod, 42, payload); err != nil {
+		t.Fatalf("team VerifyWithPayload: %v", err)
+	}
+}
+
 // Nonces are namespaced by caller, so two callers reusing the same nonce bytes
 // must not consume each other's entry — but each caller still cannot replay.
 func TestMultiCallerVerifierIsolatesReplayNoncesPerCaller(t *testing.T) {

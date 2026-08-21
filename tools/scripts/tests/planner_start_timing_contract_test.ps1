@@ -26,6 +26,7 @@ $summary = $lines -join "`n"
 Assert-Contains $summary '^策划一键启动耗时汇总' '汇总必须有稳定标题'
 Assert-Contains $summary '(?m)^\[耗时\]\s+环境检查\s+1\.23 秒\s+完成\s*$' '成功步骤应换算成两位小数秒'
 Assert-Contains $summary '(?m)^\[耗时\]\s+基础设施·Kafka\s+9\.88 秒\s+失败\s+listener timeout\s*$' '失败步骤也必须保留耗时与原因'
+Assert-Contains $summary '基础设施组件是并行启动，单项耗时不可相加' '汇总必须说明并行明细不可相加'
 Assert-Contains $summary '(?m)^\[耗时\]\s+总计\s+11\.11 秒\s*$' '汇总必须包含总耗时'
 
 Stop-PandoraPlannerTimingSession
@@ -51,9 +52,10 @@ $failureRow = (Get-PandoraPlannerTimingSession).Rows | Select-Object -Last 1
 Assert-True ($failureRow.Status -ceq '失败' -and $failureRow.ElapsedMilliseconds -eq 456) `
     '失败动作也应在 finally 中记录耗时'
 
-Add-PandoraPlannerTiming -Name '复用 Redis' -ElapsedMilliseconds 0 -Status '跳过' -Detail '已在运行'
+Add-PandoraPlannerTiming -Name '复用 Redis' -ElapsedMilliseconds 37 -Status '复用' -Detail '已在运行'
 $reuseRow = (Get-PandoraPlannerTimingSession).Rows | Select-Object -Last 1
-Assert-True ($reuseRow.Status -ceq '跳过') '复用步骤不得冒充本轮完成'
+Assert-True ($reuseRow.Status -ceq '复用' -and $reuseRow.ElapsedMilliseconds -eq 37) `
+    '复用步骤必须保留实际校验耗时且不得冒充本轮完成'
 
 $firstSummary = @(Write-PandoraPlannerTimingSummary 6>&1)
 $secondSummary = @(Write-PandoraPlannerTimingSummary 6>&1)
@@ -70,10 +72,20 @@ $startText = Get-Content -LiteralPath (Join-Path $root 'tools/scripts/start.ps1'
 $devAllText = Get-Content -LiteralPath (Join-Path $root 'tools/scripts/dev_all.ps1') -Raw
 $infraText = Get-Content -LiteralPath (Join-Path $root 'tools/scripts/local_infra.ps1') -Raw
 $servicesText = Get-Content -LiteralPath (Join-Path $root 'tools/scripts/run_services.ps1') -Raw
+$cmdText = Get-Content -LiteralPath (Join-Path $root '策划一键启动-免Docker-测试版.cmd') -Raw
 
-foreach ($stage in @('导表', '环境检查', '等待本机 DS 可玩', 'Write-PandoraPlannerTimingSummary')) {
+Assert-Contains $cmdText 'PANDORA_PWSH_BOOTSTRAP_MS' 'CMD 应计量 PowerShell 自举并传给统一汇总'
+Assert-Contains $cmdText 'PANDORA_CMD_STARTED_CS' 'CMD 应传递端到端起点，不漏 pwsh 进程启动与脚本装载'
+Assert-Contains $cmdText '_PANDORA_BOOT_ELAPSED_CS\+=8640000' 'PowerShell 自举计时必须处理跨午夜回绕'
+Assert-Contains $cmdText 'exit /b %_PANDORA_BOOTSTRAP_RC%' 'PowerShell 自举失败必须保留原退出码'
+
+foreach ($stage in @('PowerShell 自举', 'PowerShell 启动/脚本装载', '导表', '环境检查', '等待本机 DS 可玩', 'Write-PandoraPlannerTimingSummary')) {
     Assert-Contains $startText ([regex]::Escape($stage)) "start.ps1 应接入阶段:$stage"
 }
+Assert-Contains $startText 'TickCount64\s*-\s*\$plannerEntryMilliseconds' `
+    '统一总计的 session 起点必须回拨 CMD 到主流程的全部耗时'
+Assert-Contains $startText '\$plannerEntryCentiseconds\s*\+=\s*\[int64\]8640000' `
+    'CMD 到 start.ps1 的端到端计时必须处理跨午夜回绕'
 foreach ($stage in @('数据库模式与远端工作区校验', '基础设施总计', '数据库结构校验/迁移', '业务程序启动')) {
     Assert-Contains $devAllText ([regex]::Escape($stage)) "dev_all.ps1 应接入阶段:$stage"
 }
@@ -83,5 +95,15 @@ foreach ($stage in @('依赖准备', '基础设施·Redis', '基础设施·Kafka
 foreach ($stage in @('业务程序·配置生成', '业务程序·构建/复用', '业务程序·进程拉起', '业务程序·端口就绪')) {
     Assert-Contains $servicesText ([regex]::Escape($stage)) "run_services.ps1 应接入阶段:$stage"
 }
+Assert-Contains $servicesText '\$plannerConfigStatus\s*=\s*''跳过''' `
+    '构建失败时未执行的配置阶段不得误报复用'
+Assert-Contains $servicesText '\$plannerLaunchStatus\s*=\s*''跳过''' `
+    '配置失败时未执行的拉起阶段不得误报复用'
+Assert-Contains $servicesText '(?s)\$readyWatch\.Start\(\).*?\$finalListenerRecords\s*=\s*@\(Get-PandoraTcpListenerRecords\).*?\$readyWatch\.Stop\(\)' `
+    '全复用路径的最终 exact-listener 核验也必须统计实际耗时'
+Assert-Contains $infraText 'TimingStartedAtMilliseconds' `
+    'Kafka KRaft 格式化等进程前操作必须纳入组件明细耗时'
+Assert-Contains $infraText '(?s)finally\s*\{.*?\$state\.FinishedAtMilliseconds\s*=\s*\[Environment\]::TickCount64.*?Add-PlannerInfraStateTiming' `
+    '组件成功/失败都必须把协议探活和收尾纳入耗时'
 
 Write-Host '[PASS] 策划一键启动逐阶段耗时契约通过' -ForegroundColor Green

@@ -5,9 +5,9 @@
   - 启动闸漏掉或**顺序**不同:同一份坏配置在两栈报不同的第一个错误,排障从此对不上;
   - 事件名漂移:Loki 上按事件名建的告警静默失去覆盖;
   - DS 回调面的鉴权码用错:enforce 档下 DS 成批被拒 / 或伪造令牌被放行;
-  - ReportProgress 未实现却回了 OK:DS 以为事实已入账 → 真正丢经验和掉落。
+  - ReportProgress 未真实接线却回了 OK:DS 以为事实已入账 → 真正丢经验和掉落。
 
-★ 启动闸测试**刻意只覆盖 MySQL 之前那一段**(闸①~⑧)。它们不需要任何外部依赖,
+★ 启动闸测试优先覆盖 MySQL 之前那一段。它们不需要任何外部依赖,
   正好是"同一份 yaml 在两栈第一个报什么错"最容易分叉的地方。
   MySQL 之后的闸由 test_battle_result_repo.py 打真库覆盖。
 """
@@ -35,6 +35,7 @@ from pandorapy.services.battle_result import service as bsvc
 
 GO_MAIN = "services/battle/battle_result/cmd/battle_result/main.go"
 GO_CONF = "services/battle/battle_result/internal/conf/conf.go"
+GO_BUDGETS = "services/battle/battle_result/internal/data/budgets.go"
 DEV_YAML = "services/battle/battle_result/etc/battle_result-dev.yaml"
 
 _MIN_YAML = """
@@ -190,33 +191,8 @@ def test_gate_ingress_invalid_before_authority_gate(tmp_path: pathlib.Path, caps
     assert "battle_authority_mode_unsupported" not in events
 
 
-def test_gate_authority_mode_unsupported(tmp_path: pathlib.Path, capsys) -> None:  # noqa: ANN001
-    """★ Python 专有闸:Model-B 未实现 → **拒绝启动**而不是 WARN 放行。
-
-    带病启动的两条后果都是静默的:结算 DS 的 pod 永不回收(没有 terminal release
-    worker)、失租副本仍能结算(没有 fence)。
-    """
-    body = _MIN_YAML.replace(
-        '  mode: "off"\n  authority_mode: "legacy"',
-        '  mode: "enforce"\n  authority_mode: "redis"\n'
-        '  active_heartbeat_max_age: "30s"\n'
-        '  fence:\n    etcd_endpoints: ["127.0.0.1:2379"]\n    keyset_revision: "r1"',
-    ).replace(
-        "battle: {}",
-        "battle:\n"
-        '  ds_allocator_addr: "127.0.0.1:20020"\n'
-        '  consume_topics: ["pandora.ds.lifecycle"]',
-    )
-    code, logs = _run_main(_write(tmp_path, body), capsys)
-    assert code == 1
-    assert "battle_authority_mode_unsupported" in _events(logs)
-
-
 def test_gate_retention_before_authority(tmp_path: pathlib.Path, capsys) -> None:  # noqa: ANN001
-    """两处同时非法时,先报**共享**的那道闸(Go 也有的闸⑥)。
-
-    Python 专有闸排在共享闸之后,是为了让"两栈第一个报什么错"在所有共享闸上一致。
-    """
+    """Model-B 配置同时含非法 retention 时，先报共享的保留期闸。"""
     body = _MIN_YAML.replace(
         '  mode: "off"\n  authority_mode: "legacy"',
         '  mode: "enforce"\n  authority_mode: "redis"\n'
@@ -311,18 +287,43 @@ def test_gate_event_names_exist_in_go_main(repo_root: pathlib.Path) -> None:
     assert not missing_in_py, f"Python main.py 缺这些事件名:{missing_in_py}"
 
 
-def test_python_only_gate_is_documented(repo_root: pathlib.Path) -> None:
-    """Python 专有的那道闸**必须**不在 Go 里,且在模块头写明理由。
-
-    没有这条约束的话,"顺手加一道闸"会悄悄让两栈行为分叉而没人记录。
-    """
+def test_model_b_and_progress_are_implemented(repo_root: pathlib.Path) -> None:
+    """Model-B 与实时进度通道已移植，旧的 Python 专有拒启闸不得回归。"""
     src = (repo_root / GO_MAIN).read_text(encoding="utf-8")
     py = pathlib.Path(bmain.__file__).read_text(encoding="utf-8")
     assert '"battle_authority_mode_unsupported"' not in src
-    assert "battle_authority_mode_unsupported" in py
-    assert "诚实标注的两处差异" in py
-    # 进度通道未实现的启动期判据。
-    assert "battle_progress_channel_not_implemented" in py
+    assert "battle_authority_mode_unsupported" not in py
+    # 实时进度通道**已移植**:启动期不再有该判据,后台出箱循环必须在位。
+    # 反向断言是必要的:没它的话,哪天这段装配被回退成"未实现"也没人知道。
+    assert "battle_progress_channel_not_implemented" not in py
+    assert "run_progress_publisher" in py
+
+
+def test_big_fields_match_go(repo_root: pathlib.Path) -> None:
+    """列级字节预算与 Go 的 `BigFields()` 逐条相等。
+
+    这些是**写入失败前的最后一个可观测信号**(VARBINARY 列撞上限后严格模式直接
+    Error 1406,整场结算的释放出箱写不进去)。阈值在两栈各写一份就等于各自漂移,
+    而漂移的表现是"Python 副本从不告警" —— 静默,所以必须从 Go 源码抓出来比。
+    """
+    from pandorapy.services.battle_result import budgets as bbudgets
+
+    go = (repo_root / GO_BUDGETS).read_text(encoding="utf-8")
+    block = go.split("func BigFields()", 1)
+    assert len(block) == 2, "Go 侧 BigFields() 不见了(清单已过时?)"
+    want = {
+        (m.group("table"), m.group("column")): int(m.group("bytes"))
+        for m in re.finditer(
+            r'\{Table:\s*"(?P<table>\w+)",\s*Column:\s*"(?P<column>\w+)",\s*'
+            r"MaxBytes:\s*(?P<bytes>\d+)",
+            block[1],
+        )
+    }
+    assert want, "没从 Go 源码里抓到任何 ColumnBudget(正则与源码形状对不上了)"
+    got = {(b.table, b.column): b.max_bytes for b in bbudgets.big_fields()}
+    assert got == want
+    # note 不能留空:超限时值班的人只看到"某列超了",不知道往哪查。
+    assert all(b.note for b in bbudgets.big_fields())
 
 
 def test_retention_bounds_match_go_source(repo_root: pathlib.Path) -> None:

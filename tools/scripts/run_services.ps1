@@ -100,6 +100,7 @@ $stateHelper = Join-Path $PSScriptRoot 'lib/local_infra_state.ps1'
 . (Join-Path $PSScriptRoot 'lib/mysql_service_runtime_config.ps1')
 . (Join-Path $PSScriptRoot 'lib/planner_mysql_preflight.ps1')
 . (Join-Path $PSScriptRoot 'lib/planner_fast_start.ps1')
+. (Join-Path $PSScriptRoot 'lib/planner_start_timing.ps1')
 $mustUseMysql = $Action -in @('up', 'restart')
 $plannerMysqlMode = if ($NoDocker) { Get-PandoraPlannerMysqlStartupMode -ProjectRoot $ProjectRoot } else { 'docker' }
 $centralMysqlProfile = $null
@@ -818,12 +819,20 @@ function Start-PlannerFastServices($Targets) {
 
     $totalWatch = [Diagnostics.Stopwatch]::StartNew()
     $buildWatch = [Diagnostics.Stopwatch]::StartNew()
+    $configWatch = [Diagnostics.Stopwatch]::new()
     $launchWatch = [Diagnostics.Stopwatch]::new()
     $readyWatch = [Diagnostics.Stopwatch]::new()
     $perf = @{ Snapshots = 0; Existing = 0; Launched = 0; Waves = 0 }
     $preparedExecutables = @{}
     $script:PlannerBuildPublished = $false
+    $plannerBuildStatus = '失败'
+    # 下游阶段默认是“跳过”；只有完成前置检查后才能判定为完成/复用。
+    # 否则 build 抛错时会误报“业务进程均已在运行”。
+    $plannerConfigStatus = '跳过'
+    $plannerLaunchStatus = '跳过'
+    $plannerReadyStatus = '跳过'
 
+    try {
     # 先完成全部缺失二进制的构建/拷贝，再生成带密码的临时配置并启动。
     # 这样冷 build 即使中途失败，也不会留下明文 DSN 或半批新进程。
     $prebuildListenerRecords = $null
@@ -859,6 +868,7 @@ function Start-PlannerFastServices($Targets) {
             throw '业务构建输入在批量 build/copy 期间发生变化；已作废本轮收据，请等代码同步完成后重试。'
         }
     }
+    $plannerBuildStatus = if ($preparedExecutables.Count -eq 0) { '复用' } else { '完成' }
 
     foreach ($wave in $waves) {
         if ($failed.Count -gt 0) { break }
@@ -916,7 +926,14 @@ function Start-PlannerFastServices($Targets) {
                 if ($LocalDsSpawners -contains $svc.Name) { Clear-LocalDsProcesses $svc $null -OrphansOnly }
 
                 $svcDir = Join-Path $ProjectRoot $svc.Dir
-                $runtimeConfig = Get-ServiceRuntimeConfig $svc
+                try {
+                    $plannerConfigStatus = '失败'
+                    $configWatch.Start()
+                    $runtimeConfig = Get-ServiceRuntimeConfig $svc
+                    $plannerConfigStatus = '完成'
+                } finally {
+                    if ($configWatch.IsRunning) { $configWatch.Stop() }
+                }
                 $proc = $null
                 $runtimeRecord = [pscustomobject]@{
                     Service = $svc; RuntimeConfig = $runtimeConfig; Process = $null
@@ -924,6 +941,7 @@ function Start-PlannerFastServices($Targets) {
                 }
                 $runtimeRecords.Add($runtimeRecord)
                 try {
+                    $plannerLaunchStatus = '失败'
                     $launchWatch.Start()
                     $proc = Start-Process -FilePath $exe `
                         -ArgumentList '-conf', "`"$($runtimeConfig.Path)`"" `
@@ -948,6 +966,7 @@ function Start-PlannerFastServices($Targets) {
                     $waveStates.Add($state)
                     $states.Add($state)
                     $perf.Launched++
+                    $plannerLaunchStatus = '完成'
                 } catch {
                     $launchWatch.Stop()
                     $runtimeRecord.AlwaysRollback = $true
@@ -957,6 +976,7 @@ function Start-PlannerFastServices($Targets) {
             }
 
             if ($waveStates.Count -gt 0) {
+                $plannerReadyStatus = '失败'
                 $readyWatch.Start()
                 $getListeners = { $perf.Snapshots++; @(Get-PandoraTcpListenerRecords) }
                 $isExited = { param($state) return [bool]$state.Process.HasExited }
@@ -971,10 +991,12 @@ function Start-PlannerFastServices($Targets) {
                     -TestProcessExited $isExited -TestListenerOwned $isOwned -Sleep $sleep `
                     -GetElapsedMilliseconds $elapsed -PollMilliseconds 100 -TimeoutMilliseconds 12000
                 $readyWatch.Stop()
+                $plannerReadyStatus = '完成'
             }
         } catch {
             $waveFailure = $_
         } finally {
+            if ($configWatch.IsRunning) { $configWatch.Stop() }
             if ($launchWatch.IsRunning) { $launchWatch.Stop() }
             if ($readyWatch.IsRunning) { $readyWatch.Stop() }
             # 哪怕后续服务 build/launch 抛异常，也不留下带明文 DSN 的临时 YAML。
@@ -1010,6 +1032,8 @@ function Start-PlannerFastServices($Targets) {
     # 批量 wait 只能证明某一刻 ready；在登记全局 MySQL 应用状态前，再用一份
     # fresh 快照复核全部目标的 exact PID，封住“检查后立即退出/端口被抢”的假绿窗口。
     if ($failed.Count -eq 0) {
+        $plannerReadyStatus = '失败'
+        $readyWatch.Start()
         $finalListenerRecords = $null
         try {
             $finalListenerRecords = @(Get-PandoraTcpListenerRecords)
@@ -1027,13 +1051,45 @@ function Start-PlannerFastServices($Targets) {
                 }
             }
         }
+        if ($failed.Count -eq 0) {
+            $plannerReadyStatus = if ($perf.Launched -eq 0) { '复用' } else { '完成' }
+        }
+        $readyWatch.Stop()
     }
 
-    $totalWatch.Stop()
-    Write-Host ("[perf] planner-services targets={0} existing={1} launched={2} waves={3} snapshots={4} build_ms={5} launch_ms={6} ready_ms={7} total_ms={8}" -f `
-            $targetsArray.Count, $perf.Existing, $perf.Launched, $perf.Waves, $perf.Snapshots, $buildWatch.ElapsedMilliseconds,
-            $launchWatch.ElapsedMilliseconds, $readyWatch.ElapsedMilliseconds, $totalWatch.ElapsedMilliseconds) -ForegroundColor DarkGray
+    if ($failed.Count -gt 0) { $plannerReadyStatus = '失败' }
+    if ($plannerConfigStatus -eq '跳过' -and $plannerBuildStatus -ne '失败') {
+        $plannerConfigStatus = '复用'
+    }
+    if ($plannerLaunchStatus -eq '跳过' -and $plannerBuildStatus -ne '失败') {
+        $plannerLaunchStatus = '复用'
+    }
     return $failed.ToArray()
+    } finally {
+        if ($buildWatch.IsRunning) { $buildWatch.Stop() }
+        if ($configWatch.IsRunning) { $configWatch.Stop() }
+        if ($launchWatch.IsRunning) { $launchWatch.Stop() }
+        if ($readyWatch.IsRunning) { $readyWatch.Stop() }
+        if ($totalWatch.IsRunning) { $totalWatch.Stop() }
+        $reuseDetail = '业务进程均已在运行'
+        $skippedDetail = '前置阶段失败，未执行'
+        Add-PandoraPlannerTiming -Name '业务程序·构建/复用' `
+            -ElapsedMilliseconds $buildWatch.ElapsedMilliseconds -Status $plannerBuildStatus `
+            -Detail $(if ($plannerBuildStatus -eq '复用') { $reuseDetail } else { '' })
+        Add-PandoraPlannerTiming -Name '业务程序·配置生成' `
+            -ElapsedMilliseconds $configWatch.ElapsedMilliseconds -Status $plannerConfigStatus `
+            -Detail $(if ($plannerConfigStatus -eq '复用') { $reuseDetail } elseif ($plannerConfigStatus -eq '跳过') { $skippedDetail } else { '' })
+        Add-PandoraPlannerTiming -Name '业务程序·进程拉起' `
+            -ElapsedMilliseconds $launchWatch.ElapsedMilliseconds -Status $plannerLaunchStatus `
+            -Detail $(if ($plannerLaunchStatus -eq '复用') { $reuseDetail } elseif ($plannerLaunchStatus -eq '跳过') { $skippedDetail } else { '' })
+        Add-PandoraPlannerTiming -Name '业务程序·端口就绪' `
+            -ElapsedMilliseconds $readyWatch.ElapsedMilliseconds -Status $plannerReadyStatus `
+            -Detail $(if ($plannerReadyStatus -eq '复用') { $reuseDetail } elseif ($plannerReadyStatus -eq '跳过') { $skippedDetail } else { '' })
+        Write-Host ("[perf] planner-services targets={0} existing={1} launched={2} waves={3} snapshots={4} build_ms={5} config_ms={6} launch_ms={7} ready_ms={8} total_ms={9}" -f `
+                $targetsArray.Count, $perf.Existing, $perf.Launched, $perf.Waves, $perf.Snapshots, $buildWatch.ElapsedMilliseconds,
+                $configWatch.ElapsedMilliseconds, $launchWatch.ElapsedMilliseconds, $readyWatch.ElapsedMilliseconds,
+                $totalWatch.ElapsedMilliseconds) -ForegroundColor DarkGray
+    }
 }
 
 function Stop-Service($svc) {
@@ -1083,8 +1139,10 @@ if ($Action -in @('up', 'down', 'restart')) {
 }
 if ($mustUseMysql -and $plannerMysqlMode -ceq 'central-managed') {
     Invoke-PandoraPlannerSecretSessionSweep -ProjectRoot $ProjectRoot
-    Invoke-PandoraPlannerMysqlPreflight -ProjectRoot $ProjectRoot -Profile $centralMysqlProfile `
-        -Credential $centralMysqlCredential | Out-Null
+    Invoke-PandoraPlannerTimedStep -Name '远端数据库·权限/TLS/Schema 预检' -Action {
+        Invoke-PandoraPlannerMysqlPreflight -ProjectRoot $ProjectRoot -Profile $centralMysqlProfile `
+            -Credential $centralMysqlCredential | Out-Null
+    }
 }
 switch ($Action) {
 
@@ -1205,8 +1263,18 @@ switch ($Action) {
 
         # 全起前先探基础设施(Redis/MySQL/Kafka/etcd);不通就拦下,别让服务空转 crash-loop。
         # 单起某个服务(-Service)时不强拦(可能就是要单独调该服务),仅靠日志暴露。
-        if (-not $Service -and -not (Test-InfraReady)) {
-            exit 1
+        if (-not $Service) {
+            $infraProbeWatch = [Diagnostics.Stopwatch]::StartNew()
+            $infraProbeStatus = '失败'
+            try {
+                $infraReady = Test-InfraReady
+                if ($infraReady) { $infraProbeStatus = '完成' }
+            } finally {
+                $infraProbeWatch.Stop()
+                Add-PandoraPlannerTiming -Name '业务程序·依赖探活' `
+                    -ElapsedMilliseconds $infraProbeWatch.ElapsedMilliseconds -Status $infraProbeStatus
+            }
+            if (-not $infraReady) { exit 1 }
         }
 
         Write-Host "===== 启动业务服务 ($targetCount 个) =====" -ForegroundColor Cyan

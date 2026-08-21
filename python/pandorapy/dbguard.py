@@ -54,6 +54,11 @@ AVG_ROW_BYTES = Gauge(
     "表平均行字节数。排查大字段最灵敏的信号:突增 = 单行变胖 = blob 内部无界增长。",
     ["db", "table"],
 )
+COLUMN_MAX_BYTES = Gauge(
+    "pandora_db_column_max_bytes",
+    "单列最大字节数(全表扫描,低频)。label 只有 db/table/column(低基数)。",
+    ["db", "table", "column"],
+)
 BUDGET_VIOLATIONS = Counter(
     "pandora_db_budget_violations_total",
     "容量预算超限次数。kind=rows|bytes|avg_row_bytes|column_bytes。",
@@ -151,15 +156,35 @@ class TableBudget:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class ColumnBudget:
+    """单个大字段的字节预算(列级检查)—— 对应 Go 的 `dbguard.ColumnBudget`。
+
+    ★ 与 `TableBudget` 的区别不只是粒度,而是**成本与触发时机**:
+    表级走 information_schema(毫秒级、不锁表),可以挂周期 ticker;
+    列级是 `MAX(LENGTH(col))` **全表扫描**,放进周期路径会把生产库扫死。
+    所以 `check_columns` 只在两种场景调:①表级 avg_row_bytes 告警后人工 / 工具触发定位;
+    ②天级低频巡检。**不要把它接到 sweep ticker 上。**
+    """
+
+    table: str
+    column: str
+    max_bytes: int = 0
+    # note 同 TableBudget:超限时打进日志的排查方向。
+    note: str = ""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class Violation:
     table: str
-    # kind 取值与 Go 逐字一致:rows / bytes / avg_row_bytes。
+    # kind 取值与 Go 逐字一致:rows / bytes / avg_row_bytes / column_bytes。
     # ⚠️ 曾经写成 avg_row_length,和 Go 的 avg_row_bytes 对不上 ——
     # Grafana 上按 kind 分组的面板会凭空多出一个分类、旧分类查不到 Python 服务。
     kind: str
     actual: int
     budget: int
     note: str = ""
+    # 只有列级检查(kind=column_bytes)才有值—— 与 Go `Violation.Column` 同语义。
+    column: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -256,6 +281,122 @@ def log_violations(result: CheckResult, db: str = "") -> None:
             note=v.note,
             hint=BUDGET_HINT,
         )
+
+
+# 与 Go 侧 CheckColumns 的 hint 逐字一致。
+COLUMN_HINT = (
+    "用 dbguard.TopLargeRows 或 dbcheck -top-rows 定位到具体主键,"
+    "再反序列化看是哪个字段爆了"
+)
+
+
+async def check_columns(conn, schema: str, budgets: list[ColumnBudget]) -> CheckResult:  # noqa: ANN001
+    """跑一轮**列级**字节巡检 —— 对应 Go `Guard.CheckColumns`。超预算只告警不阻断。
+
+    ⚠️ `MAX(LENGTH(col))` 是**全表扫描**,成本远高于表级巡检。
+    只在「表级 avg_row_bytes 告警后人工定位」或「天级低频巡检」时调,
+    **不要挂到 sweep ticker 上**。
+
+    单列扫描失败只 WARN 并继续下一列(与 Go 同):一列扫不动不该让整轮巡检哑掉,
+    而巡检本身只是告警,失败不影响正确性。
+    """
+    if not budgets:
+        return CheckResult(checked=0, violations=[])
+    logger = plog.get()
+    violations: list[Violation] = []
+    checked = 0
+    for budget in budgets:
+        # 表名 / 列名要拼进 SQL(标识符位置用不了占位符),所以必须先过白名单校验。
+        # 它们全部来自各服务 budgets.py 的代码常量,不接受外部输入。
+        table = mysqlx.require_mysql_identifier(budget.table, kind="table")
+        column = mysqlx.require_mysql_identifier(budget.column, kind="column")
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"SELECT MAX(LENGTH(`{column}`)), AVG(LENGTH(`{column}`)) "  # noqa: S608 —— 标识符已过白名单校验
+                    f"FROM `{table}`"
+                )
+                row = await cur.fetchone()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 —— 扫不动只是少一列指标,不阻断整轮
+            logger.warning(
+                "dbguard_column_scan_failed",
+                db=schema,
+                table=budget.table,
+                column=budget.column,
+                err=str(exc),
+            )
+            continue
+
+        checked += 1
+        max_len = int(row[0] or 0) if row else 0
+        avg_len = int(row[1] or 0) if row else 0
+        COLUMN_MAX_BYTES.labels(schema, budget.table, budget.column).set(max_len)
+        if budget.max_bytes <= 0 or max_len <= budget.max_bytes:
+            continue
+
+        BUDGET_VIOLATIONS.labels(schema, budget.table, "column_bytes").inc()
+        violations.append(
+            Violation(
+                table=budget.table,
+                kind="column_bytes",
+                actual=max_len,
+                budget=budget.max_bytes,
+                note=budget.note,
+                column=budget.column,
+            )
+        )
+        # ★ 列级超限**在这里直接打**,不走 log_violations —— 与 Go 同:
+        # 它带 column / avg_bytes 两个表级日志没有的字段,合并成一个函数
+        # 就得给表级路径塞空字段,反而让 Loki 上两类告警长得一样。
+        logger.error(
+            "db_column_size_budget_exceeded",
+            db=schema,
+            table=budget.table,
+            column=budget.column,
+            max_bytes=max_len,
+            avg_bytes=avg_len,
+            budget=budget.max_bytes,
+            note=budget.note,
+            hint=COLUMN_HINT,
+        )
+    return CheckResult(checked=checked, violations=violations)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class LargeRow:
+    """一条大行定位结果(主键 + 该列字节数)—— 对应 Go 的 `dbguard.LargeRow`。"""
+
+    pk: str
+    size_bytes: int
+
+
+async def top_large_rows(  # noqa: ANN001
+    conn, table: str, pk_col: str, column: str, limit: int = 20
+) -> list[LargeRow]:
+    """定位某列最大的 N 行,返回主键与字节数 —— **排查大字段的第一步落点**。
+
+    拿到主键后的标准下一步:把该行的 blob dump 出来反序列化(proto / JSON),
+    看是哪个 repeated 字段元素数异常,再回到写入路径找为什么没有上限。
+
+    `table` / `pk_col` / `column` 必须是调用方硬编码的标识符(不接受外部输入):
+    标识符位置用不了参数化占位符,这里靠白名单校验兜底。
+    limit 有界(1..100,越界回落 20)防一次拉太多。
+    """
+    table = mysqlx.require_mysql_identifier(table, kind="table")
+    pk_col = mysqlx.require_mysql_identifier(pk_col, kind="column")
+    column = mysqlx.require_mysql_identifier(column, kind="column")
+    if limit <= 0 or limit > 100:
+        limit = 20
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"SELECT `{pk_col}`, LENGTH(`{column}`) AS n "  # noqa: S608 —— 标识符已过白名单校验
+            f"FROM `{table}` ORDER BY n DESC LIMIT %s",
+            (limit,),
+        )
+        rows = await cur.fetchall()
+    return [LargeRow(pk=str(pk), size_bytes=int(n or 0)) for pk, n in rows]
 
 
 # ── 保留期清理(§9.24)──────────────────────────────────────────────────────

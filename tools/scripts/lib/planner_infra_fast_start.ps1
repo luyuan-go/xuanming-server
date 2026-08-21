@@ -84,6 +84,7 @@ function Invoke-PandoraPlannerInfraBatch {
         [Parameter(Mandatory)][scriptblock]$OnFailure,
         [Parameter(Mandatory)][scriptblock]$Sleep,
         [Parameter(Mandatory)][scriptblock]$GetElapsedMilliseconds,
+        [switch]$StopOnFirstFailure,
         [ValidateRange(1, 10000)][int]$PollMilliseconds = 100
     )
     # 本函数会在自己的动态子作用域调用 local_infra.ps1 的既有 launcher。不能在这里
@@ -104,20 +105,55 @@ function Invoke-PandoraPlannerInfraBatch {
         # 一轮只抓一份 listener 快照。异常直接向上传播，不能把 netstat 失败冒充“尚未 ready”。
         $listeners = @(& $GetListenerRecords)
         $now = [int64](& $GetElapsedMilliseconds)
+        $failedThisRound = $false
         foreach ($state in @($states | Where-Object { -not $_.Ready -and -not $_.Failure })) {
             if ([bool](& $TestProcessExited $state)) {
                 $state.Failure = 'process-exited'
+                if ($state.PSObject.Properties['FinishedAtMilliseconds']) {
+                    $state.FinishedAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $now
+                }
                 $null = & $OnFailure $state $state.Failure
+                $failedThisRound = $true
                 continue
             }
             if ([bool](& $TestStateReady $state $listeners)) {
                 $state.Ready = $true
+                if ($state.PSObject.Properties['ReadyAtMilliseconds']) {
+                    $state.ReadyAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName ReadyAtMilliseconds -NotePropertyValue $now
+                }
+                if ($state.PSObject.Properties['FinishedAtMilliseconds']) {
+                    $state.FinishedAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $now
+                }
                 continue
             }
             if (($now - [int64]$state.StartedAtMilliseconds) -ge [int64]$state.TimeoutMilliseconds) {
                 $state.Failure = 'ready-timeout'
+                if ($state.PSObject.Properties['FinishedAtMilliseconds']) {
+                    $state.FinishedAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $now
+                }
                 $null = & $OnFailure $state $state.Failure
+                $failedThisRound = $true
             }
+        }
+
+        if ($StopOnFirstFailure -and $failedThisRound) {
+            foreach ($state in @($states | Where-Object { -not $_.Ready -and -not $_.Failure })) {
+                $state.Failure = 'batch-aborted'
+                if ($state.PSObject.Properties['FinishedAtMilliseconds']) {
+                    $state.FinishedAtMilliseconds = $now
+                } else {
+                    $state | Add-Member -NotePropertyName FinishedAtMilliseconds -NotePropertyValue $now
+                }
+            }
+            break
         }
 
         if (@($states | Where-Object { -not $_.Ready -and -not $_.Failure }).Count -gt 0) {

@@ -23,6 +23,12 @@ function Get-PandoraPlannerMysqlStartupMode {
     $bundle = Get-PandoraPlannerCentralMysqlBundlePath -ProjectRoot $ProjectRoot
     if (Test-Path -LiteralPath $bundle -PathType Leaf) { return 'central-managed' }
 
+    # 策划双击入口只允许远端 workspace。发布包漏放 bundle 时必须在任何本机 MySQL
+    # 备料/启动之前阻断；普通开发者手动执行 start.ps1 -NoDocker 仍保留 local-owned。
+    if ("$env:PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL" -ceq '1') {
+        throw "策划一键启动要求远端中心数据库，但发布包缺少:$bundle；已拒绝启动本机 MySQL。请让发布维护者补齐 central-mysql.json 与公开 CA 证书"
+    }
+
     # bundle 缺失只对从未进入 central 的纯净 Git/local 工作区意味着 local-owned。
     # 本项目一旦登记过 central applied state 或发布过 central runtime profile，缺包就是
     # SVN/发布不完整；必须在启动本机 MySQL 之前阻断，不能把同一工作区静默切到另一套库。

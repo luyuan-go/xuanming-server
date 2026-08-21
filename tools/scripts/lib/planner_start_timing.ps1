@@ -35,7 +35,7 @@ function Add-PandoraPlannerTiming {
     param(
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][ValidateRange(0, [long]::MaxValue)][int64]$ElapsedMilliseconds,
-        [ValidateSet('完成', '失败', '跳过')][string]$Status = '完成',
+        [ValidateSet('完成', '失败', '复用', '跳过')][string]$Status = '完成',
         [string]$Detail = ''
     )
 
@@ -58,12 +58,13 @@ function Invoke-PandoraPlannerTimedStep {
     )
 
     $startedAt = [int64](& $GetElapsedMilliseconds)
-    $status = '完成'
+    # 先按失败记；只有 Action 正常返回后才翻成完成。这样 Action 内部使用 `exit 1`
+    # （本仓库旧 PowerShell 脚本仍有这种控制流）时，finally 也不会误报成功。
+    $status = '失败'
     try {
-        return & $Action
-    } catch {
-        $status = '失败'
-        throw
+        $result = & $Action
+        $status = '完成'
+        return $result
     } finally {
         $finishedAt = [int64](& $GetElapsedMilliseconds)
         Add-PandoraPlannerTiming -Name $Name `
@@ -93,6 +94,7 @@ function Get-PandoraPlannerTimingSummaryLines {
         '[耗时] {0}  {1} 秒  {2}{3}' -f $row.Name,
             (Format-PandoraPlannerSeconds ([int64]$row.ElapsedMilliseconds)), $row.Status, $suffix
     }
+    '[耗时] 注：基础设施组件是并行启动，单项耗时不可相加；请以“基础设施总计”和“总计”为准。'
     '[耗时] 总计  {0} 秒' -f (Format-PandoraPlannerSeconds $TotalElapsedMilliseconds)
 }
 
@@ -105,7 +107,13 @@ function Write-PandoraPlannerTimingSummary {
     $session.SummaryWritten = $true
     Write-Host ''
     foreach ($line in @(Get-PandoraPlannerTimingSummaryLines)) {
-        $color = if ($line -match '\s失败(?:\s|$)') { 'Red' } elseif ($line -like '[耗时]*') { 'DarkCyan' } else { 'Cyan' }
+        $color = if ($line -match '\s失败(?:\s|$)') {
+            'Red'
+        } elseif ($line.StartsWith('[耗时]', [StringComparison]::Ordinal)) {
+            'DarkCyan'
+        } else {
+            'Cyan'
+        }
         Write-Host $line -ForegroundColor $color
     }
 }

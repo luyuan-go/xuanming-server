@@ -79,8 +79,7 @@ class DSAuthConf(BaseModel):
 
     inventory 只在**背包域**(BagService)上用它:owner DS 直写背包时携带 DS 凭据令牌,
     验签抽出 pod/uid 与 owner 记录 target 全等校验(bag phase 2 五要件①)。
-    背包域在 Python 侧尚未实现(见 main.py 头注释),这里建模只为把整段接住,
-    不让它落进 model_extra 后被误读成"没配"。
+    `mode=off`(默认)时 main 不装守卫,bag_owner 退化为 epoch 证明。
     """
 
     mode: str = ""

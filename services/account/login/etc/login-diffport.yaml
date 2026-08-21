@@ -1,0 +1,164 @@
+# Pandora login 服务开发期配置(W2 ③,W3 ⑥ 2026-06-05 重写)。
+#
+# - gRPC 端口 20001 / HTTP 端口 21001(同时暴露 /metrics 和 RESTful)
+# - W3 ② 起接 MySQL(pandora_account)+ Redis 真实化(session / ticket jti)
+# - W3 ⑤ 起接 player_locator(登录成功后 SetLocation(LOGIN_PENDING))
+# - W3 ⑥ 起 duration 字段用 pkg/config.Duration 包装,yaml 可直接写 "5s" / "24h"
+#   (此前的 "Kratos JSON 不解 duration,yaml 不写时长字段" 限制已解除)
+# - W3 ③ 起 server.grpc.enable_reflection 可控,dev: true / prod: false(零值)
+
+server:
+  grpc:
+    network: tcp
+    addr: ":20101"
+    timeout: "15s"              # demo:弱网/本机抖动下 unary RPC 放宽;prod 再按接口收紧
+    enable_reflection: true     # dev:开 reflection 便于 grpcurl 联调;prod 留空 = false 关闭
+    max_conn_age: "15m"         # 达龄 GOAWAY 重拨,滚动更新时流量能滚到新副本(zero-downtime §6.2)
+  http:
+    network: tcp
+    addr: ":21101"
+
+node:
+  node_id: 1
+  session_expire_min: 1440
+  redis_client:
+    host: "127.0.0.1:6380"      # Pandora Redis 端口(deploy/docker-compose.dev.yml)
+    db: 0
+    dial_timeout: "2s"          # W3 ⑥ 示范:Duration 字符串(此前必须 yaml 留空走 pkg 默认)
+  # W3 ② 接 MySQL:dev 连本机 docker mysql 的 pandora_account 库。
+  # DSN 必填(为空 login 直接退出);dev 免密 / 首登自动注册靠下方两个开关。
+  mysql_client:
+    dsn: "pandora:pandora_dev_pwd@tcp(127.0.0.1:3307)/pandora_account?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_0900_ai_ci"
+    max_open_conns: 32
+    max_idle_conns: 8
+    conn_max_lifetime: "30m"    # W3 ⑥ 示范
+    ping_timeout: "3s"
+
+locker:
+  account_lock_ttl: 10
+  player_lock_ttl: 10
+
+# RPC 级临时关停(Kill-Switch):某个 RPC/service 出问题想临时关、修好再开。
+#   - source=file:改下面 file_path 指向的 yaml 即热生效(dev 推荐,零依赖)
+#   - source=etcd:prod 用,多实例一致;需 login main 里 blank import pkg/killswitch/etcdkv
+#   - 关停操作见 docs/ops/service-killswitch.md
+killswitch:
+  enabled: true
+  source: "file"
+  file_path: "etc/killswitch.yaml"   # 相对各服务工作目录;改这个文件即生效
+  # fail_closed: false               # 默认 false = fail-open(开关系统故障也放行,不拖垮服务)
+
+login:
+  session_token_ttl: "24h"      # W3 ⑥ 示范:此前靠 Defaults() 填,现可直写
+  ds_ticket_ttl: "5m"           # 不变量 §3:DS 票据短时效
+
+  # owner 迁移登出释放(owner-authority.md migrate ⑤):登出成功后弱 Query+Release。
+  # dev 一键启动已含 owner 服务(:20017);弱依赖,owner 掉线仅告警不影响登出。
+  owner_addr: "127.0.0.1:20017"
+  # §9.23 query-first(R11 复审 架构 P0):owner 作为恢复路由的**第一权威**。
+  #   false(默认)= 旧的 locator-first 路由,行为与历史一致;
+  #   true       = 先查 owner:有归属记录即由它定 Route 与 exact target,locator/matchmaker
+  #                降为富化;owner 不可判定返回 WAIT/UNKNOWN + retry_after,**绝不回落**
+  #                locator 路由(presence key miss 不能证明玩家已离开旧 DS)。
+  # 打开前提(顺序硬约束):① owner 服务在线且 owner_addr 已配;② 客户端已升级到能解码
+  # entry_state/wait_reason/owner_epoch/retry_after_ms 的版本(旧客户端读不到会退化成
+  # 只看 route,WAIT 会被当成 UNKNOWN 而停在重查,不会误进场但体验差);③ 对 owner 做过
+  # 分区注入,确认 WAIT 不回落且客户端能按 retry_after 自动恢复。
+  mock_hub_ds_addr: "127.0.0.1:7777"
+  # Hub 归属绑定激活栅栏。滚动升级期间保持 false；确认所有 hub_allocator 已能签发
+  # 完整绑定票后再切 true。true 时 Redis/hub.addr 缺失会令 login 启动失败，且禁止自签回退。
+  require_hub_assignment_binding: false
+  # require_hub_assignment_binding=true 时由集群配置生成器原子注入 hub_assignment_fence。
+
+  # 会话代际强制门(R9 复审 P0-1 改为默认开启;顺序见 docs/design/session-generation-rollout.md):
+  # dev 一键启动自带 MySQL(迁移先行)且无混版旧节点,直接保持 true 与生产同构验证。
+  # 只有「从不带会话代际的旧版本升级的环境」才按 rollout 文档阶段序临时置 false:
+  #   session_generation_enforce: 需 000003 迁移 + 全 fleet emit + 旧版本排空 +
+  #     等满一个会话 TTL(24h,或强制全量重登)后再开。
+  #   require_ticket_sjti: 需全 fleet 签发面必带 sjti + 旧版本排空 + 等满票据最大 TTL 后再开。
+  session_generation_enforce: true
+  require_ticket_sjti: true
+
+  # 账号库后端强校验(全服单点扩容,2026-07-27)。
+  # false(dev 默认):连本机单机 MySQL 联调,不校验后端类型。
+  # true(-Prod 产物由 gen_cluster_config.ps1 机械翻转):启动期强制
+  #   ① VERSION() 含 -TiDB-(生成器只能校验 DSN 字符串,证不了对端真是 TiDB);
+  #   ② accounts.account 的排序规则**实际行为**仍是大小写不敏感 + NO PAD。
+  # ②不能省:TiDB 的 _ci 排序规则只在集群以 new_collations_enabled_on_first_bootstrap=true
+  # 初始化时才真正大小写不敏感,否则语义上按 binary 比较且**不报错**;该参数首次 bootstrap
+  # 后不可更改。漂移的后果是老玩家用不同大小写登不进(dev_auto_register 若误开还会静默开新号),
+  # 以及大小写变体抢注同名账号。故必须行为探针 fail-closed,不能只看版本号。
+  require_tidb: false
+
+  # 开发期免密登录(⚠️ 仅本机 / 联调,严禁上生产):
+  #   true  → 跳过密码校验;账号不存在时自动懒注册,返回稳定 player_id
+  #           客户端随便填一个账号名就能进,无需独立注册流程
+  #   false → 走正常 bcrypt 密码校验
+  dev_skip_password: true
+
+  # 开发期“假注册”(⚠️ 仅本机 / 联调,严禁上生产):
+  #   true  → 账号不存在时首登自动注册(存本次密码 bcrypt 哈希),
+  #           单开此项时后续用同密码走正常校验(“首登即注”)
+  #   false → 账号不存在直接报 ErrLoginAccountNotFound
+  dev_auto_register: true
+
+  # 选角白名单(选角权威化 2026-07-08):非空 = 严格白名单;空 = fail-closed 拒绝 SelectRole。
+  # dev 宽松(空白名单只校 role_id 非 0)需显式开下面的 dev_allow_any_role。
+  # allowed_role_ids: [1, 2, 3]
+
+  # 开发期选角宽松开关(⚠️ 仅本机 / 联调,严禁上生产):
+  #   true  → allowed_role_ids 为空时 SelectRole 只校验 role_id 非 0(配合客户端配置表快速迭代)
+  #   false → allowed_role_ids 为空时 SelectRole 一律拒绝(fail-closed,prod 语义)
+  dev_allow_any_role: true
+
+  # JWT(W3 ①,2026-06-05):HS256 共享密钥模式。
+  # ⚠️ secret 跟 deploy/envoy/envoy.yaml jwt_authn provider 必须一致(envoy 那边
+  #    放的是 base64url(secret) 的 JWKS)。可用以下命令算出 base64url:
+  #      python -c "import base64; print(base64.urlsafe_b64encode(b'pandora-dev-jwt-secret-change-me-32!').rstrip(b'='))"
+  jwt:
+    issuer: "pandora-login"
+    audience: "pandora-client"
+    secret: "pandora-dev-jwt-secret-change-me-32!"
+    session_ttl: "24h"          # W3 ⑥ 示范
+    ds_ticket_ttl: "5m"
+
+  # W3 ⑤(2026-06-05):登录成功后调 PlayerLocatorService.SetLocation(state=LOGIN_PENDING)。
+  # addr 留空 → 不调 locator(login 仍可独立跑;hub DS 接入后由 hub 上报 HUB 状态)。
+  locator:
+    addr: "127.0.0.1:20006"
+
+  # W4 ⑥(2026-06-06):登录成功后调 HubAllocatorService.AssignHub 拿真实 hub_ds_addr + hub_ticket。
+  # addr 留空 → 不调 hub_allocator(login 回退自签 hub 票据 + mock_hub_ds_addr,可独立联调)。
+  # region 空 → 让 hub_allocator 选最空分片。
+  hub:
+    addr: "127.0.0.1:20021"
+    region: "cn"
+
+  # matchmaker 只读权威兜底(P0 修复 2026-07-15):locator presence 未命中 BATTLE 时,
+  # 再查 ResolvePlayerMatchContext(player claim + match 记录是耐久事实,不靠 30s TTL)。
+  # READY 局即使投影蒸发也能把玩家路由回原 battle。addr 留空 → presence-only。
+  # auth_secret/auth_audience:login→matchmaker 内部服务鉴权(internalrpcauth),
+  # 必须与 matchmaker-dev.yaml 的 match_resume_auth_secret/audience 一致;
+  # 读路径 canonical,PVE(pve_coop)记录同样可经此实例解析(共享 Redis)。
+  matchmaker:
+    addr: "127.0.0.1:20011"
+    auth_secret: "pandora-dev-match-resume-auth-key-v1!"
+    auth_audience: "matchmaker:5v5_ranked"
+
+  # player(账号 / 角色分离 2026-08-18):把账号名播种成**全服显示名**。
+  # 创建角色功能上线前角色名固定 = 账号名,而别人在头顶铭牌 / 队伍面板 / 聊天 / 好友 /
+  # 公会 / 排行榜看到的名字来自 player 服务的 players.nickname(uk_nickname 全服唯一)。
+  # login 在登录路径上调 player.EnsureProfile 播种(INSERT IGNORE,不覆盖玩家改过的名字)。
+  # addr 留空 → 不播种,角色名回落 Player_<player_id>;弱依赖,player 挂了不阻断登录。
+  player:
+    addr: "127.0.0.1:20002"
+
+# UE DS → login.VerifyDSTicket 在线入场鉴权。默认 off/legacy，保留既有内部 Verify 行为；
+# 集群生成器在 Model B 激活产物里原子切成 enforce/redis，并注入与 assignment 相同的 fence。
+ds_auth:
+  mode: "off"
+  authority_mode: "legacy"
+  issuer: "pandora-ds-control"
+  audience: "pandora-ds"
+  secret: "pandora-dev-jwt-secret-change-me-32!"
+  active_heartbeat_max_age: "30s"

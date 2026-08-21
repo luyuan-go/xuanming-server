@@ -113,15 +113,58 @@ class BattleResultService(battle_pb2_grpc.BattleResultServiceServicer):
             outcome=enum_name(battle_pb2.BattleOutcome, result.outcome),
             final_progress_seq=request.final_progress_seq,
         )
-        code = self._check_battle_credential(context, result.match_id)
+        claims, credential, code = self._check_battle_credential_full(
+            context, result.match_id
+        )
+        del claims  # 本方法只需 credential;保留解包形状与 Go 的三返回值一致
         if code != 0:
             _log_ds_auth_reject(
                 "ReportResult", "check_credential", result.match_id, result.ds_pod_name, code
             )
             return battle_pb2.ReportResultResponse(code=code)
 
+        # Model-B(authority_mode=redis):再过一道 Redis active 终态门,并用**服务端
+        # 快照**构造持久 terminal-release 证明。checker 为 None(legacy)时整段跳过。
+        terminal_release = None
+        if self._credential_checker is not None:
+            if (
+                credential is None
+                or result.ds_pod_name == ""
+                or result.ds_pod_name != credential.pod
+            ):
+                # ★ 比对的是**请求体自报的 pod** 与**令牌里的 pod**:不一致说明
+                # 这台 DS 拿着 A 的令牌替 B 上报(或请求体被中途改写),不是配置问题。
+                _log_ds_auth_reject(
+                    "ReportResult",
+                    "pod_mismatch",
+                    result.match_id,
+                    result.ds_pod_name,
+                    errcode_pb2.ERR_UNAUTHORIZED,
+                )
+                return battle_pb2.ReportResultResponse(code=errcode_pb2.ERR_UNAUTHORIZED)
+            try:
+                terminal_release = await self._credential_checker.authorize_result(
+                    result.match_id, credential
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                _log_ds_auth_reject(
+                    "ReportResult",
+                    "authorize_result",
+                    result.match_id,
+                    result.ds_pod_name,
+                    _to_proto_code(exc),
+                )
+                return battle_pb2.ReportResultResponse(code=_to_proto_code(exc))
+
         try:
-            already = await self._uc.report_result(result, request.final_progress_seq)
+            if terminal_release is not None:
+                already = await self._uc.report_authorized_result(
+                    result, terminal_release, request.final_progress_seq
+                )
+            else:
+                already = await self._uc.report_result(result, request.final_progress_seq)
         except asyncio.CancelledError:
             # ★ 取消必须穿透:CancelledError 是 BaseException,会被下面那条宽 except 吞掉。
             # 吞掉之后取消就**不再传播** —— grpc.aio 正是用取消终止在途 handler,
@@ -129,6 +172,24 @@ class BattleResultService(battle_pb2_grpc.BattleResultServiceServicer):
             raise
         except BaseException as exc:  # noqa: BLE001 —— 与 Go 一样把 error 映射成 code
             return battle_pb2.ReportResultResponse(code=_to_proto_code(exc))
+
+        if self._credential_checker is not None and not already:
+            # immediate receipt 只是低延迟优化。MySQL 已把同一鉴权证明与战绩原子写入
+            # terminal_release_outbox;即使这里因响应丢失、Redis 抖动或 token 临界过期
+            # 失败,也**必须回 OK** —— 后台 relay 会用持久证明完成 terminal CAS + UID 回收。
+            # 在这里返回错误 = DS 重试上报 = 玩家看到"结算中"转圈,而结算其实已经落库。
+            try:
+                await self._credential_checker.mark_result_recorded(
+                    result.match_id, credential
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                plog.get().warning(
+                    "battle_result_receipt_deferred_to_outbox",
+                    match_id=result.match_id,
+                    err=str(exc),
+                )
         return battle_pb2.ReportResultResponse(
             code=errcode_pb2.OK, already_recorded=already
         )
@@ -249,21 +310,6 @@ class BattleResultService(battle_pb2_grpc.BattleResultServiceServicer):
         return battle_pb2.ListPlayerHistoryResponse(code=errcode_pb2.OK, results=results)
 
     # ── 内部 ──────────────────────────────────────────────────────────────
-
-    def _check_battle_credential(self, context, match_id: int) -> int:  # noqa: ANN001
-        """DS 回调范围绑定:battle 令牌的 match_id 必须等于上报的 match_id。
-
-        返回 0 = 放行;非 0 = 应回给 DS 的 in-band ErrCode。
-
-        `require_token=True` 是**纯 DS 回调**的标记:enforce 档下无令牌直连一律拒
-        (堵住绕过 Envoy 的东西向旁路,审核 P1)。mode=off 时 guard 为 None,直接放行。
-        """
-        if self._ds_guard is None:
-            return 0
-        return self._ds_guard.check(
-            context,
-            dsauth.DSScope(ds_type=DS_TYPE_BATTLE, match_id=match_id, require_token=True),
-        )
 
     def _check_battle_credential_full(  # noqa: ANN001
         self, context, match_id: int
