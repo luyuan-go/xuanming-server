@@ -22,6 +22,8 @@ dependencies = [
     # ── HTTP 面(/metrics + login 的 10 个 REST 端点)──────────────
     "fastapi>=0.115",
     "uvicorn>=0.34",
+    # ds_allocator / hub_allocator 直接调用 Kubernetes / Agones API，且模块顶层 import。
+    "httpx>=0.28",
     # ── 配置 ────────────────────────────────────────────────────
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
