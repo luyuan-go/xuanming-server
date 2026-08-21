@@ -550,6 +550,38 @@ owner 用它**拒**带玩家 JWT 的调用。同一个符号，两种相反的�
 扩到服务目录**全部 .py** 之后当场炸出 **87 处**未放行 `CancelledError` 的宽 except
 （`main.py` 的启动路径、`repo.py` 的数据层都有）。同一条判据，覆盖面差 5 倍。
 
+### 5.2.9 收尾批次（2026-08-21）：三条"没有任何现成闸能抓"的
+
+三条都不是"写错了"，是**写了但没接上 / 读错了地方 / 注释成了假证据**。共同点：
+测试全绿、服务照常 SERVING、日志零行。
+
+| # | 缺陷 | 后果 | 为什么没闸抓得到 |
+|---|---|---|---|
+| ① | `matchmaker/main.py:_self_region` 仍从 `cfg.model_extra["cell_route"]` 读，而 `cell_route` 已升格为 `BaseConf` 的 pydantic **正式字段** | pydantic 不把已声明字段放进 `model_extra` ⇒ 恒返回 0 ⇒ leader 选举分片键恒为 `.../r0` ⇒ **所有 region 副本挤进同一次选举，非 leader region 的撮合永久停摆且零错误日志**（违反 §9.20/§9.21） | `model_extra.get()` 语法完全合法，取不到就是 `None` 走默认分支。`auction/conf.py:255` 早把这个形状记成"历史教训"，但没人 grep 第二个读者 |
+| ② | 模块 docstring 与用例 docstring 仍写着"Python 侧只实现单 Cell，所以 static/etcd 都拒启" | `cellroute_etcd` 装配补齐后 static/etcd 已合法，注释变成**假的安全论据**——下一个人照它推理会得出错误结论 | 注释不参与执行 |
+| ③ | `inventory/main.py:_run_bag_journal_sweep` 定义了但**从没 append 进 background**（Go 侧 `cmd/inventory/main.go:255` 有 `go runBagJournalSweep(...)`） | `bag_journal` 只增表永不清理，违反 §9.24 | ruff 的 F401/F841 只管 import 与局部变量，**模块级函数没人调用不是 lint 错**；单测不会去调私有 `_run_*`；起服务、health、日志三个观测面与"接上了但没到清理时间"完全同形 |
+
+**新增的机械闸**：`test_service_layer_contract.py::test_background_runners_are_actually_wired`
+——扫每个 `services/*/main.py`，`_run_*` / `*_loop` 顶层协程定义了就必须在别处被引用。
+配套金丝雀 `test_the_runner_wiring_check_is_not_vacuous` 防它随命名约定变化而空转。
+
+> ⚠️ 这条检查的**第一版又误报了一次**（第三次，见 §5.2.8）：判据是
+> `re.findall(name, src) > 1`，而补接线时留的那句注释「此前 `_run_bag_journal_sweep`
+> 定义了但从未挂进 background」**自己就含这个名字**，把接线拆掉后检查照样打绿。
+> 改成数 AST 的 `ast.Name`(Load) 引用后立刻抓到。
+> **注释会抵消文本判据；能拿 AST 就别数文本。**
+
+**全仓对账**：把 Go 各 `cmd/*/main.go` 的 `go xxx(...)` 具名 goroutine 全部枚举
+（13 个 `runCapacityGuard` + leaderboard 双 sweep + mail / dialogue / owner / inventory
+各自的 sweep + inventory 的 `runLegacyBagMigration`），逐个确认 Python 有对应
+`background` 条目。除 ③ 外无遗漏。**移植 `main.go` 的标准动作就是这份对账**。
+
+**测试自身的缺口**：D5 迁移的 7 个变异全被抓，但把 `plog.get().error(...)` 整块删掉时
+29 个用例**全绿** —— 日志事件名（`bag_legacy_migration_player_failed` /
+`_done_with_failures` / `_done`，与 Go 逐字相同、告警按名建）没有任何断言守着，
+可以被静默删掉。已补 `structlog.testing.capture_logs` 的事件名守护用例。
+**判据：凡"改了不会让任何断言变红"的东西，就是没被测。**
+
 ### 5.3 环境与工具坑
 
 | 坑 | 现象 | 处置 |

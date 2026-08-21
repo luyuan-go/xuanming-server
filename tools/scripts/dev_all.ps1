@@ -186,6 +186,10 @@ if ($NoDocker) {
 
     $infraReadyCallback = $null
     if ($plannerParallelEnabled -and -not $centralManaged) {
+        # GetNewClosure 只捕获变量，不会捕获当前脚本作用域中 dot-source 进来的函数命令。
+        # local_infra.ps1 作为子脚本调用 callback 时看不到这个 helper；必须把 exact worker
+        # starter 的 ScriptBlock 显式装进 closure，不能依赖子脚本恰好加载同一个 helper。
+        $startPlannerPreparationProcess = ${function:Start-PandoraPlannerPreparationProcess}
         $infraReadyCallback = {
             param($State)
             if ("$($State.Name)" -cne 'mysql') { return }
@@ -196,7 +200,7 @@ if ($NoDocker) {
             $mysqlClient = Get-ChildItem -Path (Join-Path $ScriptDir '../../run/localinfra/dist/mysql') `
                 -Recurse -File -Filter 'mysql.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $mysqlClient) { throw 'MySQL 已就绪，但找不到本机 mysql.exe，无法启动迁移。' }
-            $plannerMigrationContext.Handle = Start-PandoraPlannerPreparationProcess -Name migration `
+            $plannerMigrationContext.Handle = & $startPlannerPreparationProcess -Name migration `
                 -FilePath $pwshExe -WorkingDirectory $projectRoot -ArgumentList @(
                     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                     (Join-Path $ScriptDir 'dev_migrate.ps1'), '-MysqlClient', $mysqlClient.FullName,

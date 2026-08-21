@@ -9,8 +9,9 @@ leaderboard 照着它抄，于是 `except BaseException` 吞掉 `CancelledError`
 
 from __future__ import annotations
 
+import ast
 import pathlib
-import re
+import textwrap
 
 import pytest
 
@@ -35,6 +36,65 @@ def test_there_are_service_files_to_check() -> None:
     assert _service_files(), f"没扫到任何服务源文件（{SERVICES_DIR}）"
 
 
+def _except_types(handler: ast.ExceptHandler) -> list[ast.expr]:
+    """这条 handler 声明捕获的异常类型（`except (A, B):` 摊平成 [A, B]）。"""
+    if handler.type is None:
+        return []
+    if isinstance(handler.type, ast.Tuple):
+        return list(handler.type.elts)
+    return [handler.type]
+
+
+def _catches_base_exception(handler: ast.ExceptHandler) -> bool:
+    """这条 handler 会不会抓住 `BaseException`（从而抓住 `CancelledError`）。
+
+    裸 `except:` 也算 —— 它抓一切。**正则版把裸 except 整个漏掉了**，
+    因为它只匹配字面量 `except BaseException`。
+    """
+    if handler.type is None:
+        return True
+    return any(isinstance(t, ast.Name) and t.id == "BaseException" for t in _except_types(handler))
+
+
+def _catches_cancelled(handler: ast.ExceptHandler) -> bool:
+    """这条 handler 是否显式点名 `CancelledError`（裸名或 `asyncio.CancelledError`）。"""
+    for t in _except_types(handler):
+        if isinstance(t, ast.Name) and t.id == "CancelledError":
+            return True
+        if isinstance(t, ast.Attribute) and t.attr == "CancelledError":
+            return True
+    return False
+
+
+def _reraises_unconditionally(handler: ast.ExceptHandler) -> bool:
+    """块体**顶层**有裸 `raise`。嵌在 `if` 里的是条件 re-raise，不算。"""
+    return any(isinstance(st, ast.Raise) and st.exc is None for st in handler.body)
+
+
+def _unguarded_broad_handlers(tree) -> list[int]:  # noqa: ANN001
+    """返回「会吞掉 `CancelledError` 的宽 except」的行号。
+
+    判据完全从 AST 推导：对每个 `try`，按**声明顺序**看它的 handler ——
+    宽 handler 之前若已有一条显式点名 `CancelledError` 的 handler，取消就
+    永远轮不到宽 handler，放行；宽 handler 自己无条件 re-raise 也放行。
+    """
+    bad: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        seen_cancelled = False
+        for handler in node.handlers:
+            if _catches_cancelled(handler):
+                seen_cancelled = True
+                continue
+            if not _catches_base_exception(handler):
+                continue  # `except Exception` 抓不到 CancelledError，安全
+            if seen_cancelled or _reraises_unconditionally(handler):
+                continue
+            bad.append(handler.lineno)
+    return sorted(bad)
+
+
 @pytest.mark.parametrize("path", _service_files(), ids=lambda p: f"{p.parent.name}/{p.name}")
 def test_cancelled_error_is_re_raised_before_any_broad_except(path: pathlib.Path) -> None:
     """★ `except BaseException` 之前必须先放行 `asyncio.CancelledError`。
@@ -53,50 +113,107 @@ def test_cancelled_error_is_re_raised_before_any_broad_except(path: pathlib.Path
 
     ⚠️ **不算违规的两种写法**（第一版检查在它们上面误报了 13 处）：
 
-      1. 前面已经有一条 `except asyncio.CancelledError: raise`；
+      1. 同一个 `try` 里，前面已经有一条 `except asyncio.CancelledError`；
       2. 这条宽 except **自己无条件 re-raise**（事务回滚的标准写法：
          `except BaseException: rollback(); raise`）—— 取消照样穿透出去，
          回滚本身是必须做的清理，不做才会留下悬挂事务。
 
     误报的检查会被 noqa 掉或整条删掉，最后什么都不剩，所以这两种必须放行。
+
+    ⚠️⚠️ **2026-08-21 重写为 AST**。原先是逐行正则，判据 ① 是
+    「前 12 行里出现过 `CancelledError` 这个字符串」—— **注释行照样算数**。
+    而本仓恰恰到处都是「★ 取消必须穿透:CancelledError 是 BaseException…」
+    这类说明性注释，于是：把真的 `except asyncio.CancelledError: raise`
+    删掉、只留那句注释，**238 个用例全绿**（已实测）。
+
+    这是同一个判据缺陷的第二处（第一处见 `_unreferenced_runner_defs`）：
+    **注释会抵消文本判据；能拿 AST 就别数文本。**
+
+    改成 AST 后顺带补上了正则版的两个结构性盲区：
+      - 裸 `except:`（同样抓 BaseException，正则匹配不到字面量所以整个漏掉）；
+      - `except (Foo, BaseException):` 这种元组形式；
+      - 「前 12 行」的窗口不再需要 —— handler 归属由 `try` 节点结构决定，
+        不再受行距、嵌套或中间插入的注释影响。
     """
-    lines = path.read_text(encoding="utf-8").split("\n")
-    offenders: list[int] = []
-    for i, ln in enumerate(lines):
-        m = re.match(r"^(\s*)except BaseException", ln)
-        if not m:
-            continue
-        # ① 前面已放行 CancelledError？
-        guarded = False
-        for prev in reversed(lines[max(0, i - 12) : i]):
-            if "CancelledError" in prev:
-                guarded = True
-                break
-            if re.match(r"^\s*(try:|async def |def )", prev):
-                break
-        if guarded:
-            continue
-        # ② 这条 except 自己无条件 re-raise？扫它的块体（缩进更深的连续行）
-        indent = len(m.group(1))
-        reraises = False
-        for nxt in lines[i + 1 :]:
-            if not nxt.strip():
-                continue
-            cur_indent = len(nxt) - len(nxt.lstrip())
-            if cur_indent <= indent:
-                break  # 块体结束
-            if re.match(r"^\s*raise\s*$", nxt) and cur_indent == indent + 4:
-                # 只认块体**顶层**的裸 raise：嵌在 if 里的是条件 re-raise，不算
-                reraises = True
-        if not reraises:
-            offenders.append(i + 1)
+    offenders = _unguarded_broad_handlers(ast.parse(path.read_text(encoding="utf-8")))
     assert not offenders, (
-        f"{path.parent.name}/{path.name} 第 {offenders} 行的 `except BaseException` "
+        f"{path.parent.name}/{path.name} 第 {offenders} 行的宽 except "
         f"没有先放行 CancelledError —— 优雅停机时会把取消吞成业务错误码。"
         f"在它前面加：\n"
         f"    except asyncio.CancelledError:\n"
         f"        raise"
     )
+
+
+def test_the_cancelled_error_check_is_not_vacuous() -> None:
+    """金丝雀：确认上面那条检查**确实在看东西**。
+
+    它现在是「全绿」的，而全绿有两种可能：真的没有违规，或者判据根本没生效
+    （正则写错、AST 节点类型选错、`_service_files()` 扫了个空目录）。
+    这条用例把两者区分开 —— 断言全仓确实存在**大量**被扫到的宽 except，
+    并且构造两个已知形状验证判据的正反两面。
+    """
+    total = 0
+    for path in _service_files():
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Try):
+                total += sum(1 for h in node.handlers if _catches_base_exception(h))
+    assert total >= 50, f"只扫到 {total} 个宽 except，判据可能已失效"
+
+    # 反面：注释里提到 CancelledError **不能**当放行证据（正则版就栽在这里）
+    defeated_by_comment = textwrap.dedent(
+        """
+        async def f():
+            try:
+                await g()
+            # 取消必须穿透:CancelledError 是 BaseException
+            except BaseException as exc:
+                log(exc)
+        """
+    )
+    assert _unguarded_broad_handlers(ast.parse(defeated_by_comment)), (
+        "注释提到 CancelledError 被当成了放行证据 —— 判据又退回数文本了"
+    )
+
+    # 正面：真的有守卫时不能误报
+    real_guard = textwrap.dedent(
+        """
+        async def f():
+            try:
+                await g()
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                log(exc)
+        """
+    )
+    assert not _unguarded_broad_handlers(ast.parse(real_guard))
+
+    # 正面：宽 except 自己无条件 re-raise（事务回滚的标准写法）
+    rollback = textwrap.dedent(
+        """
+        async def f():
+            try:
+                await g()
+            except BaseException:
+                await rollback()
+                raise
+        """
+    )
+    assert not _unguarded_broad_handlers(ast.parse(rollback))
+
+    # 反面：裸 `except:` 同样抓 BaseException —— 正则版整个漏掉了这种
+    bare = textwrap.dedent(
+        """
+        async def f():
+            try:
+                await g()
+            except:
+                log("oops")
+        """
+    )
+    assert _unguarded_broad_handlers(ast.parse(bare)), "裸 except: 没被认出来"
+
 
 
 # ── 刻意**没有**加的一条：R5「player_id 必须取自鉴权上下文」的机械检查 ──────

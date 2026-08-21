@@ -267,7 +267,36 @@ Assert-Equal -1 $blockedPipeResult.ExitCode `
 Assert-Equal 0 $blockedPipeResult.ProcessExitCode '合成失败码之外仍保留 exact child 原退出码'
 Assert-True ($blockedPipeResult.DrainError -match 'stdout 管道.*未关闭') '输出 drain 超时必须返回明确错误'
 
-Write-Host '[4] 生产接线：只在策划 fast 路线并行，MySQL ready 后异步迁移' -ForegroundColor Cyan
+Write-Host '[4] MySQL-ready 回调：GetNewClosure 后仍能调用父脚本的 worker starter' -ForegroundColor Cyan
+function Invoke-CallbackInChildScope([scriptblock]$Callback) {
+    & {
+        param([scriptblock]$InnerCallback)
+        & $InnerCallback
+    } $Callback
+}
+
+$unboundCommandError = & {
+    function Invoke-ParentOnlyPlannerCommand { 'unbound-should-not-run' }
+    $unboundCallback = { Invoke-ParentOnlyPlannerCommand }.GetNewClosure()
+    try {
+        Invoke-CallbackInChildScope $unboundCallback | Out-Null
+    } catch {
+        $_.Exception.Message
+    }
+}
+Assert-True ($unboundCommandError -match 'Invoke-ParentOnlyPlannerCommand.*not recognized') `
+    '回归前提：GetNewClosure 不会自动捕获父脚本中定义的函数命令'
+
+$boundCommandResult = & {
+    function Invoke-ParentOnlyPlannerCommand { 'bound-ok' }
+    $boundPlannerCommand = ${function:Invoke-ParentOnlyPlannerCommand}
+    $boundCallback = { & $boundPlannerCommand }.GetNewClosure()
+    Invoke-CallbackInChildScope $boundCallback
+}
+Assert-Equal 'bound-ok' $boundCommandResult `
+    '显式捕获函数 ScriptBlock 后，回调进入子脚本作用域仍必须可调用'
+
+Write-Host '[5] 生产接线：只在策划 fast 路线并行，MySQL ready 后异步迁移' -ForegroundColor Cyan
 $startText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/scripts/start.ps1'))
 $devAllText = [IO.File]::ReadAllText($devAllPath)
 Assert-True ($startText -match '\$deferPlannerTableGeneration\s*=\s*\$plannerTimingEnabled' -and
@@ -311,8 +340,13 @@ Assert-True ($devAllText -match '(?s)function Remove-PlannerPreparationOrphanSta
     $devAllText -match '(?s)Stop-PandoraPlannerPreparationProcess.*?Remove-PlannerPreparationOrphanStages \$handle') `
     'worker 在 manifest 落盘前被强停时，也只能按 exact worker PID 清孤儿 staging'
 
-Assert-True ($devAllText -match '(?s)\$infraReadyCallback\s*=\s*\{.*?Name\)"\s*-cne\s*''mysql''.*?Start-PandoraPlannerPreparationProcess\s+-Name migration') `
-    '本机 MySQL ready callback 必须且只能启动 migration child'
+$workerStarterCaptureIndex = $devAllText.IndexOf(
+    '$startPlannerPreparationProcess = ${function:Start-PandoraPlannerPreparationProcess}',
+    [StringComparison]::Ordinal)
+$infraCallbackIndex = $devAllText.IndexOf('$infraReadyCallback = {', [StringComparison]::Ordinal)
+Assert-True ($workerStarterCaptureIndex -ge 0 -and $workerStarterCaptureIndex -lt $infraCallbackIndex -and
+    $devAllText -match '(?s)\$infraReadyCallback\s*=\s*\{.*?Name\)"\s*-cne\s*''mysql''.*?&\s*\$startPlannerPreparationProcess\s+-Name migration') `
+    '本机 MySQL ready callback 必须显式捕获父脚本 worker starter，进入 local_infra 子作用域后再启动 migration child'
 Assert-True ($devAllText -match '(?s)local_infra\.ps1"\s+-Action up\s+-OnPlannerComponentReady \$infraReadyCallback') `
     'planner fast 必须把 MySQL ready callback 传给 local_infra'
 
