@@ -215,6 +215,15 @@ storage directory 标记为 failed。配置只有一个 `log.dirs`，所以 brok
 | 设计有数据校验与有界次数的安全恢复流程 | 未开始 | 运维脚本/手册待设计 | 保留并校验 topic、segment、consumer offsets；失败不得 reset。 |
 | Windows retention sharing violation 故障注入回归 | 未开始 | 测试待设计 | 复现真实 rename 失败，验证告警、退出检测与恢复。 |
 
+### 7.2.1 2026-08-24 后续缓解
+
+- `598e1c15` 在策划机免 Docker Kafka 配置中增加 `log.cleaner.enable=false`，避免 Windows 上
+  `__consumer_offsets` 压缩阶段的 `.timeindex.cleaned` → `.timeindex.swap` rename 再次触发唯一
+  `log.dirs` 失效；Docker、K8s 与线上 Linux 配置不受影响。
+- `tools/scripts/tests/localinfra_kafka_planner_tuning_contract_test.ps1` 已通过，证明生成配置包含该开关。
+- 这只是策划机缓解措施，不等于事故关闭：尚未完成原数据目录受控恢复、topic/offset 对账、故障注入、
+  运行期退出检测和玩家 E2E，以下关闭闸保持未勾选。
+
 ### 7.3 防复发规则
 
 - 启动期 ready 不能替代关键基础设施的运行期存活监控；Kafka 退出必须撤销“可玩”结论并给出明确现场。
@@ -230,6 +239,7 @@ storage directory 标记为 failed。配置只有一个 `log.dirs`，所以 brok
 | 当前 listener/process | `9093/9094` listener 0、Kafka JVM 0 | 未恢复 | 只读 `netstat` + 进程身份 | 2026-08-21 08:06:52 UTC 现场 |
 | 数据/索引完整性 | 未执行；存在部分 `.deleted` 状态 | 未执行 | Kafka storage/segment 校验待定 | 阻断关闭 |
 | 针对性回归 | 未执行 | 未执行 | Windows sharing violation 注入待设计 | 阻断关闭 |
+| 策划机配置契约 | 无 cleaner 禁用约束 | PASS | `pwsh tools/scripts/tests/localinfra_kafka_planner_tuning_contract_test.ps1` | 仅静态缓解契约，不替代故障注入 |
 | 集成恢复 | 未执行 | 未执行 | 原 data 目录受控重启 + topic/offset 对账 | 阻断关闭 |
 | `go test -race` | 不适用 | 不适用 | 本事故未改 Go 代码 | — |
 | fatal/进程退出注入 | 本次是真实非预期退出样本 | 未执行修复后注入 | Kafka broker 运行期退出 | 阻断关闭 |
