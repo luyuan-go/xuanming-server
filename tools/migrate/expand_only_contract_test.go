@@ -33,7 +33,9 @@ import (
 
 // sqlIdent 是一个列名/表名在 DDL 里的两种合法写法:反引号包裹,或裸标识符。
 // 门禁必须两种都认 —— 本仓的迁移习惯全带反引号,但 MySQL 不要求,
-// `docs/design/player-no-and-login-surge.md` §3.6.4 讨论改名时用的就是裸写法。
+// `docs/design/player-no-and-login-surge.md` **§3.6.3**(449-499 行)讨论改名时用的就是裸写法
+// —— 具体是第 491 行「用 `RENAME COLUMN` 而非 `CHANGE old new <type>`」那句。
+// (别写成 §3.6.4:那一节从 500 行才开始,讲的是 000007 expand 回补与 contract 退出条件。)
 const sqlIdent = "(?:`[^`]+`|[A-Za-z_][A-Za-z0-9_$]*)"
 
 // destructiveRule 是一条破坏性 DDL 形态。
@@ -251,8 +253,9 @@ func TestDestructiveDDLDetector(t *testing.T) {
 		{
 			// 反引号全省 + COLUMN 全省 —— 合法 MySQL,兼容性上与上一条**完全一样**。
 			// 2026-08-24 变异实测:这一形态在旧正则下返回空,下一条这么写的硬切会静默放行。
-			// 不是理论形态,`docs/design/player-no-and-login-surge.md` §3.6.4 讨论
+			// 不是理论形态,`docs/design/player-no-and-login-surge.md` **§3.6.3** 第 491 行讨论
 			// register_no → player_no 改名时用的就是 `CHANGE old new <type>` 这个拼法。
+			// (§3.6.4 从 500 行才开始,是另一回事 —— 别再引错。)
 			name: "CHANGE 裸标识符 + 省 COLUMN(旧正则漏报的形态)",
 			sql:  "ALTER TABLE auction_escrow CHANGE frozen_gold frozen_amount BIGINT NOT NULL;",
 			want: []string{"CHANGE COLUMN"},
