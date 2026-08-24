@@ -241,30 +241,31 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
     kRemarkFieldNumber = 2,
     kNameFieldNumber = 3,
     kIconFieldNumber = 4,
-    kAbilityPathFieldNumber = 10,
-    kApplyBuffsToSelfFieldNumber = 22,
-    kEffectDescriptionFieldNumber = 27,
+    kAbilityPathFieldNumber = 11,
+    kApplyBuffsToSelfFieldNumber = 23,
+    kEffectDescriptionFieldNumber = 28,
     kIdFieldNumber = 1,
     kSegmentFieldNumber = 5,
     kNextSegmentIdFieldNumber = 6,
     kCdTimingFieldNumber = 7,
     kCdDurationFieldNumber = 8,
-    kTargetSelectModeFieldNumber = 11,
-    kOrientTargetTypeFieldNumber = 12,
-    kOrientTargetIdFieldNumber = 13,
-    kDisableMoveFieldNumber = 9,
-    kNeedFightStateFieldNumber = 18,
-    kTargetCampFieldNumber = 14,
-    kUseDistanceFieldNumber = 15,
-    kHateToTargetFieldNumber = 16,
-    kHateToEnemyFieldNumber = 17,
-    kRotModeFieldNumber = 19,
-    kDamageRateFieldNumber = 20,
-    kDamageValueFieldNumber = 21,
-    kCorrectionRateFieldNumber = 23,
-    kEffectCountFieldNumber = 24,
-    kDamageDisplayFieldNumber = 25,
-    kHealDisplayFieldNumber = 26,
+    kTargetSelectModeFieldNumber = 12,
+    kIsKillerSkillFieldNumber = 9,
+    kDisableMoveFieldNumber = 10,
+    kNeedFightStateFieldNumber = 19,
+    kOrientTargetTypeFieldNumber = 13,
+    kOrientTargetIdFieldNumber = 14,
+    kTargetCampFieldNumber = 15,
+    kUseDistanceFieldNumber = 16,
+    kHateToTargetFieldNumber = 17,
+    kHateToEnemyFieldNumber = 18,
+    kRotModeFieldNumber = 20,
+    kDamageRateFieldNumber = 21,
+    kDamageValueFieldNumber = 22,
+    kCorrectionRateFieldNumber = 24,
+    kEffectCountFieldNumber = 25,
+    kDamageDisplayFieldNumber = 26,
+    kHealDisplayFieldNumber = 27,
   };
   // string remark = 2 [json_name = "remark", (.pandora.config.v1.excel_col) = "\345\244\207\346\263\250"];
   void clear_remark() ;
@@ -311,7 +312,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   ::std::string* PROTOBUF_NONNULL _internal_mutable_icon();
 
   public:
-  // string ability_path = 10 [json_name = "abilityPath", (.pandora.config.v1.excel_col) = "\350\203\275\345\212\233\350\265\204\346\272\220", (.pandora.config.v1.excel_required) = true, (.pandora.config.v1.excel_prefix) = "/"];
+  // string ability_path = 11 [json_name = "abilityPath", (.pandora.config.v1.excel_col) = "\350\203\275\345\212\233\350\265\204\346\272\220", (.pandora.config.v1.excel_required) = true, (.pandora.config.v1.excel_prefix) = "/"];
   void clear_ability_path() ;
   [[nodiscard]] const ::std::string& ability_path() const;
   template <typename Arg_ = const ::std::string&, typename... Args_>
@@ -326,7 +327,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   ::std::string* PROTOBUF_NONNULL _internal_mutable_ability_path();
 
   public:
-  // string apply_buffs_to_self = 22 [json_name = "applyBuffsToSelf", (.pandora.config.v1.excel_col) = "\345\257\271\350\207\252\350\272\253\345\272\224\347\224\250Buff"];
+  // string apply_buffs_to_self = 23 [json_name = "applyBuffsToSelf", (.pandora.config.v1.excel_col) = "\345\257\271\350\207\252\350\272\253\345\272\224\347\224\250Buff"];
   void clear_apply_buffs_to_self() ;
   [[nodiscard]] const ::std::string& apply_buffs_to_self() const;
   template <typename Arg_ = const ::std::string&, typename... Args_>
@@ -341,7 +342,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   ::std::string* PROTOBUF_NONNULL _internal_mutable_apply_buffs_to_self();
 
   public:
-  // string effect_description = 27 [json_name = "effectDescription", (.pandora.config.v1.excel_col) = "\346\225\210\346\236\234\350\257\264\346\230\216"];
+  // string effect_description = 28 [json_name = "effectDescription", (.pandora.config.v1.excel_col) = "\346\225\210\346\236\234\350\257\264\346\230\216"];
   void clear_effect_description() ;
   [[nodiscard]] const ::std::string& effect_description() const;
   template <typename Arg_ = const ::std::string&, typename... Args_>
@@ -406,7 +407,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_cd_duration(float value);
 
   public:
-  // uint32 target_select_mode = 11 [json_name = "targetSelectMode", (.pandora.config.v1.excel_col) = "\347\233\256\346\240\207\351\200\211\346\213\251\346\250\241\345\274\217"];
+  // uint32 target_select_mode = 12 [json_name = "targetSelectMode", (.pandora.config.v1.excel_col) = "\347\233\256\346\240\207\351\200\211\346\213\251\346\250\241\345\274\217"];
   void clear_target_select_mode() ;
   [[nodiscard]] ::uint32_t target_select_mode() const;
   void set_target_select_mode(::uint32_t value);
@@ -416,27 +417,17 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_target_select_mode(::uint32_t value);
 
   public:
-  // uint32 orient_target_type = 12 [json_name = "orientTargetType", (.pandora.config.v1.excel_col) = "\346\226\271\344\275\215\347\261\273\345\236\213"];
-  void clear_orient_target_type() ;
-  [[nodiscard]] ::uint32_t orient_target_type() const;
-  void set_orient_target_type(::uint32_t value);
+  // bool is_killer_skill = 9 [json_name = "isKillerSkill", (.pandora.config.v1.excel_col) = "\345\277\205\346\235\200\346\212\200"];
+  void clear_is_killer_skill() ;
+  [[nodiscard]] bool is_killer_skill() const;
+  void set_is_killer_skill(bool value);
 
   private:
-  ::uint32_t _internal_orient_target_type() const;
-  void _internal_set_orient_target_type(::uint32_t value);
+  bool _internal_is_killer_skill() const;
+  void _internal_set_is_killer_skill(bool value);
 
   public:
-  // uint32 orient_target_id = 13 [json_name = "orientTargetId", (.pandora.config.v1.excel_col) = "\346\226\271\344\275\215\351\205\215\347\275\256Id"];
-  void clear_orient_target_id() ;
-  [[nodiscard]] ::uint32_t orient_target_id() const;
-  void set_orient_target_id(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_orient_target_id() const;
-  void _internal_set_orient_target_id(::uint32_t value);
-
-  public:
-  // bool disable_move = 9 [json_name = "disableMove", (.pandora.config.v1.excel_col) = "\347\246\201\346\255\242\347\247\273\345\212\250"];
+  // bool disable_move = 10 [json_name = "disableMove", (.pandora.config.v1.excel_col) = "\347\246\201\346\255\242\347\247\273\345\212\250"];
   void clear_disable_move() ;
   [[nodiscard]] bool disable_move() const;
   void set_disable_move(bool value);
@@ -446,7 +437,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_disable_move(bool value);
 
   public:
-  // bool need_fight_state = 18 [json_name = "needFightState", (.pandora.config.v1.excel_col) = "\351\234\200\350\246\201\346\210\230\346\226\227\347\212\266\346\200\201"];
+  // bool need_fight_state = 19 [json_name = "needFightState", (.pandora.config.v1.excel_col) = "\351\234\200\350\246\201\346\210\230\346\226\227\347\212\266\346\200\201"];
   void clear_need_fight_state() ;
   [[nodiscard]] bool need_fight_state() const;
   void set_need_fight_state(bool value);
@@ -456,7 +447,27 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_need_fight_state(bool value);
 
   public:
-  // uint32 target_camp = 14 [json_name = "targetCamp", (.pandora.config.v1.excel_col) = "\351\230\265\350\220\245"];
+  // uint32 orient_target_type = 13 [json_name = "orientTargetType", (.pandora.config.v1.excel_col) = "\346\226\271\344\275\215\347\261\273\345\236\213"];
+  void clear_orient_target_type() ;
+  [[nodiscard]] ::uint32_t orient_target_type() const;
+  void set_orient_target_type(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_orient_target_type() const;
+  void _internal_set_orient_target_type(::uint32_t value);
+
+  public:
+  // uint32 orient_target_id = 14 [json_name = "orientTargetId", (.pandora.config.v1.excel_col) = "\346\226\271\344\275\215\351\205\215\347\275\256Id"];
+  void clear_orient_target_id() ;
+  [[nodiscard]] ::uint32_t orient_target_id() const;
+  void set_orient_target_id(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_orient_target_id() const;
+  void _internal_set_orient_target_id(::uint32_t value);
+
+  public:
+  // uint32 target_camp = 15 [json_name = "targetCamp", (.pandora.config.v1.excel_col) = "\351\230\265\350\220\245"];
   void clear_target_camp() ;
   [[nodiscard]] ::uint32_t target_camp() const;
   void set_target_camp(::uint32_t value);
@@ -466,7 +477,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_target_camp(::uint32_t value);
 
   public:
-  // float use_distance = 15 [json_name = "useDistance", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\346\226\275\346\224\276\350\214\203\345\233\264"];
+  // float use_distance = 16 [json_name = "useDistance", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\346\226\275\346\224\276\350\214\203\345\233\264"];
   void clear_use_distance() ;
   [[nodiscard]] float use_distance() const;
   void set_use_distance(float value);
@@ -476,7 +487,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_use_distance(float value);
 
   public:
-  // float hate_to_target = 16 [json_name = "hateToTarget", (.pandora.config.v1.excel_col) = "\345\257\271\347\233\256\346\240\207\344\273\207\346\201\250\345\200\274"];
+  // float hate_to_target = 17 [json_name = "hateToTarget", (.pandora.config.v1.excel_col) = "\345\257\271\347\233\256\346\240\207\344\273\207\346\201\250\345\200\274"];
   void clear_hate_to_target() ;
   [[nodiscard]] float hate_to_target() const;
   void set_hate_to_target(float value);
@@ -486,7 +497,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_hate_to_target(float value);
 
   public:
-  // float hate_to_enemy = 17 [json_name = "hateToEnemy", (.pandora.config.v1.excel_col) = "\345\257\271\346\225\214\344\272\272\344\273\207\346\201\250\345\200\274"];
+  // float hate_to_enemy = 18 [json_name = "hateToEnemy", (.pandora.config.v1.excel_col) = "\345\257\271\346\225\214\344\272\272\344\273\207\346\201\250\345\200\274"];
   void clear_hate_to_enemy() ;
   [[nodiscard]] float hate_to_enemy() const;
   void set_hate_to_enemy(float value);
@@ -496,7 +507,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_hate_to_enemy(float value);
 
   public:
-  // uint32 rot_mode = 19 [json_name = "rotMode", (.pandora.config.v1.excel_col) = "\350\275\254\345\220\221\346\250\241\345\274\217"];
+  // uint32 rot_mode = 20 [json_name = "rotMode", (.pandora.config.v1.excel_col) = "\350\275\254\345\220\221\346\250\241\345\274\217"];
   void clear_rot_mode() ;
   [[nodiscard]] ::uint32_t rot_mode() const;
   void set_rot_mode(::uint32_t value);
@@ -506,7 +517,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_rot_mode(::uint32_t value);
 
   public:
-  // float damage_rate = 20 [json_name = "damageRate", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\344\274\244\345\256\263\347\263\273\346\225\260"];
+  // float damage_rate = 21 [json_name = "damageRate", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\344\274\244\345\256\263\347\263\273\346\225\260"];
   void clear_damage_rate() ;
   [[nodiscard]] float damage_rate() const;
   void set_damage_rate(float value);
@@ -516,7 +527,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_damage_rate(float value);
 
   public:
-  // float damage_value = 21 [json_name = "damageValue", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\344\274\244\345\256\263\345\233\272\345\256\232\345\200\274"];
+  // float damage_value = 22 [json_name = "damageValue", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\344\274\244\345\256\263\345\233\272\345\256\232\345\200\274"];
   void clear_damage_value() ;
   [[nodiscard]] float damage_value() const;
   void set_damage_value(float value);
@@ -526,7 +537,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_damage_value(float value);
 
   public:
-  // float correction_rate = 23 [json_name = "correctionRate", (.pandora.config.v1.excel_col) = "\344\277\256\346\255\243\347\263\273\346\225\260"];
+  // float correction_rate = 24 [json_name = "correctionRate", (.pandora.config.v1.excel_col) = "\344\277\256\346\255\243\347\263\273\346\225\260"];
   void clear_correction_rate() ;
   [[nodiscard]] float correction_rate() const;
   void set_correction_rate(float value);
@@ -536,7 +547,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_correction_rate(float value);
 
   public:
-  // uint32 effect_count = 24 [json_name = "effectCount", (.pandora.config.v1.excel_col) = "\347\224\237\346\225\210\346\254\241\346\225\260"];
+  // uint32 effect_count = 25 [json_name = "effectCount", (.pandora.config.v1.excel_col) = "\347\224\237\346\225\210\346\254\241\346\225\260"];
   void clear_effect_count() ;
   [[nodiscard]] ::uint32_t effect_count() const;
   void set_effect_count(::uint32_t value);
@@ -546,7 +557,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_effect_count(::uint32_t value);
 
   public:
-  // uint32 damage_display = 25 [json_name = "damageDisplay", (.pandora.config.v1.excel_col) = "\344\274\244\345\256\263\346\230\276\347\244\272"];
+  // uint32 damage_display = 26 [json_name = "damageDisplay", (.pandora.config.v1.excel_col) = "\344\274\244\345\256\263\346\230\276\347\244\272"];
   void clear_damage_display() ;
   [[nodiscard]] ::uint32_t damage_display() const;
   void set_damage_display(::uint32_t value);
@@ -556,7 +567,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
   void _internal_set_damage_display(::uint32_t value);
 
   public:
-  // uint32 heal_display = 26 [json_name = "healDisplay", (.pandora.config.v1.excel_col) = "\346\262\273\347\226\227\346\230\276\347\244\272"];
+  // uint32 heal_display = 27 [json_name = "healDisplay", (.pandora.config.v1.excel_col) = "\346\262\273\347\226\227\346\230\276\347\244\272"];
   void clear_heal_display() ;
   [[nodiscard]] ::uint32_t heal_display() const;
   void set_heal_display(::uint32_t value);
@@ -570,7 +581,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<5, 27,
+      ::google::protobuf::internal::TcParseTable<5, 28,
                           0, 122,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
@@ -611,10 +622,11 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SkillRow final : public ::google::p
     ::uint32_t cd_timing_;
     float cd_duration_;
     ::uint32_t target_select_mode_;
-    ::uint32_t orient_target_type_;
-    ::uint32_t orient_target_id_;
+    bool is_killer_skill_;
     bool disable_move_;
     bool need_fight_state_;
+    ::uint32_t orient_target_type_;
+    ::uint32_t orient_target_id_;
     ::uint32_t target_camp_;
     float use_distance_;
     float hate_to_target_;
@@ -1172,11 +1184,35 @@ inline void SkillRow::_internal_set_cd_duration(float value) {
   _impl_.cd_duration_ = value;
 }
 
-// bool disable_move = 9 [json_name = "disableMove", (.pandora.config.v1.excel_col) = "\347\246\201\346\255\242\347\247\273\345\212\250"];
+// bool is_killer_skill = 9 [json_name = "isKillerSkill", (.pandora.config.v1.excel_col) = "\345\277\205\346\235\200\346\212\200"];
+inline void SkillRow::clear_is_killer_skill() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.is_killer_skill_ = false;
+  ClearHasBit(_impl_._has_bits_[0], 0x00001000U);
+}
+inline bool SkillRow::is_killer_skill() const {
+  // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.is_killer_skill)
+  return _internal_is_killer_skill();
+}
+inline void SkillRow::set_is_killer_skill(bool value) {
+  _internal_set_is_killer_skill(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00001000U);
+  // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.is_killer_skill)
+}
+inline bool SkillRow::_internal_is_killer_skill() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.is_killer_skill_;
+}
+inline void SkillRow::_internal_set_is_killer_skill(bool value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.is_killer_skill_ = value;
+}
+
+// bool disable_move = 10 [json_name = "disableMove", (.pandora.config.v1.excel_col) = "\347\246\201\346\255\242\347\247\273\345\212\250"];
 inline void SkillRow::clear_disable_move() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.disable_move_ = false;
-  ClearHasBit(_impl_._has_bits_[0], 0x00004000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00002000U);
 }
 inline bool SkillRow::disable_move() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.disable_move)
@@ -1184,7 +1220,7 @@ inline bool SkillRow::disable_move() const {
 }
 inline void SkillRow::set_disable_move(bool value) {
   _internal_set_disable_move(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00004000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00002000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.disable_move)
 }
 inline bool SkillRow::_internal_disable_move() const {
@@ -1196,7 +1232,7 @@ inline void SkillRow::_internal_set_disable_move(bool value) {
   _impl_.disable_move_ = value;
 }
 
-// string ability_path = 10 [json_name = "abilityPath", (.pandora.config.v1.excel_col) = "\350\203\275\345\212\233\350\265\204\346\272\220", (.pandora.config.v1.excel_required) = true, (.pandora.config.v1.excel_prefix) = "/"];
+// string ability_path = 11 [json_name = "abilityPath", (.pandora.config.v1.excel_col) = "\350\203\275\345\212\233\350\265\204\346\272\220", (.pandora.config.v1.excel_required) = true, (.pandora.config.v1.excel_prefix) = "/"];
 inline void SkillRow::clear_ability_path() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.ability_path_.ClearToEmpty();
@@ -1260,7 +1296,7 @@ inline void SkillRow::set_allocated_ability_path(::std::string* PROTOBUF_NULLABL
   // @@protoc_insertion_point(field_set_allocated:pandora.config.v1.SkillRow.ability_path)
 }
 
-// uint32 target_select_mode = 11 [json_name = "targetSelectMode", (.pandora.config.v1.excel_col) = "\347\233\256\346\240\207\351\200\211\346\213\251\346\250\241\345\274\217"];
+// uint32 target_select_mode = 12 [json_name = "targetSelectMode", (.pandora.config.v1.excel_col) = "\347\233\256\346\240\207\351\200\211\346\213\251\346\250\241\345\274\217"];
 inline void SkillRow::clear_target_select_mode() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.target_select_mode_ = 0u;
@@ -1284,11 +1320,11 @@ inline void SkillRow::_internal_set_target_select_mode(::uint32_t value) {
   _impl_.target_select_mode_ = value;
 }
 
-// uint32 orient_target_type = 12 [json_name = "orientTargetType", (.pandora.config.v1.excel_col) = "\346\226\271\344\275\215\347\261\273\345\236\213"];
+// uint32 orient_target_type = 13 [json_name = "orientTargetType", (.pandora.config.v1.excel_col) = "\346\226\271\344\275\215\347\261\273\345\236\213"];
 inline void SkillRow::clear_orient_target_type() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.orient_target_type_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00001000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00008000U);
 }
 inline ::uint32_t SkillRow::orient_target_type() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.orient_target_type)
@@ -1296,7 +1332,7 @@ inline ::uint32_t SkillRow::orient_target_type() const {
 }
 inline void SkillRow::set_orient_target_type(::uint32_t value) {
   _internal_set_orient_target_type(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00001000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00008000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.orient_target_type)
 }
 inline ::uint32_t SkillRow::_internal_orient_target_type() const {
@@ -1308,11 +1344,11 @@ inline void SkillRow::_internal_set_orient_target_type(::uint32_t value) {
   _impl_.orient_target_type_ = value;
 }
 
-// uint32 orient_target_id = 13 [json_name = "orientTargetId", (.pandora.config.v1.excel_col) = "\346\226\271\344\275\215\351\205\215\347\275\256Id"];
+// uint32 orient_target_id = 14 [json_name = "orientTargetId", (.pandora.config.v1.excel_col) = "\346\226\271\344\275\215\351\205\215\347\275\256Id"];
 inline void SkillRow::clear_orient_target_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.orient_target_id_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00002000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00010000U);
 }
 inline ::uint32_t SkillRow::orient_target_id() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.orient_target_id)
@@ -1320,7 +1356,7 @@ inline ::uint32_t SkillRow::orient_target_id() const {
 }
 inline void SkillRow::set_orient_target_id(::uint32_t value) {
   _internal_set_orient_target_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00002000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00010000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.orient_target_id)
 }
 inline ::uint32_t SkillRow::_internal_orient_target_id() const {
@@ -1332,11 +1368,11 @@ inline void SkillRow::_internal_set_orient_target_id(::uint32_t value) {
   _impl_.orient_target_id_ = value;
 }
 
-// uint32 target_camp = 14 [json_name = "targetCamp", (.pandora.config.v1.excel_col) = "\351\230\265\350\220\245"];
+// uint32 target_camp = 15 [json_name = "targetCamp", (.pandora.config.v1.excel_col) = "\351\230\265\350\220\245"];
 inline void SkillRow::clear_target_camp() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.target_camp_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00010000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00020000U);
 }
 inline ::uint32_t SkillRow::target_camp() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.target_camp)
@@ -1344,7 +1380,7 @@ inline ::uint32_t SkillRow::target_camp() const {
 }
 inline void SkillRow::set_target_camp(::uint32_t value) {
   _internal_set_target_camp(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00010000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00020000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.target_camp)
 }
 inline ::uint32_t SkillRow::_internal_target_camp() const {
@@ -1356,11 +1392,11 @@ inline void SkillRow::_internal_set_target_camp(::uint32_t value) {
   _impl_.target_camp_ = value;
 }
 
-// float use_distance = 15 [json_name = "useDistance", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\346\226\275\346\224\276\350\214\203\345\233\264"];
+// float use_distance = 16 [json_name = "useDistance", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\346\226\275\346\224\276\350\214\203\345\233\264"];
 inline void SkillRow::clear_use_distance() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.use_distance_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00020000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00040000U);
 }
 inline float SkillRow::use_distance() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.use_distance)
@@ -1368,7 +1404,7 @@ inline float SkillRow::use_distance() const {
 }
 inline void SkillRow::set_use_distance(float value) {
   _internal_set_use_distance(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00020000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00040000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.use_distance)
 }
 inline float SkillRow::_internal_use_distance() const {
@@ -1380,11 +1416,11 @@ inline void SkillRow::_internal_set_use_distance(float value) {
   _impl_.use_distance_ = value;
 }
 
-// float hate_to_target = 16 [json_name = "hateToTarget", (.pandora.config.v1.excel_col) = "\345\257\271\347\233\256\346\240\207\344\273\207\346\201\250\345\200\274"];
+// float hate_to_target = 17 [json_name = "hateToTarget", (.pandora.config.v1.excel_col) = "\345\257\271\347\233\256\346\240\207\344\273\207\346\201\250\345\200\274"];
 inline void SkillRow::clear_hate_to_target() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.hate_to_target_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00040000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00080000U);
 }
 inline float SkillRow::hate_to_target() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.hate_to_target)
@@ -1392,7 +1428,7 @@ inline float SkillRow::hate_to_target() const {
 }
 inline void SkillRow::set_hate_to_target(float value) {
   _internal_set_hate_to_target(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00040000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00080000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.hate_to_target)
 }
 inline float SkillRow::_internal_hate_to_target() const {
@@ -1404,11 +1440,11 @@ inline void SkillRow::_internal_set_hate_to_target(float value) {
   _impl_.hate_to_target_ = value;
 }
 
-// float hate_to_enemy = 17 [json_name = "hateToEnemy", (.pandora.config.v1.excel_col) = "\345\257\271\346\225\214\344\272\272\344\273\207\346\201\250\345\200\274"];
+// float hate_to_enemy = 18 [json_name = "hateToEnemy", (.pandora.config.v1.excel_col) = "\345\257\271\346\225\214\344\272\272\344\273\207\346\201\250\345\200\274"];
 inline void SkillRow::clear_hate_to_enemy() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.hate_to_enemy_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00080000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00100000U);
 }
 inline float SkillRow::hate_to_enemy() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.hate_to_enemy)
@@ -1416,7 +1452,7 @@ inline float SkillRow::hate_to_enemy() const {
 }
 inline void SkillRow::set_hate_to_enemy(float value) {
   _internal_set_hate_to_enemy(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00080000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00100000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.hate_to_enemy)
 }
 inline float SkillRow::_internal_hate_to_enemy() const {
@@ -1428,11 +1464,11 @@ inline void SkillRow::_internal_set_hate_to_enemy(float value) {
   _impl_.hate_to_enemy_ = value;
 }
 
-// bool need_fight_state = 18 [json_name = "needFightState", (.pandora.config.v1.excel_col) = "\351\234\200\350\246\201\346\210\230\346\226\227\347\212\266\346\200\201"];
+// bool need_fight_state = 19 [json_name = "needFightState", (.pandora.config.v1.excel_col) = "\351\234\200\350\246\201\346\210\230\346\226\227\347\212\266\346\200\201"];
 inline void SkillRow::clear_need_fight_state() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.need_fight_state_ = false;
-  ClearHasBit(_impl_._has_bits_[0], 0x00008000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00004000U);
 }
 inline bool SkillRow::need_fight_state() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.need_fight_state)
@@ -1440,7 +1476,7 @@ inline bool SkillRow::need_fight_state() const {
 }
 inline void SkillRow::set_need_fight_state(bool value) {
   _internal_set_need_fight_state(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00008000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00004000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.need_fight_state)
 }
 inline bool SkillRow::_internal_need_fight_state() const {
@@ -1452,11 +1488,11 @@ inline void SkillRow::_internal_set_need_fight_state(bool value) {
   _impl_.need_fight_state_ = value;
 }
 
-// uint32 rot_mode = 19 [json_name = "rotMode", (.pandora.config.v1.excel_col) = "\350\275\254\345\220\221\346\250\241\345\274\217"];
+// uint32 rot_mode = 20 [json_name = "rotMode", (.pandora.config.v1.excel_col) = "\350\275\254\345\220\221\346\250\241\345\274\217"];
 inline void SkillRow::clear_rot_mode() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.rot_mode_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00100000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00200000U);
 }
 inline ::uint32_t SkillRow::rot_mode() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.rot_mode)
@@ -1464,7 +1500,7 @@ inline ::uint32_t SkillRow::rot_mode() const {
 }
 inline void SkillRow::set_rot_mode(::uint32_t value) {
   _internal_set_rot_mode(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00100000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00200000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.rot_mode)
 }
 inline ::uint32_t SkillRow::_internal_rot_mode() const {
@@ -1476,11 +1512,11 @@ inline void SkillRow::_internal_set_rot_mode(::uint32_t value) {
   _impl_.rot_mode_ = value;
 }
 
-// float damage_rate = 20 [json_name = "damageRate", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\344\274\244\345\256\263\347\263\273\346\225\260"];
+// float damage_rate = 21 [json_name = "damageRate", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\344\274\244\345\256\263\347\263\273\346\225\260"];
 inline void SkillRow::clear_damage_rate() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.damage_rate_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00200000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00400000U);
 }
 inline float SkillRow::damage_rate() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.damage_rate)
@@ -1488,7 +1524,7 @@ inline float SkillRow::damage_rate() const {
 }
 inline void SkillRow::set_damage_rate(float value) {
   _internal_set_damage_rate(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00200000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00400000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.damage_rate)
 }
 inline float SkillRow::_internal_damage_rate() const {
@@ -1500,11 +1536,11 @@ inline void SkillRow::_internal_set_damage_rate(float value) {
   _impl_.damage_rate_ = value;
 }
 
-// float damage_value = 21 [json_name = "damageValue", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\344\274\244\345\256\263\345\233\272\345\256\232\345\200\274"];
+// float damage_value = 22 [json_name = "damageValue", (.pandora.config.v1.excel_col) = "\346\212\200\350\203\275\344\274\244\345\256\263\345\233\272\345\256\232\345\200\274"];
 inline void SkillRow::clear_damage_value() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.damage_value_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00400000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00800000U);
 }
 inline float SkillRow::damage_value() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.damage_value)
@@ -1512,7 +1548,7 @@ inline float SkillRow::damage_value() const {
 }
 inline void SkillRow::set_damage_value(float value) {
   _internal_set_damage_value(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00400000U);
+  SetHasBit(_impl_._has_bits_[0], 0x00800000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.damage_value)
 }
 inline float SkillRow::_internal_damage_value() const {
@@ -1524,7 +1560,7 @@ inline void SkillRow::_internal_set_damage_value(float value) {
   _impl_.damage_value_ = value;
 }
 
-// string apply_buffs_to_self = 22 [json_name = "applyBuffsToSelf", (.pandora.config.v1.excel_col) = "\345\257\271\350\207\252\350\272\253\345\272\224\347\224\250Buff"];
+// string apply_buffs_to_self = 23 [json_name = "applyBuffsToSelf", (.pandora.config.v1.excel_col) = "\345\257\271\350\207\252\350\272\253\345\272\224\347\224\250Buff"];
 inline void SkillRow::clear_apply_buffs_to_self() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.apply_buffs_to_self_.ClearToEmpty();
@@ -1588,11 +1624,11 @@ inline void SkillRow::set_allocated_apply_buffs_to_self(::std::string* PROTOBUF_
   // @@protoc_insertion_point(field_set_allocated:pandora.config.v1.SkillRow.apply_buffs_to_self)
 }
 
-// float correction_rate = 23 [json_name = "correctionRate", (.pandora.config.v1.excel_col) = "\344\277\256\346\255\243\347\263\273\346\225\260"];
+// float correction_rate = 24 [json_name = "correctionRate", (.pandora.config.v1.excel_col) = "\344\277\256\346\255\243\347\263\273\346\225\260"];
 inline void SkillRow::clear_correction_rate() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.correction_rate_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00800000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x01000000U);
 }
 inline float SkillRow::correction_rate() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.correction_rate)
@@ -1600,7 +1636,7 @@ inline float SkillRow::correction_rate() const {
 }
 inline void SkillRow::set_correction_rate(float value) {
   _internal_set_correction_rate(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00800000U);
+  SetHasBit(_impl_._has_bits_[0], 0x01000000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.correction_rate)
 }
 inline float SkillRow::_internal_correction_rate() const {
@@ -1612,11 +1648,11 @@ inline void SkillRow::_internal_set_correction_rate(float value) {
   _impl_.correction_rate_ = value;
 }
 
-// uint32 effect_count = 24 [json_name = "effectCount", (.pandora.config.v1.excel_col) = "\347\224\237\346\225\210\346\254\241\346\225\260"];
+// uint32 effect_count = 25 [json_name = "effectCount", (.pandora.config.v1.excel_col) = "\347\224\237\346\225\210\346\254\241\346\225\260"];
 inline void SkillRow::clear_effect_count() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.effect_count_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x01000000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x02000000U);
 }
 inline ::uint32_t SkillRow::effect_count() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.effect_count)
@@ -1624,7 +1660,7 @@ inline ::uint32_t SkillRow::effect_count() const {
 }
 inline void SkillRow::set_effect_count(::uint32_t value) {
   _internal_set_effect_count(value);
-  SetHasBit(_impl_._has_bits_[0], 0x01000000U);
+  SetHasBit(_impl_._has_bits_[0], 0x02000000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.effect_count)
 }
 inline ::uint32_t SkillRow::_internal_effect_count() const {
@@ -1636,11 +1672,11 @@ inline void SkillRow::_internal_set_effect_count(::uint32_t value) {
   _impl_.effect_count_ = value;
 }
 
-// uint32 damage_display = 25 [json_name = "damageDisplay", (.pandora.config.v1.excel_col) = "\344\274\244\345\256\263\346\230\276\347\244\272"];
+// uint32 damage_display = 26 [json_name = "damageDisplay", (.pandora.config.v1.excel_col) = "\344\274\244\345\256\263\346\230\276\347\244\272"];
 inline void SkillRow::clear_damage_display() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.damage_display_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x02000000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x04000000U);
 }
 inline ::uint32_t SkillRow::damage_display() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.damage_display)
@@ -1648,7 +1684,7 @@ inline ::uint32_t SkillRow::damage_display() const {
 }
 inline void SkillRow::set_damage_display(::uint32_t value) {
   _internal_set_damage_display(value);
-  SetHasBit(_impl_._has_bits_[0], 0x02000000U);
+  SetHasBit(_impl_._has_bits_[0], 0x04000000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.damage_display)
 }
 inline ::uint32_t SkillRow::_internal_damage_display() const {
@@ -1660,11 +1696,11 @@ inline void SkillRow::_internal_set_damage_display(::uint32_t value) {
   _impl_.damage_display_ = value;
 }
 
-// uint32 heal_display = 26 [json_name = "healDisplay", (.pandora.config.v1.excel_col) = "\346\262\273\347\226\227\346\230\276\347\244\272"];
+// uint32 heal_display = 27 [json_name = "healDisplay", (.pandora.config.v1.excel_col) = "\346\262\273\347\226\227\346\230\276\347\244\272"];
 inline void SkillRow::clear_heal_display() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.heal_display_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x04000000U);
+  ClearHasBit(_impl_._has_bits_[0], 0x08000000U);
 }
 inline ::uint32_t SkillRow::heal_display() const {
   // @@protoc_insertion_point(field_get:pandora.config.v1.SkillRow.heal_display)
@@ -1672,7 +1708,7 @@ inline ::uint32_t SkillRow::heal_display() const {
 }
 inline void SkillRow::set_heal_display(::uint32_t value) {
   _internal_set_heal_display(value);
-  SetHasBit(_impl_._has_bits_[0], 0x04000000U);
+  SetHasBit(_impl_._has_bits_[0], 0x08000000U);
   // @@protoc_insertion_point(field_set:pandora.config.v1.SkillRow.heal_display)
 }
 inline ::uint32_t SkillRow::_internal_heal_display() const {
@@ -1684,7 +1720,7 @@ inline void SkillRow::_internal_set_heal_display(::uint32_t value) {
   _impl_.heal_display_ = value;
 }
 
-// string effect_description = 27 [json_name = "effectDescription", (.pandora.config.v1.excel_col) = "\346\225\210\346\236\234\350\257\264\346\230\216"];
+// string effect_description = 28 [json_name = "effectDescription", (.pandora.config.v1.excel_col) = "\346\225\210\346\236\234\350\257\264\346\230\216"];
 inline void SkillRow::clear_effect_description() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.effect_description_.ClearToEmpty();
