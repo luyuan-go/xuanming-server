@@ -455,6 +455,13 @@ class BattleResultUsecase(bprog.ProgressMixin):
             )
             raise
 
+        # DS 上报的金币先**就地**钳到服务端上限,再落战绩与出箱(§9.6 数值不信 DS)。
+        #
+        # 必须钳完写回 result:battle_player_stats 与钱包发放读的是同一份 stats,
+        # 只在出箱侧钳的话,战绩表会记着"本局 999 亿金币"而钱包只加了 100 万 ——
+        # 玩家看战报会认为系统吞了收益,客服无从解释。
+        self._clamp_reported_gold(result)
+
         # 战斗掉落出箱:正常结算才发放;ABANDONED(DS 崩溃补偿)不产出掉落。
         drop_outbox = [] if abandoned else self._build_drop_outbox(result)
 
@@ -520,13 +527,7 @@ class BattleResultUsecase(bprog.ProgressMixin):
         )
 
         reconcile_progress(result.match_id, final_progress_seq, settle_info)
-        if settle_info.drops_suppressed and drop_outbox:
-            plog.get().info(
-                "battle_drop_suppressed_by_progress",
-                match_id=result.match_id,
-                audit_rows=len(drop_outbox),
-                hint="本场掉落已经实时通道逐事件发放,结算掉落字段仅审计",
-            )
+        log_drop_suppression(result.match_id, drop_outbox, settle_info.drops_suppressed)
         return False
 
     # ── HandleAbandoned:DS 崩溃补偿 ───────────────────────────────────────
@@ -718,20 +719,72 @@ class BattleResultUsecase(bprog.ProgressMixin):
             recs.append(brepo.OutboxRecord(player_id=s.player_id, payload=payload))
         return recs
 
+    def _clamp_reported_gold(self, result: battle_pb2.BattleResult) -> None:
+        """把 DS 上报的每玩家金币**就地**钳到服务端上限(§9.6 数值不信 DS)。
+
+        超限只截断不拒整场:战绩落库失败会连带段位、任务、掉落一起丢,代价远大于
+        少发点钱;但每次截断都留 Warn,异常 / 越权上报的 DS 照样可发现。
+
+        ★ 负数也必须钳成 0。Go 侧 gold 是 uint64,负数表示不出来所以那边只要管上界;
+        Python 从 pb 读出来的虽也是非负,但 biz 层被单测 / 内部调用直接塞负数时,
+        负金币会一路走进 GrantItems 的扣款语义 —— 下界闸不能跟着 Go 一起省掉。
+        """
+        max_gold = self._cfg.max_battle_gold_per_player()
+        for s in result.stats:
+            if s.gold < 0:
+                plog.get().warning(
+                    "battle_gold_negative",
+                    match_id=result.match_id,
+                    player_id=s.player_id,
+                    reported=s.gold,
+                    hint="DS 上报负金币(只可能是 bug 或伪造),已归零",
+                )
+                s.gold = 0
+                continue
+            if s.gold <= max_gold:
+                continue
+            plog.get().warning(
+                "battle_gold_truncated",
+                match_id=result.match_id,
+                player_id=s.player_id,
+                reported=s.gold,
+                kept=max_gold,
+                hint="DS 上报金币超服务端上限(配置错误或越权上报)",
+            )
+            s.gold = max_gold
+
     def _build_drop_outbox(
         self, result: battle_pb2.BattleResult
     ) -> list[brepo.DropOutboxRecord]:
-        """把每个玩家的战斗掉落组装成 drop 出箱记录(与落库同事务)。
+        """把每个玩家的战斗掉落**与本局金币**组装成 drop 出箱记录(与落库同事务)。
 
         DS 不可信:逐条按同源 drop×item 过滤 DS 上报的 dropped_item_config_ids,
         item/drop 缺失一律 fail-closed。每玩家最多保留 cfg.max_drops_per_player() 条 ——
         防异常/恶意 DS 重复上报海量 ID 撑爆 VARCHAR(512) 导致**整场结算回滚**。
+
+        ★ 金币搭的是**同一条**战后发放出箱:同一套幂等键、同一套重试、同一套审计,
+          不另起一条"金币专用发放链"(§15.2 最少复杂度)。此前 PlayerStats.gold 只写进
+          battle_player_stats 战绩表、**从来没有进过玩家钱包**,战后的"获得 N 金币"
+          是纯展示 —— 而且不报错,查不出来。
+
+        金币与掉落是**独立**收益来源:没掉落、或掉落全被过滤,都不能顺手把金币也丢掉。
         """
         max_drops = self._cfg.max_drops_per_player()
         recs: list[brepo.DropOutboxRecord] = []
         for s in result.stats:
+            # 值已由 _clamp_reported_gold 钳过上限,这里直接用(出箱行是**已裁决的事实**)。
+            gold_granted = s.gold
             reported = list(s.dropped_item_config_ids)
             if not reported:
+                # 没掉落但有金币:仍要出一条只带货币的行,否则金币照旧发不出去。
+                if gold_granted > 0:
+                    recs.append(
+                        brepo.DropOutboxRecord(
+                            player_id=s.player_id,
+                            item_config_ids=[],
+                            currency_amount=gold_granted,
+                        )
+                    )
                 continue
             allowed: list[int] = []
             stacks: list[int] = []
@@ -776,6 +829,15 @@ class BattleResultUsecase(bprog.ProgressMixin):
                     sample_item_config_id=sample_filtered_id,
                     hint="item/drop 表漏配该 ID(改表)或 DS 上报未授权掉落(安全信号)",
                 )
+                # 掉落全被过滤不代表金币也该丢:两者是独立的收益来源。
+                if gold_granted > 0:
+                    recs.append(
+                        brepo.DropOutboxRecord(
+                            player_id=s.player_id,
+                            item_config_ids=[],
+                            currency_amount=gold_granted,
+                        )
+                    )
                 continue
             recs.append(
                 brepo.DropOutboxRecord(
@@ -783,6 +845,7 @@ class BattleResultUsecase(bprog.ProgressMixin):
                     item_config_ids=allowed,
                     stack_item_config_ids=stacks,
                     instance_item_config_ids=instances,
+                    currency_amount=gold_granted,
                 )
             )
         return recs
@@ -953,6 +1016,7 @@ class BattleResultUsecase(bprog.ProgressMixin):
                         items=len(r.item_config_ids),
                         stack_items=len(r.stack_item_config_ids),
                         instance_items=len(r.instance_item_config_ids),
+                        currency_amount=r.currency_amount,
                         idempotency_key=key,
                         elapsed_ms=int((time.monotonic() - row_started) * 1000),
                         code=errcode.as_code(exc),
@@ -987,6 +1051,9 @@ class BattleResultUsecase(bprog.ProgressMixin):
                     outbox_id=r.id,
                     stack_items=len(r.stack_item_config_ids),
                     instance_items=len(r.instance_item_config_ids),
+                    # 金币进没进钱包必须在台账上看得见:出箱行删掉之后,
+                    # "这局金币到底发没发"就只能反查 inventory 流水了。
+                    currency_amount=r.currency_amount,
                     idempotency_key=key,
                     elapsed_ms=int((time.monotonic() - row_started) * 1000),
                 )
@@ -1007,16 +1074,23 @@ class BattleResultUsecase(bprog.ProgressMixin):
             aggregate_stack_grants(r.stack_item_config_ids) if r.stack_item_config_ids else []
         )
         instances = list(r.instance_item_config_ids)
-        if not stacks and not instances:
+        currency = r.currency_amount if r.currency_amount > 0 else 0
+        if not stacks and not instances and currency == 0:
             raise errcode.PandoraError(
                 errcode.ErrInvalidState, "drop outbox row has no frozen route id=%d", r.id
             )
+        # 金币与可堆叠道具走同一次 GrantItems:共用一个幂等键、一个事务,不会出现
+        # "道具到了钱没到"。纯金币行(无掉落)也走这条路径。
+        grants_items = bool(stacks) or currency > 0
         base_key = drop_idempotency_key(r.match_id, r.player_id)
         stack_key = instance_key = base_key
-        if stacks and instances:
+        # ★ 分叉判据是"**这一行会不会真的发两次调用**",不是"stacks 和 instances 都非空"。
+        #   按后者判,`金币 + 装备`(stacks 空)两次调用会拿到同一把键 —— inventory 端把
+        #   第二次当重放吞掉,装备静默不发。
+        if grants_items and instances:
             stack_key, instance_key = base_key + ":stack", base_key + ":instance"
-        if stacks:
-            await self._granter.grant_items(r.player_id, stacks, stack_key)
+        if grants_items:
+            await self._granter.grant_items(r.player_id, stacks, currency, stack_key)
         if not instances:
             return
         try:
@@ -1536,6 +1610,57 @@ def prepare_terminal_release(
 def _tr_incomplete() -> errcode.PandoraError:
     return errcode.PandoraError(
         errcode.ErrUnauthorized, "terminal release proof is incomplete or not bound to result"
+    )
+
+
+def log_drop_suppression(
+    match_id: int, built: list[brepo.DropOutboxRecord], drops_suppressed: bool
+) -> None:
+    """记录「实时进度通道已接管道具发放」这一事实。对应 Go 的 logDropSuppression。
+
+    built 是 build_drop_outbox 的**入箱前**列表(save_result 内部才按出箱裁剪规则逐行裁),
+    所以这里能算出「本来要发什么、实际被掐掉了哪一部分」。
+
+    2026-08-24 修字段口径与 Go 对齐:这条日志原先只打 `audit_rows=len(drop_outbox)`,
+    那是个**假字段** —— 它的名字承诺"被跳过的行数",实际值却是"本来要入箱的全部行数",
+    而金币行根本没被跳过(实时通道不发金币,那些行照常入箱、随后 drop_grant_delivered)。
+    排障的人按 audit_rows 会以为这些行都没入箱,正是「修复本身成为下一次误判的源头」。
+    换成可核对的分项后,每个数字都能拿去和出箱表对上:
+      built_rows            入箱裁剪前的行数
+      suppressed_item_rows  真的被掐掉道具的行数
+      suppressed_items      被掐掉的道具件数
+      granted_currency_rows / granted_currency_total  照常入箱的金币行数与总额
+
+    只有**真的掐掉了道具**才打:全是纯金币行时一件道具都没被抑制,打 *_suppressed_*
+    又会是一次同样的名不副实。
+    """
+    if not drops_suppressed or not built:
+        return
+    suppressed_rows = 0
+    suppressed_items = 0
+    currency_rows = 0
+    currency_total = 0
+    for d in built:
+        n = len(d.item_config_ids)
+        if n > 0:
+            suppressed_rows += 1
+            suppressed_items += n
+        if d.currency_amount > 0:
+            currency_rows += 1
+            currency_total += d.currency_amount
+    if suppressed_rows == 0:
+        return
+    plog.get().info(
+        "battle_drop_suppressed_by_progress",
+        match_id=match_id,
+        built_rows=len(built),
+        suppressed_item_rows=suppressed_rows,
+        suppressed_items=suppressed_items,
+        granted_currency_rows=currency_rows,
+        granted_currency_total=currency_total,
+        hint="只有**道具**被抑制(已由实时进度通道逐事件发放,结算字段仅审计);"
+        "金币不走实时通道,granted_currency_rows 行照常入箱,随后同 match_id 会有 "
+        "drop_grant_delivered",
     )
 
 

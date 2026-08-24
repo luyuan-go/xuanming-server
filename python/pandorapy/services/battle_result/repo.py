@@ -6,7 +6,7 @@
     battles                 对局结算头(PK match_id = 幂等键,不变量 §2)
     battle_player_stats     玩家战绩 + MMR 变化(uk match_id+player_id)
     player_update_outbox    段位事件事务出箱(uk match+player)
-    battle_drop_outbox      掉落发放事务出箱(uk match+player;三份冻结 CSV)
+    battle_drop_outbox      掉落发放事务出箱(uk match+player;三份冻结 CSV + 已钳位的本局金币)
     match_release_outbox    撮合状态释放事务出箱(uk match)
     terminal_release_outbox Model-B 终态回收证明(uk match)
     battle_progress_stream  实时进度水位(PK match_id;settled_at_ms>0 = 迟到进度一律拒)
@@ -51,7 +51,9 @@ from pandorapy.services.battle_result import terminal_release_repo as bterminal
 BATTLE_DB = "pandora_battle"
 
 # 缺表提示直接指向迁移产物,省得值班的人翻仓库。
-RECOVERY_SCHEMA_HINT = "apply pandora_battle migration 000003_match_release_outbox"
+RECOVERY_SCHEMA_HINT = (
+    "apply pandora_battle migrations 000003_match_release_outbox + 000011_battle_gold_grant"
+)
 PROGRESS_SCHEMA_HINT = (
     "apply pandora_battle migrations 000005_battle_progress + "
     "000006_battle_progress_player + 000008_battle_progress_stopped"
@@ -87,6 +89,10 @@ class DropOutboxRecord:
     item_config_ids: list[int]
     stack_item_config_ids: list[int] = dataclasses.field(default_factory=list)
     instance_item_config_ids: list[int] = dataclasses.field(default_factory=list)
+    # currency_amount 本局该玩家的金币收益(0 = 无收益)。
+    # 首次入箱时**已过服务端上限闸**冻结,重试既不重读 DS 上报值也不重读热配置 ——
+    # 与 stack/instance 路由同一纪律:出箱行是**已裁决的事实**,不是待裁决的输入。
+    currency_amount: int = 0
     id: int = 0
     match_id: int = 0
 
@@ -244,8 +250,11 @@ class MySQLBattleRepo(bprogress.ProgressRepoMixin, bterminal.TerminalReleaseRepo
             [
                 "SELECT id, match_id, payload, next_attempt_at_ms, attempt_count, created_at_ms "
                 "FROM match_release_outbox LIMIT 0",
+                # currency_amount 是 000011 的产物,必须**列级**探到:缺它时 INSERT 会
+                # 因列数不符在首个结算的事务里炸,而 Pod 那时早已 Ready、流量早已切过来。
                 "SELECT id, match_id, player_id, item_config_ids, stack_item_config_ids, "
-                "instance_item_config_ids, created_at_ms FROM battle_drop_outbox LIMIT 0",
+                "instance_item_config_ids, currency_amount, created_at_ms "
+                "FROM battle_drop_outbox LIMIT 0",
             ],
             "battle recovery outbox schema invalid",
         )
@@ -378,8 +387,14 @@ class MySQLBattleRepo(bprogress.ProgressRepoMixin, bterminal.TerminalReleaseRepo
                         cur, match_id, final_progress_seq, now_ms
                     )
 
-                    if not settle_info.drops_suppressed:
-                        await self._insert_drop_outbox(cur, match_id, drop_outbox, now_ms)
+                    # ★ drops_suppressed 只抑制**掉落**,不抑制金币:
+                    # 水位 >0 表示掉落发放权已归实时进度通道(逐事件发放,防双发),
+                    # 而实时通道**不发金币** —— 金币只有结算这一条路径。整行跳过等于
+                    # 这局的金币直接蒸发,且没有任何报错(和 08-22 之前的老缺陷同形)。
+                    await self._insert_drop_outbox(
+                        cur, match_id, drop_outbox, now_ms,
+                        drops_suppressed=settle_info.drops_suppressed,
+                    )
 
                     if terminal_release is not None:
                         await self._insert_terminal_release(
@@ -555,15 +570,32 @@ class MySQLBattleRepo(bprogress.ProgressRepoMixin, bterminal.TerminalReleaseRepo
                 ) from exc
 
     async def _insert_drop_outbox(  # noqa: ANN001
-        self, cur, match_id: int, drop_outbox: list[DropOutboxRecord], now_ms: int
+        self,
+        cur,
+        match_id: int,
+        drop_outbox: list[DropOutboxRecord],
+        now_ms: int,
+        *,
+        drops_suppressed: bool = False,
     ) -> None:
+        """写掉落出箱行。drops_suppressed=True 时**只写金币,不写掉落**。
+
+        掉落发放权已归实时进度通道时,结算路径再写一遍掉落就是双发;但实时通道不结算
+        金币,所以金币那一半必须照写 —— 否则这局的金币静默蒸发(INSERT 不写列走默认 0
+        与整行跳过是同一种"不报错的丢钱")。
+        """
         sql = (
             "INSERT INTO battle_drop_outbox (match_id, player_id, item_config_ids, "
-            "stack_item_config_ids, instance_item_config_ids, created_at_ms) "
-            "VALUES (%s, %s, %s, %s, %s, %s)"
+            "stack_item_config_ids, instance_item_config_ids, currency_amount, created_at_ms) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)"
         )
         for d in drop_outbox:
-            if not d.item_config_ids:
+            items = [] if drops_suppressed else d.item_config_ids
+            stacks = [] if drops_suppressed else d.stack_item_config_ids
+            instances = [] if drops_suppressed else d.instance_item_config_ids
+            # 判据必须把金币算进来:旧判据 `not d.item_config_ids → continue` 会把
+            # "只有金币、没有掉落"的行整条丢掉(而那正是最常见的一局)。
+            if not items and d.currency_amount <= 0:
                 continue
             try:
                 await cur.execute(
@@ -571,9 +603,10 @@ class MySQLBattleRepo(bprogress.ProgressRepoMixin, bterminal.TerminalReleaseRepo
                     (
                         match_id,
                         d.player_id,
-                        encode_config_ids(d.item_config_ids),
-                        encode_config_ids(d.stack_item_config_ids),
-                        encode_config_ids(d.instance_item_config_ids),
+                        encode_config_ids(items),
+                        encode_config_ids(stacks),
+                        encode_config_ids(instances),
+                        d.currency_amount,
                         now_ms,
                     ),
                 )
@@ -839,7 +872,8 @@ class MySQLBattleRepo(bprogress.ProgressRepoMixin, bterminal.TerminalReleaseRepo
             limit = 128
         rows = await self._query(
             "SELECT id, match_id, player_id, item_config_ids, stack_item_config_ids, "
-            "instance_item_config_ids FROM battle_drop_outbox ORDER BY id ASC LIMIT %s",
+            "instance_item_config_ids, currency_amount "
+            "FROM battle_drop_outbox ORDER BY id ASC LIMIT %s",
             (limit,),
             "query drop outbox",
         )
@@ -851,6 +885,7 @@ class MySQLBattleRepo(bprogress.ProgressRepoMixin, bterminal.TerminalReleaseRepo
                 item_config_ids=decode_config_ids(r[3] or ""),
                 stack_item_config_ids=decode_config_ids(r[4] or ""),
                 instance_item_config_ids=decode_config_ids(r[5] or ""),
+                currency_amount=int(r[6] or 0),
             )
             for r in rows
         ]

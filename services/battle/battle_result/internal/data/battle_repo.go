@@ -59,6 +59,58 @@ type DropOutboxRecord struct {
 	CurrencyAmount uint64
 }
 
+// SettleDropOutboxRow 判定结算路径下这一行掉落出箱**实际该写什么**,返回裁剪后的行与是否要写。
+//
+// dropsSuppressed 的语义只有一条:**掉落道具**已被实时进度通道逐事件发放过,结算路径不得重复发。
+// 它**不覆盖货币** —— 实时通道刻意不发金币(biz/progress.go:GrantItems 第三实参硬编码 0,
+// 注释「实时进度通道只发道具,金币走结算出箱」),金币的唯一发放路径就是这里。
+//
+// 2026-08-24 修 P0:此前抑制包住的是整个入箱循环,连"纯货币、零道具"的行一起跳过 ——
+// 于是走过实时通道的对局(即拾取/击杀走第三通道的正常局)战后金币两边都不发,
+// 永久丢失且零错误日志,把 08-22「战后金币此前从未进过钱包」的修复在主路径上原地废掉。
+//
+// 抽成导出函数是刻意的:此前 biz 层假仓逐字复刻了同一段分支,假仓与生产同构 →
+// 这类"静默漏发"在单测里根本不可见。假仓改调本函数后,biz 层对出箱内容的断言
+// 观察到的就是生产判据本身,复制体不会再各自漂移。
+//
+// # 成行判据为什么看**三列并集**而不只看 ItemConfigIDs
+//
+// 判据是「四项里任意一项非空就成行」:ItemConfigIDs / StackItemConfigIDs /
+// InstanceItemConfigIDs / CurrencyAmount。
+//
+// 今天全仓唯一的生产者 biz.buildDropOutbox 维持着这条不变量:
+//
+//	ItemConfigIDs ⊇ StackItemConfigIDs ∪ InstanceItemConfigIDs
+//
+// (它对每个通过白名单的 ID 先 append 进 allowed → ItemConfigIDs,再按 def.Equipment
+// 分到 instances / stacks,三列在同一个 append 里一次性写进同一条记录。)
+// 在这条不变量下,并集判据与旧的"只看 ItemConfigIDs"**零行为差异**:凡两条路由列非空的
+// 行,ItemConfigIDs 必定也非空。
+//
+// 2026-08-24 收口:那就把它改掉,而不是把陷阱写进注释留给下一个人踩。
+// 本函数是**导出**的(biz 层假仓也在调),将来任何新增生产者 —— 例如只填 Stack/Instance
+// 两列、把 ItemConfigIDs 当"历史兼容字段"留空的 —— 在旧判据下会被整行丢弃:
+// 出箱表里没有行、结算日志里没有错误、玩家掉落凭空消失(零日志静默丢弃)。
+// 改成并集之后这个失败模式**从机制上不存在**,代价是一行代码。
+// "记录陷阱"和"消除陷阱"能选后者时,永远选后者。
+//
+// 不变量本身仍由 data/drop_outbox_settle_test.go 钉住(buildDropOutbox 改坏了要变红):
+// 并集判据保证了"不丢行",但 ItemConfigIDs 仍是下游对账用的全量视图,不能任其漂移。
+func SettleDropOutboxRow(d DropOutboxRecord, dropsSuppressed bool) (DropOutboxRecord, bool) {
+	row := d
+	if dropsSuppressed {
+		// 只掐掉道具三列,货币原样保留;整行只剩货币时下面的判据自会决定是否成行。
+		row.ItemConfigIDs, row.StackItemConfigIDs, row.InstanceItemConfigIDs = nil, nil, nil
+	}
+	// 只带金币、不带掉落的行也要写:金币是独立收益来源,
+	// 旧判据 `len(ItemConfigIDs) == 0 → continue` 会把它整条丢掉。
+	if len(row.ItemConfigIDs) == 0 && len(row.StackItemConfigIDs) == 0 &&
+		len(row.InstanceItemConfigIDs) == 0 && row.CurrencyAmount == 0 {
+		return DropOutboxRecord{}, false
+	}
+	return row, true
+}
+
 // TerminalReleaseRecord 是正常结算的持久终态回收证明。
 //
 // 本记录只能由 ReportResult 完成 callback Guard + Redis active 校验后构造，并与
@@ -364,21 +416,18 @@ VALUES (?, ?, ?, ?)`
 	const insDropOutbox = `INSERT INTO battle_drop_outbox
 (match_id, player_id, item_config_ids, stack_item_config_ids, instance_item_config_ids, currency_amount, created_at_ms)
 VALUES (?, ?, ?, ?, ?, ?, ?)`
-	if !settleInfo.DropsSuppressed {
-		for _, d := range dropOutbox {
-			// 只带金币、不带掉落的行也要写:金币是独立收益来源,
-			// 旧判据 `len(ItemConfigIDs) == 0 → continue` 会把它整条丢掉。
-			if len(d.ItemConfigIDs) == 0 && d.CurrencyAmount == 0 {
-				continue
-			}
-			if _, derr := tx.ExecContext(ctx, insDropOutbox,
-				result.GetMatchId(), d.PlayerID, encodeConfigIDs(d.ItemConfigIDs),
-				encodeConfigIDs(d.StackItemConfigIDs), encodeConfigIDs(d.InstanceItemConfigIDs),
-				d.CurrencyAmount, nowMs,
-			); derr != nil {
-				return false, ProgressSettleInfo{}, errcode.New(errcode.ErrBattleResultDBWrite, "insert drop outbox match=%d player=%d: %v",
-					result.GetMatchId(), d.PlayerID, derr)
-			}
+	for _, d := range dropOutbox {
+		row, keep := SettleDropOutboxRow(d, settleInfo.DropsSuppressed)
+		if !keep {
+			continue
+		}
+		if _, derr := tx.ExecContext(ctx, insDropOutbox,
+			result.GetMatchId(), row.PlayerID, encodeConfigIDs(row.ItemConfigIDs),
+			encodeConfigIDs(row.StackItemConfigIDs), encodeConfigIDs(row.InstanceItemConfigIDs),
+			row.CurrencyAmount, nowMs,
+		); derr != nil {
+			return false, ProgressSettleInfo{}, errcode.New(errcode.ErrBattleResultDBWrite, "insert drop outbox match=%d player=%d: %v",
+				result.GetMatchId(), row.PlayerID, derr)
 		}
 	}
 

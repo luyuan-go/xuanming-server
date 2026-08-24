@@ -519,7 +519,10 @@ func (u *BattleResultUsecase) reportResult(ctx context.Context, result *battlev1
 		plog.With(ctx).Errorw("msg", "battle_result_persist_failed",
 			"match_id", result.GetMatchId(), "ds_pod_name", result.GetDsPodName(),
 			"outcome", result.GetOutcome().String(), "players", len(result.GetStats()),
-			"outbox_rows", len(outbox), "drop_rows", len(dropOutbox),
+			// built_drop_rows 而不是 drop_rows:这是失败路径,一行都没写进库,
+			// 能说的只有"本来打算写几行"。与成功路径的 drop_rows(真正入库行数)
+			// 刻意不同名 —— 同名不同义正是下面 battle_result_recorded 刚踩过的坑。
+			"outbox_rows", len(outbox), "built_drop_rows", len(dropOutbox),
 			"has_terminal_release", terminalRelease != nil,
 			"final_progress_seq", finalProgressSeq,
 			"duration_ms", time.Since(startedAt).Milliseconds(),
@@ -550,18 +553,19 @@ func (u *BattleResultUsecase) reportResult(ctx context.Context, result *battlev1
 		"winner_team", result.GetWinnerTeam(),
 		"outcome", result.GetOutcome().String(), "players", len(result.GetStats()),
 		"rating_pool", ratingPool, "map_id", result.GetMapId(), "game_mode", result.GetGameMode(),
-		"drop_rows", len(dropOutbox), "drops_suppressed", settleInfo.DropsSuppressed,
+		// drop_rows 必须是**真正写进 battle_drop_outbox 的行数**,不是 len(dropOutbox)。
+		// 2026-08-24 收口:原来打的是入箱前的构建行数 —— 抑制局里纯道具行会被
+		// SettleDropOutboxRow 整行丢弃,于是"日志说写了 5 行、库里只有 2 行",
+		// 对账的人会把差额当成写丢了去查 MySQL。
+		"drop_rows", persistedDropRows(dropOutbox, settleInfo.DropsSuppressed),
+		"drops_suppressed", settleInfo.DropsSuppressed,
 		"final_progress_seq", finalProgressSeq, "applied_seq", settleInfo.LastAppliedSeq,
 		"duration_ms", time.Since(startedAt).Milliseconds())
 
 	// 实时进度通道对账 + 单一权威路径观测(realtime-progression.md §5):
 	// 掉落发放权已归实时通道时,结算上报的 dropped_item_config_ids 只作审计不再发放。
 	reconcileProgress(ctx, result.GetMatchId(), finalProgressSeq, settleInfo)
-	if settleInfo.DropsSuppressed && len(dropOutbox) > 0 {
-		plog.With(ctx).Infow("msg", "battle_drop_suppressed_by_progress",
-			"match_id", result.GetMatchId(), "audit_rows", len(dropOutbox),
-			"hint", "本场掉落已经实时通道逐事件发放,结算掉落字段仅审计")
-	}
+	logDropSuppression(ctx, result.GetMatchId(), dropOutbox, settleInfo.DropsSuppressed)
 
 	// 多 region:观测本局结算回流落点分布(overflow 对局 region_count>1 → 需回流多 region)。
 	// router 为 nil(单 Cell)→ 不打,行为不变;跨 region 桥 / 多 region topic 回流路径属 infra(§11.1)。
@@ -920,6 +924,72 @@ func (u *BattleResultUsecase) buildDropOutbox(ctx context.Context, result *battl
 		})
 	}
 	return recs
+}
+
+// persistedDropRows 数出这一局**真正写进 battle_drop_outbox 的行数**。
+//
+// 判据不在这里复刻,直接调生产的 data.SettleDropOutboxRow(纯函数,与 SaveResult 事务里
+// 逐行调的是同一个)。抄一份长度公式或分支条件必然漂移 —— 假仓抄生产分支导致
+// "金币被静默吞掉"全绿,就是本轮刚付过的学费。
+func persistedDropRows(built []data.DropOutboxRecord, dropsSuppressed bool) int {
+	n := 0
+	for _, d := range built {
+		if _, keep := data.SettleDropOutboxRow(d, dropsSuppressed); keep {
+			n++
+		}
+	}
+	return n
+}
+
+// logDropSuppression 记录「实时进度通道已接管道具发放」这一事实。
+//
+// built 是 buildDropOutbox 的**入箱前**列表(SaveResult 内部才按 data.SettleDropOutboxRow
+// 逐行裁剪),所以这里能算出「本来要发什么、实际被掐掉了哪一部分」。
+//
+// 2026-08-24 修日志与代码事实不符:这条日志原文是「本场掉落已经实时通道逐事件发放,
+// 结算掉落字段仅审计」,并把 audit_rows 打成 len(built)。P0-2(货币不受抑制)修完后
+// 这句话对**金币行不成立** —— 复核实测 match_id=622 先打了这条「仅审计」,紧接着同一行
+// 就 drop_grant_delivered 把 250 金币发了出去。排障的人按原文会认定「抑制局什么都没入箱」,
+// 正是 SettleDropOutboxRow 注释里警告的「把排障引到错方向」。
+// 教训:抑制的粒度从「整行」收窄到「三列道具」之后,描述整行的日志必须跟着一起收窄,
+// 否则修复本身就成了下一次误判的源头。
+//
+// 只有**真的掐掉了道具**才打:全是纯金币行时一件道具都没被抑制,打 *_suppressed_*
+// 又会是一次同样的名不副实。
+func logDropSuppression(ctx context.Context, matchID uint64, built []data.DropOutboxRecord, dropsSuppressed bool) {
+	if !dropsSuppressed || len(built) == 0 {
+		return
+	}
+	suppressedRows, suppressedItems, currencyRows := 0, 0, 0
+	var currencyTotal uint64
+	for _, d := range built {
+		if n := len(d.ItemConfigIDs); n > 0 {
+			suppressedRows++
+			suppressedItems += n
+		}
+		if d.CurrencyAmount > 0 {
+			currencyRows++
+			currencyTotal += d.CurrencyAmount
+		}
+	}
+	if suppressedRows == 0 {
+		return
+	}
+	// hint 分两句写:承诺"随后会有 drop_grant_delivered"只有在**真有金币行**时才成立。
+	// 2026-08-24 收口:上一版只判 suppressedRows==0 就把带 delivered 承诺的 hint 无条件打出去,
+	// 而"有掉落、这一局没金币"是常见形态(currencyRows==0 → 一行都不入箱)——排障的人
+	// 会照着 hint 去等一条**永远不会出现**的 drop_grant_delivered,再一次被日志引到错方向。
+	hint := "只有**道具**被抑制(已由实时进度通道逐事件发放,结算字段仅审计);" +
+		"本局无金币收益 → 本 match_id 不会再有任何出箱行,也不会有 drop_grant_delivered"
+	if currencyRows > 0 {
+		hint = "只有**道具**被抑制(已由实时进度通道逐事件发放,结算字段仅审计);" +
+			"金币不走实时通道,granted_currency_rows 行照常入箱,随后同 match_id 会有 drop_grant_delivered"
+	}
+	plog.With(ctx).Infow("msg", "battle_drop_suppressed_by_progress",
+		"match_id", matchID, "built_rows", len(built),
+		"suppressed_item_rows", suppressedRows, "suppressed_items", suppressedItems,
+		"granted_currency_rows", currencyRows, "granted_currency_total", currencyTotal,
+		"hint", hint)
 }
 
 // withOutboxTrace 给后台出箱 worker 的**单行单次投递**现铸一个 trace_id(不变量 §9.8,
@@ -1374,21 +1444,76 @@ func (u *BattleResultUsecase) deliverDropRecord(ctx context.Context, r data.Drop
 	if len(stacks) == 0 && len(instances) == 0 && r.CurrencyAmount == 0 {
 		return errcode.New(errcode.ErrInvalidState, "drop outbox row has no frozen route id=%d", r.ID)
 	}
+	// 两个 bool 是本函数**唯一**的路由事实:分叉子键与两处实际调用都只读它们。
+	//
+	// 2026-08-24 修 P0:分叉条件曾是 `len(stacks)>0 && len(instances)>0`,而发放条件在
+	// 08-22 加金币时变成了 `len(stacks)>0 || CurrencyAmount>0` —— 两份条件从此各走各的。
+	// 于是「爆装备 + 有金币、但没爆可堆叠道具」(最常见的战果形态之一)会不分叉:
+	// GrantItems 先用 baseKey 把金币发了,GrantInstances 紧接着拿同一个 baseKey 必被判幂等冲突
+	// → 整行返错 → 出箱行不删 → 下轮金币幂等命中、装备再次冲突,装备永远发不到玩家手上,
+	// 而且日志打成 inventory_idempotency_conflict(那是反作弊/串账信号,直接把排障引到错方向)。
+	// 教训:同一件事绝不写两份条件 —— 复制的那一份迟早只改一处。
+	//
+	// ⚠ 上线迁移窗口(2026-08-24,一次性):本次修复把「货币 + 装备、无堆叠道具」这一形态的
+	// stack 侧幂等键从 baseKey 改成了 baseKey+":stack"。库里**已经卡住**的这类存量出箱行
+	// (旧代码下 GrantItems 已按 baseKey 把金币成功入账、GrantInstances 随即被判 7015
+	// 幂等冲突 → 整行返错 → 行永不删)在新代码上线后重试时,会拿 baseKey+":stack" 这把
+	// **全新的键**再发一次金币 —— inventory 那边没有这把键的流水,于是幂等去重不生效,
+	// 金币双发。一个"卡死不发"的缺陷被换成了"多发钱"。
+	//
+	// 影响面精确到一种形态:currency_amount > 0 且 instance 列非空 且 stack 列为空。
+	// 其余形态的键逐字节没变(不分叉时仍是 baseKey;stack 非空时旧代码本来就分叉)。
+	//
+	// 上线前必须做的排查与清账步骤(含可直接执行的 SQL)在
+	// **docs/ops/release-checklist.md §2.7「战斗掉落出箱幂等键分叉(本次必须人工门禁)」**。
+	// 刻意只在那里留一份:发布的人读的是发布清单,不会来读 biz 层某个函数的注释;
+	// 两处各写一份步骤,迟早只改一处。这里只保留"为什么会有这个窗口"。
+	grantStackOrCurrency := len(stacks) > 0 || r.CurrencyAmount > 0
+	grantInstances := len(instances) > 0
 	baseKey := dropIdempotencyKey(r.MatchID, r.PlayerID)
 	stackKey, instanceKey := baseKey, baseKey
-	if len(stacks) > 0 && len(instances) > 0 {
+	if grantStackOrCurrency && grantInstances {
 		stackKey, instanceKey = baseKey+":stack", baseKey+":instance"
 	}
 	// 金币与可堆叠道具走同一次 GrantItems:两者共用一个幂等键、一个事务,
 	// 不会出现"道具到了钱没到"。纯金币行(无掉落)也走这条路径。
-	if len(stacks) > 0 || r.CurrencyAmount > 0 {
+	if grantStackOrCurrency {
 		if err := u.granter.GrantItems(ctx, r.PlayerID, stacks, r.CurrencyAmount, stackKey); err != nil {
 			return err
 		}
 	}
-	if len(instances) == 0 {
+	if !grantInstances {
 		return nil
 	}
+	// ⚠ GrantInstances 这一整行只调**一次**,别再拆批(2026-08-24 回退,已实测复现装备双发)。
+	//
+	// 上一轮加过 grantInstancesBatched/grantInstanceChunk,把 instances 按固定条数切成
+	// instanceKey:0 / :1 … 多次调用。它引入 P0:**拆批把"转邮件"和"重试"这两条互斥路径
+	// 变成了可以叠加的**。
+	//   - 拆批前:GrantInstances 只调一次 → 背包满就 SendOverflowMail → return nil →
+	//     调用方把出箱行当轮删掉。"转邮件"即终态,这一行此后不存在重试。
+	//   - 拆批后:批 0 背包满 → 转邮件成功 → 只 return nil、**循环继续**;只要后面任一批
+	//     失败(最典型的是 mail 响应丢包,本包 drop_overflow_ack_loss_test.go 就是为这个
+	//     场景写的),整行返错保留 → 下一轮 publishDropBatch 把**已经邮寄出去的批 0**
+	//     再走一次 GrantInstances。inventory 侧那把键从没落过流水(grant 失败不留幂等记录),
+	//     背包一腾出空位就真发。实测 8 件装备变 16 件。
+	// 教训:**拆批必须与"转邮件即终态"这条不变量一起设计**,单独加拆批就是把互斥路径
+	// 变成可叠加。要重做必须先把"这一行已部分转邮件"变成可持久化、可续跑的状态
+	// (出箱行加进度列),那不是发布器侧一个 for 循环能覆盖的改动。
+	//
+	// 另外拆批还把任何 >N 件装备的行的键从 instanceKey 改成 instanceKey:0/:1…,
+	// 而这类行在旧代码下本来就能一次发成功(inventory 按**实际编码长度**上闸,见下),
+	// 于是白白制造了一个"存量行换新键再发一遍"的迁移窗口。
+	//
+	// 遗留边界(**本轮明确不修**,先于本次改造就存在):inventory 把本次发放的 instance_id
+	// 列表编进 inventory_ledger.detail(`grant_inst ids=1,2,…`,VARCHAR(255))作为幂等回放的
+	// 唯一事实源,判据是 data.GrantInstancesDetailFits(services/economy/inventory/internal/data/
+	// inventory_instance.go)——按实际编码长度判,17 位雪花下一次约能发 13 件。单行装备数
+	// 超过它时 GrantInstances 返 errcode.ErrInvalidArg(不是 capacity-full,**不会**转邮件),
+	// 出箱行每轮重试每轮失败 = 永久卡死行。每玩家掉落上限 conf.MaxDropsPerPlayer()
+	// 默认 32、硬上限 46,所以形态可达。
+	// 正解是 expand 迁移把 detail 列加宽、或把 instance_id 挪进独立子表,让"一次发放"
+	// 仍是一次原子记账;**不是**在发布器侧拆批(拆批的代价见上)。
 	if err := u.granter.GrantInstances(ctx, r.PlayerID, instances, instanceKey); err != nil {
 		// 只有实例背包满才允许转邮件；堆叠物品已走计数模型，不应进入装备邮件链。
 		if u.mailSender != nil && errcode.As(err) == errcode.ErrInventoryCapacityFull {

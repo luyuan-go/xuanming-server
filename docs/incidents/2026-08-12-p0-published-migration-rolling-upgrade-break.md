@@ -123,7 +123,9 @@ migrate Job (backoffLimit=0)
 ### 5.4 为什么现有保护没有挡住
 
 - 迁移契约测试只断言**片段存在**与 fresh-init 一致性，没有任何一条断言「up.sql 不得出现
-  `DROP COLUMN` / `DROP TABLE` / `RENAME`，除非本版被显式标注为 contract」。
+  `DROP COLUMN` / `DROP TABLE` / `RENAME` / `CHANGE COLUMN`，除非本版被显式标注为 contract」。
+  （`CHANGE COLUMN` 是 2026-08-24 补入的形态，与 `RENAME COLUMN` 兼容性等价；本条与 §6 的
+  搜索模式表原先都漏了它，见 §6.1。）
 - `ALGORITHM=INSTANT` 的可行性没有在真 MySQL 8.4 上验证过：PROGRESS 2026-08-11 把「真实
   MySQL/TiDB 上跑 000007」明确列为**未验证/交接**项，缺陷就落在这个缺口里。
 - CI 此前从不设 `PANDORA_TEST_MYSQL_DSN`，真库用例全 Skip 而 `go test` 打 `ok`（与
@@ -138,6 +140,29 @@ migrate Job (backoffLimit=0)
 - 结构性隐患：**迁移评审缺少「expand-only」机械门禁**，见 §10 A-2
 - 未覆盖边界：本次未逐条复核 `pandora_social` / `pandora_auction` / `pandora_battle` 等其余
   migration set 是否存在同型 contract（审查扇出中断，见 §10 A-5）
+
+### 6.1 2026-08-24 补扫：原搜索模式漏了 `CHANGE COLUMN`
+
+**上面那张搜索模式表本身就是缺陷证据**：它没有 `CHANGE`。`ALTER TABLE ... CHANGE [COLUMN]
+old new <type>` 与 `RENAME COLUMN` 在兼容性上**完全等价** —— 旧列名当场消失，仍在跑的旧副本
+查旧列名一律报错。2026-08-12 的这次全仓扫描因此从来没扫过这一形态，A-2 落码的门禁也照抄了
+这张表，于是 2026-08-22 的 `pandora_trade/000005` 用 `CHANGE COLUMN frozen_gold frozen_amount`
+做硬切，门禁一声没吭（作者自己在迁移头注释里写明了「不支持混跑」，机器却看不见）。
+
+- 补扫日期：2026-08-24
+- 探测器：`tools/migrate/expand_only_contract_test.go` 的 `destructiveDDL`，已补入
+  `CHANGE COLUMN`（四种拼法：`COLUMN` 关键字可省、标识符可不带反引号，全部命中）
+- 扫描方式：不是 grep，是拿探测器本体遍历全部嵌入 `*.up.sql`（剥行注释后判）
+- **`CHANGE` 形态全仓命中：仅 `pandora_trade/000005_multi_currency_wallet.up.sql` 一处**
+  （已按 §9.21 在文件头补 `-- CONTRACT:` 与「旧副本排空判据」，不入 grandfathered 清单）
+- 其余命中仍是原有 5 条 grandfathered（`pandora_account/000005`、`pandora_account/000006`、
+  `pandora_player/000007`、`pandora_leaderboard/000003`、`pandora_trade/000004`），
+  形态与登记理由不变，无新增
+- 结论：**§6 原扫描的漏洞只影响 `CHANGE` 一种形态，且只漏了 trade/000005 这一条**；
+  上面「未覆盖边界」列的 social / auction / battle 三套本轮已由探测器逐条走过，零命中
+
+教训写在这里给下一个人：**扫描模式表与门禁探测器必须是同一份**。这次是两份各写一遍，
+门禁补了形态、文档没补，等于书面留下一张"我们扫过了"的假证明。
 
 ## 7. 处置与永久修复
 
@@ -165,17 +190,45 @@ migrate Job (backoffLimit=0)
   见 `docs/design/player-no-and-login-surge.md` **§3.6.4**（改名的正确落地方式 + contract 退出条件）。
 - `CLAUDE.md` §9.24：新增 `register_no_counter` 登记。
 - **expand-only 机械门禁**(A-2，已落码)：`tools/migrate/expand_only_contract_test.go`。
-  遍历全部 `*.up.sql`(剥行注释后判)，命中 `DROP COLUMN` / `DROP TABLE` / `DROP INDEX|KEY` /
-  `RENAME COLUMN|INDEX|TABLE` 即失败，除非二选一：①文件头写 `-- CONTRACT:` **且**写明
-  「旧副本排空判据」；②登记在 `grandfatheredContractMigrations`(仅限本门禁上线前已对
-  origin 暴露、按 `tools/migrate/README` 不可再修改的历史迁移，**只减不增**)。
+  遍历全部 `*.up.sql`(剥行注释后判)，命中下列**七种**形态即失败，除非二选一：
+  ①文件头写 `-- CONTRACT:` **且**写明「旧副本排空判据」；②登记在
+  `grandfatheredContractMigrations`(仅限本门禁上线前已对 origin 暴露、按
+  `tools/migrate/README` 不可再修改的历史迁移，**只减不增**)。
+
+  | 形态 | 备注 |
+  |---|---|
+  | `DROP COLUMN` | |
+  | `DROP TABLE` | |
+  | `DROP INDEX` / `DROP KEY` | |
+  | `RENAME COLUMN` | |
+  | `RENAME INDEX` | |
+  | `RENAME TABLE` | |
+  | `CHANGE [COLUMN] <旧名> <新名> <类型>` | **2026-08-24 补入**；与 `RENAME COLUMN` 兼容性等价。四种拼法全认：`COLUMN` 关键字可省、标识符可不带反引号 |
+
+  `CHANGE` 那条的判据是**语法形状**（CHANGE 后跟得出两个标识符再跟一个类型词），
+  不是"CHANGE 后面紧跟 COLUMN 或反引号"。后者是 2026-08-24 第一版的写法，
+  变异实测会漏 `CHANGE frozen_gold frozen_amount BIGINT`（裸标识符 + 省 COLUMN，合法 MySQL，
+  `docs/design/player-no-and-login-surge.md` §3.6.4 讨论改名时用的正是这个拼法）。
+  取舍：字符串字面量里的散文 `COMMENT 'change this column now'` 仍会误报，**刻意接受** ——
+  误报的代价是改一句措辞，漏报的代价是生产上打死旧副本。取舍本身由
+  `TestDestructiveDDLDetector` 的同名用例钉住。
+
   配套 `TestGrandfatheredContractListIsExact` 反向断言清单里每条都**确实还是**破坏性迁移
   且真实存在，防止这张表退化成永久豁免后门。
   已收录的 5 条历史违规：`pandora_account/000005`、`pandora_account/000006`、
   `pandora_player/000007`(本事故两条)、`pandora_leaderboard/000003`、
   `pandora_trade/000004`(后两条是 json→pb 表示法切换，同样未经 expand 窗口)。
+  `pandora_trade/000005` **不在**清单里：它走 ①，文件头有 `-- CONTRACT:` 与排空判据。
   **变异验证**：摘掉任一条 grandfathered 登记后两条门禁立即转红(`... 含破坏性 DDL DROP COLUMN`
   / `... 在嵌入迁移里不存在`)，还原后转绿 —— 门禁不是空转的。
+- **迁移契约测试的正向断言一律查剥注释后的正文**(2026-08-24 补)：
+  `strings.Contains(原文, "必须有的守卫")` 会被一行同文注释满足。变异实测：删掉
+  `000005` 里真正的 `AND table_name = 'player_currency'`、在上面补一条 `--` 同文注释，
+  查原文的断言由红转绿。反向断言（"不得出现 X"）相反，查含注释的原文更严，保留原样。
+- **单条迁移的"破坏性 DDL 只许 N 条"必须复用探测器**(2026-08-24 补)：
+  自己 `strings.Count(upper, "CHANGE COLUMN")` 只守 7 种形态里的 1 种。
+  用 `destructiveOccurrences` 并断言**命中集合**恰好等于预期那几条 ——
+  只断言条数不行，删一条 CHANGE 换一条 DROP TABLE 同样是 1 条。
 
 ## 8. 验证矩阵
 
@@ -204,7 +257,7 @@ migrate Job (backoffLimit=0)
 | ID | 严重级别 | 行动项 | 负责人 | 状态 | 目标/关联 Incident |
 |---|---|---|---|---|---|
 | A-1 | P1 | **contract 迁移不得原样重放 `DROP players.mmr, ALGORITHM=INSTANT`**：`idx_mmr` 在列上，必先删索引或改算法，否则复现同一个 1845 dirty | 待指定 | 未开始 | 本 Incident |
-| A-2 | P1 | 加 **expand-only 机械门禁**：迁移契约测试断言 up.sql 不得出现 `DROP COLUMN`/`DROP TABLE`/`RENAME *`，除非文件头显式标注 `-- CONTRACT:` 并写明旧副本排空判据 | — | **已落码** | `tools/migrate/expand_only_contract_test.go`；见 §7.3 |
+| A-2 | P1 | 加 **expand-only 机械门禁**：迁移契约测试断言 up.sql 不得出现 `DROP COLUMN`/`DROP TABLE`/`DROP INDEX\|KEY`/`RENAME *`/`CHANGE [COLUMN] 旧 新 类型`，除非文件头显式标注 `-- CONTRACT:` 并写明旧副本排空判据 | — | **已落码**（`CHANGE` 形态 2026-08-24 补入并全仓重扫，见 §6.1） | `tools/migrate/expand_only_contract_test.go`；见 §7.3 |
 | A-3 | P1 | **contract 时必须反向回填 `player_mmr ← players.mmr`**：旧副本结算只写 `players.mmr` 不写 `player_mmr`，删列瞬间玩家 default 段位会回退到最后一次新副本写入的值。`000008` 注释只写了「以后删」，没写这一步 | 待指定 | 未开始 | 本 Incident |
 | A-4 | P2 | `000008` 的兼容回填是一条不分批的多表 UPDATE，会对**每个已有 default 记录的玩家**的 `players` 行加记录锁并持到语句提交（真库实测 15 万行 ≈ 18s / 150001 把锁），期间这些玩家的 `ApplyMMRChange` `SELECT ... FOR UPDATE` 会等到 `innodb_lock_wait_timeout`(targets 配 15s) 后批量报 1205。**在受支持发布路径上该语句恒 0 行**（000007 必 1845 失败 → v7 代码从未上线），风险只存在于「按当前 `04-player-tables.sql` 全新初始化且 v7 代码跑过」的库。修法只能是按主键游标分批 + 每批独立提交，或在文件头写明该取舍（加 `WHERE p.mmr <> pm.mmr` **无效**：RR 下锁在判谓词之前就加） | 待指定 | 未开始 | 本 Incident |
 | A-8 | P2 | **expand 窗口内老副本会把显式池结算吞进 `players.mmr`（=default 投影）**：pre-000007 副本不认识 `rating_pool`，对任何池的 `player.update` 都只 `UPDATE players SET mmr=?` 并写一条 `rating_pool` 由列 DEFAULT 补成 `'default'` 的 `mmr_history`。现网 4 个 ELO 关卡**全部**配非 default 池，所以 player 单独回滚到 Stable 期间为 **100% 排位局**记错池，而 `mmr_history` 幂等键不含池 → 重投也补不回来。**可恢复**（`mmr_history JOIN battles → map_id → 关卡表段位池` 可确定性判出全部错池行）。欠账：①写明修复口径；②`mmr_repo_mysql_test.go` 自称钉住「显式池不串分」，实际只模拟了老副本写 default 一场，旧→新方向的显式池组合从未覆盖，不满足 §9.21「验证 Stable↔Canary 组合」 | 待指定 | 未开始 | 本 Incident（与 A-3 并列） |

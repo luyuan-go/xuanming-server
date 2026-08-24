@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 
 import grpc
+from pandora.common.v1 import currency_pb2
 from pandora.common.v1 import errcode_pb2
 from pandora.ds.v1 import allocator_pb2 as dspb
 from pandora.ds.v1 import allocator_pb2_grpc as dsgrpc
@@ -106,15 +107,35 @@ class GrpcInstanceGranter:
         await self._channel.close()
 
     async def grant_items(
-        self, player_id: int, items: list[StackGrant], idempotency_key: str
+        self,
+        player_id: int,
+        items: list[StackGrant],
+        gold_amount: int,
+        idempotency_key: str,
     ) -> None:
-        """可堆叠战利品按配置 ID 聚合后写入计数背包。"""
+        """可堆叠战利品 + 本局金币,**一次调用**写入计数背包与钱包。
+
+        ★ 金币不另起一条发放链:合成一次 GrantItems 后两者共用同一个幂等键、同一个
+          inventory 事务,不可能出现"道具到了钱没到"。gold_amount=0 即纯道具。
+        """
         grants = [
             inv_pb.ItemGrant(item_config_id=it.item_config_id, count=it.count) for it in items
         ]
+        currencies = []
+        if gold_amount > 0:
+            # 战斗产出目前只有金币。显式给 kind:inventory 对 UNSPECIFIED 是 fail-closed 的,
+            # 不会回退成金币(静默回退等于把配错的币种记成金币,账目两边还都平)。
+            currencies.append(
+                currency_pb2.CurrencyAmount(
+                    kind=currency_pb2.CURRENCY_KIND_GOLD, amount=gold_amount
+                )
+            )
         resp = await self._stub.GrantItems(
             inv_pb.GrantItemsRequest(
-                player_id=player_id, items=grants, idempotency_key=idempotency_key
+                player_id=player_id,
+                items=grants,
+                currencies=currencies,
+                idempotency_key=idempotency_key,
             )
         )
         _raise_on_code(resp.code, "inventory grant items")

@@ -37,15 +37,38 @@
 --
 -- # ⚠️ 发布顺序:本迁移与新 inventory 二进制必须一起上,不支持混跑
 --
--- `auction_escrow.frozen_gold` 更名 `frozen_amount` 是**硬切**:迁移跑完之后,
--- 仍在运行的旧 inventory 副本会因为查不到 `frozen_gold` 列而让拍卖冻结 / 退还全部报错。
--- `player_wallet` 与两个 ledger 新列是纯新增(旧副本读不到但也不会崩),只有这一处不是。
+-- CONTRACT: `auction_escrow` 的 `frozen_gold` 用 CHANGE COLUMN 更名为 `frozen_amount`。
 --
--- 按 `§3.1`(首次生产上线日期未填写)当前不要求兼容旧构建,所以选了更干净的更名而不是
--- "加新列 + 双写 + 以后再删"。日期一旦填写,同类改动必须改走 expand → migrate → contract。
+-- 这一句不是 expand,是**硬切**:迁移跑完之后,仍在运行的旧 inventory 副本会因为查不到
+-- `frozen_gold` 列而让拍卖冻结 / 退还全部报错。`player_wallet` 与两个 ledger 新列是纯新增
+-- (旧副本读不到但也不会崩),整份迁移只有这一处拆兼容面 —— 所以按 §9.21 在这里显式声明
+-- 为 contract,而不是指望 expand-only 门禁替它背书。
 --
--- 实操顺序:停 inventory → 跑迁移 → 起新版 inventory。
--- 若必须零停机,先把 auction 的挂单 / 撤单入口临时关掉,让 escrow 写路径静默再迁。
+-- (门禁侧脚注:CHANGE COLUMN 与 RENAME COLUMN 在兼容性上完全等价,但门禁刚上线时只列了
+--  RENAME,本迁移因此一度静默通过。2026-08-24 已把 CHANGE COLUMN 补进 destructiveDDL,
+--  下一条这么写的迁移会在 go test 就红。)
+--
+-- ## 旧副本排空判据
+--
+-- 执行本迁移前,**读写 `auction_escrow` 的 inventory 副本数必须为 0**,判据是下面三条
+-- 同时成立(缺一条就不算排空):
+--
+--   ① `kubectl -n pandora get deploy inventory -o jsonpath='{.status.replicas}'` 返回 0;
+--      免 Docker / 本地栈下等价判据是 inventory 进程不存在。
+--   ② 该 Deployment 名下**没有** Pod 处于 Terminating —— 优雅停机窗口里的副本仍在跑
+--      冻结 / 退还的在途事务,它照样会查 `frozen_gold`。
+--   ③ auction 的挂单 / 撤单入口已关闭,escrow 写路径已静默;确认方式是关闭后再等一个
+--      完整的在途事务超时窗口,而不是"看着没请求了"。
+--
+-- **只 grep 日志不算判据**:§9.22 已经两次因为"日志里查无引用"就当无主而误判。判据必须是
+-- 权威台账(k8s 副本数 / 进程存在性),不是日志的缺席。
+--
+-- 为什么不拆成 expand → migrate → contract 三阶段:按 `§3.1`(首次生产上线日期未填写)
+-- 当前不要求兼容旧构建,加新列 + 双写 + 以后再删要多背一列到下个保留期,收益为零。
+-- **日期一旦填写,同类改动必须改走三阶段,本条不得当先例照抄。**
+--
+-- 实操顺序:关 auction 挂单 / 撤单入口 → 停 inventory 并按上面三条确认排空 → 跑迁移
+--          → 起新版 inventory。
 --
 -- 幂等:全部语句先查 information_schema 再决定是否执行,可重复跑;fresh 库由 baseline +
 -- 本迁移得到同一终态。每条 ALTER 只带一个子句(TiDB multi-schema change 拿每个子句

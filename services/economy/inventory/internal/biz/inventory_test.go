@@ -331,7 +331,21 @@ func (f *fakeRepo) DiscardBattleItem(_ context.Context, playerID uint64, itemCon
 	return remaining, false, nil
 }
 
-func (f *fakeRepo) SellItem(_ context.Context, playerID uint64, itemConfigID uint32, count int64, kind data.CurrencyKind, amount uint64, idempotencyKey, _ string) (data.SaleOutcome, bool, error) {
+// SellItem / SellInstance 复刻 data 层的单事务语义:扣道具(删实例)与入账同成同败。
+// 生产是 `defer tx.Rollback()`,所以假仓的任何失败路径都必须把自己做过的写还原回去 ——
+// 踩过的坑(2026-08-24 复核):旧版先 delete 掉实例再 addCurrency,入账溢出时直接
+// return,实例就**凭空蒸发**了(玩家东西没了、钱也没到),与生产行为相反。
+func (f *fakeRepo) SellItem(ctx context.Context, playerID uint64, itemConfigID uint32, count int64, kind data.CurrencyKind, amount uint64, idempotencyKey, detail string) (data.SaleOutcome, bool, error) {
+	rollback := f.snapshotPlayerTx(playerID, keyOf(playerID, idempotencyKey))
+	out, already, err := f.sellItemTx(ctx, playerID, itemConfigID, count, kind, amount, idempotencyKey, detail)
+	if err != nil {
+		rollback()
+		return data.SaleOutcome{}, false, err
+	}
+	return out, already, nil
+}
+
+func (f *fakeRepo) sellItemTx(_ context.Context, playerID uint64, itemConfigID uint32, count int64, kind data.CurrencyKind, amount uint64, idempotencyKey, _ string) (data.SaleOutcome, bool, error) {
 	gk := keyOf(playerID, idempotencyKey)
 	fp := data.SellFingerprint(itemConfigID, count)
 	if e, ok := f.ledger[gk]; ok {
@@ -634,7 +648,20 @@ func (f *fakeRepo) lowestFreeSlot(playerID uint64, capacity int32) (int32, bool)
 	return -1, false
 }
 
-func (f *fakeRepo) GrantInstances(_ context.Context, playerID uint64, instanceIDs []uint64, itemConfigIDs []uint32, capacity int32, idempotencyKey, _ string) ([]data.ItemInstance, bool, error) {
+// GrantInstances 复刻 data/inventory_instance.go 的单事务语义;失败一律整笔回滚。
+// 分配到一半撞"无空闲格"时,生产靠 defer tx.Rollback() 撤销已插入的实例行,
+// 假仓必须同样把 m[id] 写回去 —— 否则失败请求会在假仓里留下半批实例(比生产更松)。
+func (f *fakeRepo) GrantInstances(ctx context.Context, playerID uint64, instanceIDs []uint64, itemConfigIDs []uint32, capacity int32, idempotencyKey, detail string) ([]data.ItemInstance, bool, error) {
+	rollback := f.snapshotPlayerTx(playerID, keyOf(playerID, idempotencyKey))
+	out, already, err := f.grantInstancesTx(ctx, playerID, instanceIDs, itemConfigIDs, capacity, idempotencyKey, detail)
+	if err != nil {
+		rollback()
+		return nil, false, err
+	}
+	return out, already, nil
+}
+
+func (f *fakeRepo) grantInstancesTx(_ context.Context, playerID uint64, instanceIDs []uint64, itemConfigIDs []uint32, capacity int32, idempotencyKey, _ string) ([]data.ItemInstance, bool, error) {
 	gk := keyOf(playerID, idempotencyKey)
 	fp := data.GrantInstancesFingerprint(itemConfigIDs)
 	if e, ok := f.instGrant[gk]; ok {
@@ -642,6 +669,15 @@ func (f *fakeRepo) GrantInstances(_ context.Context, playerID uint64, instanceID
 			return nil, false, errcode.New(errcode.ErrInventoryIdempotencyConflict, "idempotency conflict")
 		}
 		return f.instancesByIDs(playerID, e.ids), true, nil
+	}
+	// 复刻生产写入点的 detail 列宽闸(data/inventory_instance.go):
+	// ①判定调生产的 GrantInstancesDetailFits,不另算一套长度公式(算两套必漂移);
+	// ②**排在幂等回放之后** —— 生产那边超长时会先探一次旧流水,探到就照常回放。
+	//   把闸挪到回放之前,已提交批次的重试就会被拒死(货已发、行清不掉),
+	//   这正是 2026-08-24 复核在 biz 上闸里抓到的 P0 形态,假仓必须能把它测红。
+	if !data.GrantInstancesDetailFits(instanceIDs) {
+		return nil, false, errcode.New(errcode.ErrInvalidArg,
+			"grant_inst detail exceeds ledger column count=%d", len(instanceIDs))
 	}
 	if capacity <= 0 {
 		return nil, false, errcode.New(errcode.ErrInventoryCapacityFull, "instance inventory disabled")
@@ -714,7 +750,17 @@ func (f *fakeRepo) DiscardInstance(_ context.Context, playerID, instanceID uint6
 	return nil
 }
 
-func (f *fakeRepo) SellInstance(_ context.Context, playerID, instanceID uint64, itemConfigID uint32, kind data.CurrencyKind, amount uint64, idempotencyKey, _ string) (data.SaleOutcome, bool, error) {
+func (f *fakeRepo) SellInstance(ctx context.Context, playerID, instanceID uint64, itemConfigID uint32, kind data.CurrencyKind, amount uint64, idempotencyKey, detail string) (data.SaleOutcome, bool, error) {
+	rollback := f.snapshotPlayerTx(playerID, keyOf(playerID, idempotencyKey))
+	out, already, err := f.sellInstanceTx(ctx, playerID, instanceID, itemConfigID, kind, amount, idempotencyKey, detail)
+	if err != nil {
+		rollback()
+		return data.SaleOutcome{}, false, err
+	}
+	return out, already, nil
+}
+
+func (f *fakeRepo) sellInstanceTx(_ context.Context, playerID, instanceID uint64, itemConfigID uint32, kind data.CurrencyKind, amount uint64, idempotencyKey, _ string) (data.SaleOutcome, bool, error) {
 	gk := keyOf(playerID, idempotencyKey)
 	fp := data.SellInstanceFingerprint(instanceID, itemConfigID)
 	if e, ok := f.ledger[gk]; ok {
@@ -753,9 +799,78 @@ func (f *fakeRepo) SellInstance(_ context.Context, playerID, instanceID uint64, 
 	return data.SaleOutcome{Balances: snap, Earned: amount, Kind: kind}, false, nil
 }
 
+// snapshotPlayerTx 拍一份"一次入包类写操作可能改到的全部状态",返回把它们原样写回的函数。
+//
+// 假仓没有事务,就必须手工模拟 `defer tx.Rollback()`:**任何失败路径都要还原自己做过的全部写**。
+// 这里踩过的坑(2026-08-24 修):旧版假仓先 deductCurrency 持久改了余额 map,
+// 容量满分支直接 return ErrInventoryCapacityFull、一分钱都不退 —— 而真实现
+// (data/shop_purchase.go 的 defer tx.Rollback())是整笔撤销扣费。
+// 假仓在"失败后是否回滚扣费"这一点上与被替身对象**行为相反**:
+// "背包满整笔不扣钱"这条不变量在假仓上永远测不出来,后来人照着假仓理解语义还会得出反的结论。
+//
+// 纪律:**假仓可以比生产更严(多拒、多校验),绝不能更松(少回滚、少校验)。**
+// 更严只会让单测多失败一次并被人复核;更松则是把闸门静默测没了。
+func (f *fakeRepo) snapshotPlayerTx(playerID uint64, gk string) func() {
+	walletCopy, hadWallet := f.wallet[playerID], f.wallet[playerID] != nil
+	if hadWallet {
+		walletCopy = data.Balances{}
+		for k, v := range f.wallet[playerID] {
+			walletCopy[k] = v
+		}
+	}
+	itemsCopy, hadItems := f.items[playerID], f.items[playerID] != nil
+	if hadItems {
+		itemsCopy = map[uint32]int64{}
+		for k, v := range f.items[playerID] {
+			itemsCopy[k] = v
+		}
+	}
+	instCopy, hadInst := f.instances[playerID], f.instances[playerID] != nil
+	if hadInst {
+		instCopy = map[uint64]*data.ItemInstance{}
+		for id, inst := range f.instances[playerID] {
+			cp := *inst // 深拷:实例是指针,浅拷会让"回滚"回滚不掉槽位改写
+			instCopy[id] = &cp
+		}
+	}
+	ledgerEnt, hadLedger := f.ledger[gk]
+	facts, hadFacts := f.purchases[gk]
+	grantEnt, hadGrant := f.instGrant[gk]
+
+	return func() {
+		restoreMapEntry(f.wallet, playerID, walletCopy, hadWallet)
+		restoreMapEntry(f.items, playerID, itemsCopy, hadItems)
+		restoreMapEntry(f.instances, playerID, instCopy, hadInst)
+		restoreMapEntry(f.ledger, gk, ledgerEnt, hadLedger)
+		restoreMapEntry(f.purchases, gk, facts, hadFacts)
+		restoreMapEntry(f.instGrant, gk, grantEnt, hadGrant)
+	}
+}
+
+// restoreMapEntry 把一个 map 项恢复到快照时刻:原本不存在就删掉,而不是留个空壳。
+// "有没有这一行"在假仓里是有语义的(wallet 无项 = 余额 0),回滚必须还原到位。
+func restoreMapEntry[K comparable, V any](m map[K]V, key K, val V, existed bool) {
+	if existed {
+		m[key] = val
+		return
+	}
+	delete(m, key)
+}
+
 // PurchaseShopItem 复刻 data/shop_purchase.go 的单事务语义:
 // 扣费 → 入包(堆叠计数 / 装备实例)→ 落快照;幂等命中回放首次的扣费额与发货结果。
-func (f *fakeRepo) PurchaseShopItem(_ context.Context, playerID uint64, req data.PurchaseRequest) (data.PurchaseOutcome, bool, error) {
+// 失败一律整笔回滚(见 snapshotPurchaseTx)。
+func (f *fakeRepo) PurchaseShopItem(ctx context.Context, playerID uint64, req data.PurchaseRequest) (data.PurchaseOutcome, bool, error) {
+	rollback := f.snapshotPlayerTx(playerID, keyOf(playerID, req.IdempotencyKey))
+	out, already, err := f.purchaseShopItemTx(ctx, playerID, req)
+	if err != nil {
+		rollback()
+		return data.PurchaseOutcome{}, false, err
+	}
+	return out, already, nil
+}
+
+func (f *fakeRepo) purchaseShopItemTx(_ context.Context, playerID uint64, req data.PurchaseRequest) (data.PurchaseOutcome, bool, error) {
 	if verr := data.ValidateCurrencyKind(req.Kind); verr != nil {
 		return data.PurchaseOutcome{}, false, verr
 	}
@@ -783,6 +898,13 @@ func (f *fakeRepo) PurchaseShopItem(_ context.Context, playerID uint64, req data
 			out.Instances = f.instancesByIDs(playerID, facts.instanceIDs)
 		}
 		return out, true, nil
+	}
+
+	// 复刻生产 claimPurchaseLedger 的 detail 列宽闸:按实际编码长度判,
+	// 位置也必须一致 —— 幂等回放之后、扣费之前(理由同 grantInstancesTx)。
+	if !data.PurchaseDetailFits(req) {
+		return data.PurchaseOutcome{}, false, errcode.New(errcode.ErrInventoryNotPurchasable,
+			"purchase detail exceeds ledger column insts=%d", len(req.InstanceIDs))
 	}
 
 	if err := f.deductCurrency(playerID, req.Kind, req.TotalCost); err != nil {
@@ -1742,4 +1864,243 @@ func TestSettleAuctionMatch_Validation(t *testing.T) {
 	if err := uc.SettleAuctionMatch(ctx, 1, 10, 20, 501, 601, 7001, 1, data.CurrencyGold, 0); errcode.As(err) != errcode.ErrInvalidArg {
 		t.Fatalf("zero unit_price should be ErrInvalidArg, got %v", err)
 	}
+}
+
+// snowflakeDigitsToday 是现网雪花 ID 的十进制位数(2026-08 时 id≈2.7e16,即 17 位)。
+// 默认的 seqGen 从 1 开始只有个位数,"按 detail 实际编码长度"的闸在它面前永远测不到边界。
+const snowflakeDigitsToday = 17
+
+// digitsGen 产出**指定十进制位数**的递增 id,用来在单测里模拟真实雪花的编码宽度
+// (以及"若干年后位数涨到 20 位"的形态 —— 那是回放能否幸存的关键场景)。
+type digitsGen struct{ next uint64 }
+
+func newDigitsGen(digits int) *digitsGen {
+	base := uint64(1)
+	for i := 1; i < digits; i++ {
+		base *= 10
+	}
+	return &digitsGen{next: base}
+}
+
+func (g *digitsGen) Generate() uint64 { id := g.next; g.next++; return id }
+
+func (g *digitsGen) GenerateInto(dst []uint64) {
+	for i := range dst {
+		dst[i] = g.Generate()
+	}
+}
+
+// idsOfDigits 造 n 个指定位数的 id(只为断言用例前提,不参与业务路径)。
+func idsOfDigits(n, digits int) []uint64 {
+	out := make([]uint64, n)
+	newDigitsGen(digits).GenerateInto(out)
+	return out
+}
+
+// maxGrantBatchAtDigits 求"这个位数的 id 一批最多能发几件":直接问生产的编码闸
+// (data.GrantInstancesDetailFits),测试里不另抄一套长度公式(抄两套必漂移)。
+func maxGrantBatchAtDigits(t *testing.T, digits int) int {
+	t.Helper()
+	best := 0
+	for n := 1; n <= 64; n++ {
+		if !data.GrantInstancesDetailFits(idsOfDigits(n, digits)) {
+			break
+		}
+		best = n
+	}
+	if best == 0 {
+		t.Fatalf("列容量必须允许至少发 1 件")
+	}
+	return best
+}
+
+// grantBatchUC 造一个实例背包够大的 usecase,并注入指定位数的 id 生成器。
+func grantBatchUC(repo *fakeRepo, capacity int32, digits int) *InventoryUsecase {
+	uc := NewInventoryUsecase(repo, conf.InventoryConf{Capacity: capacity})
+	uc.SetItemCatalog(mapItemCatalog{5001: {Equipment: true, MaxStack: 1}})
+	uc.SetSnowflake(newDigitsGen(digits))
+	return uc
+}
+
+func grantBatch(n int) []uint32 {
+	out := make([]uint32, n)
+	for i := range out {
+		out[i] = 5001
+	}
+	return out
+}
+
+func assertSameInstanceIDs(t *testing.T, want, got []data.ItemInstance) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("回放件数不符: got=%d want=%d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].InstanceID != want[i].InstanceID {
+			t.Fatalf("回放第 %d 件 id 不符: got=%d want=%d", i, got[i].InstanceID, want[i].InstanceID)
+		}
+	}
+}
+
+// TestGrantInstances_BatchBoundedByLedgerDetail 系统发放侧的列宽闸:
+// 一批 instance_id 全部要编进 inventory_ledger.detail(VARCHAR(255),回放事实唯一来源),
+// 装不下就整笔 INSERT 失败(Error 1406 → ErrInternal,调用方只会盲目重试到死)。
+//
+// 判定按**实际编码长度**:现网 17 位雪花一批能发 13 件。
+// 上一版在 biz 按 uint64 最坏 20 位反推件数(只放 11 件),把今天 100% 能成的 12、13 件
+// 改判为拒,是实打实的线上功能回退,已于 2026-08-24 删除(取舍见 data/inventory_repo.go)。
+//
+// 超批返回 ErrInvalidArg 而不是"背包满":这是调用方拆批就能解决的问题,
+// 报容量满会把运维引到扩容上,越查越偏。
+func TestGrantInstances_BatchBoundedByLedgerDetail(t *testing.T) {
+	ctx := context.Background()
+	maxBatch := maxGrantBatchAtDigits(t, snowflakeDigitsToday)
+	// 钉死现网口径:17 位 id 下一批 13 件。掉回 11 就是"最坏位数闸"又回来了。
+	if maxBatch != 13 {
+		t.Fatalf("17 位雪花下一批应能发 13 件, got %d", maxBatch)
+	}
+
+	t.Run("恰好装得下", func(t *testing.T) {
+		repo := newFakeRepo()
+		uc := grantBatchUC(repo, int32(maxBatch)+4, snowflakeDigitsToday)
+		insts, err := uc.GrantInstances(ctx, 100, grantBatch(maxBatch), "grant-max")
+		if err != nil {
+			t.Fatalf("恰好装得下的批量必须能发: n=%d err=%v", maxBatch, err)
+		}
+		if len(insts) != maxBatch {
+			t.Fatalf("应发 %d 件, got %d", maxBatch, len(insts))
+		}
+	})
+
+	t.Run("再多一件被业务错误码拒", func(t *testing.T) {
+		repo := newFakeRepo()
+		uc := grantBatchUC(repo, int32(maxBatch)+4, snowflakeDigitsToday)
+		_, err := uc.GrantInstances(ctx, 100, grantBatch(maxBatch+1), "grant-over")
+		if errcode.As(err) != errcode.ErrInvalidArg {
+			// 最怕 ErrInternal:那说明退化成撞列宽,调用方只会盲目重试到死。
+			t.Fatalf("超 detail 预算应 ErrInvalidArg, got %v", err)
+		}
+		if n := len(repo.instMap(100)); n != 0 {
+			t.Fatalf("被拒不得发货: %d 件", n)
+		}
+		if _, ok := repo.instGrant[keyOf(100, "grant-over")]; ok {
+			t.Fatalf("被拒不得落幂等流水")
+		}
+	})
+}
+
+// TestGrantInstances_ReplayNeverBlockedByDetailGate 钉死列宽闸的**位置**:必须排在幂等回放之后。
+//
+// 场景是真实的:GrantInstances 每次调用都重新生成一批雪花 id,重试时的 id 与首发不是同一批;
+// 而雪花位数随时间单调增长。于是"首发时刚好装得下"的批次,位数涨上去后按新 id 重算 detail
+// 会超列宽。闸若排在回放之前,这笔**早已成功提交**的发放就再也回放不了 ——
+// 下游(battle_result 掉落出箱 / mail 领取 / mission 补扫)全是永不放弃的重试者,
+// 拒一次就是永久卡住的行:货已发在玩家包里,出箱行却清不掉。
+//
+// 回退检验:把 grantInstancesTx 里的列宽闸挪回幂等命中判断之前,本用例第 ③ 步立刻变红。
+func TestGrantInstances_ReplayNeverBlockedByDetailGate(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	maxBatch := maxGrantBatchAtDigits(t, snowflakeDigitsToday)
+	const key = "drop-batch"
+	capacity := int32(maxBatch) + 4
+
+	// ① 首发:恰好达到列宽上限的一批,今天必须能发。
+	first, err := grantBatchUC(repo, capacity, snowflakeDigitsToday).
+		GrantInstances(ctx, 100, grantBatch(maxBatch), key)
+	if err != nil {
+		t.Fatalf("恰好达到上限的批次必须能发: n=%d err=%v", maxBatch, err)
+	}
+	if len(first) != maxBatch {
+		t.Fatalf("应发 %d 件, got %d", maxBatch, len(first))
+	}
+
+	// ② 同位数重试(下游最常见的重试形态):必须原样回放,且回放认的是流水不是入参 id。
+	uc := grantBatchUC(repo, capacity, snowflakeDigitsToday)
+	uc.SetSnowflake(&digitsGen{next: newDigitsGen(snowflakeDigitsToday).next + 1000})
+	replayed, err := uc.GrantInstances(ctx, 100, grantBatch(maxBatch), key)
+	if err != nil {
+		t.Fatalf("同位数重试必须回放成功: %v", err)
+	}
+	assertSameInstanceIDs(t, first, replayed)
+
+	// ③ 雪花涨到 20 位后重试:新 id 重算 detail 必然超列宽,但这笔早已提交,
+	//    仍必须走回放路径成功返回。这一步就是闸位置放错时会红的那一步。
+	if data.GrantInstancesDetailFits(idsOfDigits(maxBatch, 20)) {
+		t.Fatalf("用例前提不成立:20 位 id 的 %d 件本应超列宽", maxBatch)
+	}
+	regrown, err := grantBatchUC(repo, capacity, 20).GrantInstances(ctx, 100, grantBatch(maxBatch), key)
+	if err != nil {
+		t.Fatalf("已提交批次在雪花涨位后仍必须能回放(否则出箱行永久卡死): %v", err)
+	}
+	assertSameInstanceIDs(t, first, regrown)
+
+	// 三次调用只能有一批货落地。
+	if n := len(repo.instMap(100)); n != maxBatch {
+		t.Fatalf("回放不得重复发货: 实例数=%d want=%d", n, maxBatch)
+	}
+}
+
+// TestSellFailurePathRestoresGoods 钉住出售失败路径的原子性:入账失败 = 东西一件不少。
+//
+// 生产端出售是单事务(删实例 / 扣数量 与 入账同成同败,defer tx.Rollback())。
+// 踩过的坑(2026-08-24 复核):假仓的 SellInstance 先 delete 掉实例、再调可能失败的
+// addCurrency,溢出时直接 return 而**不还原** —— 玩家的装备凭空蒸发、钱也没到。
+// 假仓在这条路径上与被替身对象**行为相反**,于是"出售失败必须一件不少"这条不变量
+// 在单测里永远测不出来,后来人照着假仓理解语义还会得出反的结论。
+// 纪律(同 snapshotPlayerTx):假仓可以比生产更严,绝不能更松。
+func TestSellFailurePathRestoresGoods(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("实例出售入账溢出必须还原实例", func(t *testing.T) {
+		repo := newFakeRepo()
+		uc := realItemTestUC(repo)
+		insts, err := uc.GrantInstances(ctx, 7, []uint32{10003}, "grant-inst")
+		if err != nil || len(insts) != 1 {
+			t.Fatalf("发一件可出售装备: %+v err=%v", insts, err)
+		}
+		id := insts[0].InstanceID
+
+		// 钱包顶格 → 这笔 180 金币必然溢出,出售在"实例已删、钱没入账"处失败。
+		repo.setBalance(7, data.CurrencyGold, data.MaxCurrencyAmount)
+		if _, err := uc.SellInstance(ctx, 7, id, 10003, "sell-overflow"); errcode.As(err) != errcode.ErrInventoryCurrencyOverflow {
+			t.Fatalf("入账溢出应 ErrInventoryCurrencyOverflow, got %v", err)
+		}
+		if _, ok := repo.instMap(7)[id]; !ok {
+			t.Fatalf("入账失败必须整笔回滚:实例不得蒸发")
+		}
+		if _, ok := repo.ledger[keyOf(7, "sell-overflow")]; ok {
+			t.Fatalf("失败的出售不得落幂等流水(否则重试会被当成已处理直接回放)")
+		}
+		if got := repo.balanceOf(7, data.CurrencyGold); got != data.MaxCurrencyAmount {
+			t.Fatalf("失败不得改余额: got=%d", got)
+		}
+
+		// 回滚到位的判据:腾出余额后同一件仍能正常卖出。
+		repo.setBalance(7, data.CurrencyGold, 0)
+		out, err := uc.SellInstance(ctx, 7, id, 10003, "sell-ok")
+		if err != nil || out.Earned != 180 {
+			t.Fatalf("回滚后重卖应成功: earned=%d err=%v", out.Earned, err)
+		}
+		if _, ok := repo.instMap(7)[id]; ok {
+			t.Fatalf("成功出售后实例必须删除")
+		}
+	})
+
+	t.Run("堆叠出售入账溢出必须还原数量", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.items[7] = map[uint32]int64{10002: 4}
+		uc := realItemTestUC(repo)
+		repo.setBalance(7, data.CurrencyGold, data.MaxCurrencyAmount)
+
+		if _, err := uc.SellItem(ctx, 7, 10002, 2, "sell-overflow"); errcode.As(err) != errcode.ErrInventoryCurrencyOverflow {
+			t.Fatalf("入账溢出应 ErrInventoryCurrencyOverflow, got %v", err)
+		}
+		if got := repo.items[7][10002]; got != 4 {
+			t.Fatalf("入账失败必须整笔回滚:剩余数量=%d want=4", got)
+		}
+		if _, ok := repo.ledger[keyOf(7, "sell-overflow")]; ok {
+			t.Fatalf("失败的出售不得落幂等流水")
+		}
+	})
 }

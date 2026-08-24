@@ -223,6 +223,37 @@ DEFAULT_DS_AUTH_ACTIVE_HEARTBEAT_MAX_AGE = _dt.timedelta(seconds=30)
 _ENV_REF_RE = re.compile(r"\A\$(?:\{(?P<braced>[^}]*)\}|(?P<bare>[A-Za-z_][A-Za-z0-9_]*))")
 
 
+def _local_ds_executable_mismatched(path: str, launcher: str) -> bool:
+    """两种形态的 exe 被互换了没有 —— 只认这一种确定错配。
+
+    editor 形态拿到出包的 PandoraServer*,或 packaged 形态拿到引擎的 UnrealEditor*。
+    刻意不做白名单(不要求「必须叫 UnrealEditor」):策划机可能用 UnrealEditor-Cmd.exe、
+    包装脚本,测试用 stub.exe,这些都是合法的;拦已知错配比放行未知形态更不容易误伤。
+    与 Go 侧 services/battle/ds_allocator/internal/conf/conf.go 的同名判据逐条一致。
+    """
+    base = os.path.basename(path).lower()
+    if launcher == LAUNCHER_EDITOR:
+        return base.startswith("pandoraserver")
+    return base.startswith("unrealeditor")
+
+
+def _local_ds_executable_usable(path: str, launcher: str) -> bool:
+    """yaml 里写死的 DS 可执行路径,在当前 launcher 形态下算不算「可用的那一个」。
+
+    只判 os.path.exists 是不够的:2026-08-24 事故 —— `-DsLauncher editor` 一次注入
+    PANDORA_DS_LAUNCHER / PANDORA_DS_UPROJECT / PANDORA_DS_EXE 三个变量,而 dev 机
+    yaml 里写死的 PandoraServer.exe 确实存在,于是唯独 EXE 那一个被跳过 → 出包 server
+    拿到 .uproject 当关卡 URL → LoadPackage 失败 → world 为空 →
+    UMyLevelModel::OnEnginePostLoadMap 解空指针,DS 启动十几秒后 ACCESS_VIOLATION 崩。
+    launcher 在本文件里已于 apply_defaults 前段归一,这里直接用。
+    """
+    if path == "":
+        return False
+    if not os.path.exists(path):
+        return False
+    return not _local_ds_executable_mismatched(path, launcher)
+
+
 def expand_env_go(value: str) -> str:
     """等价于 Go 的 `os.ExpandEnv`:未定义变量替换成空串。"""
     if "$" not in value:
@@ -932,7 +963,7 @@ class Config(pconfig.BaseConf):
         ld.executable_path = from_slash(expand_env_go(ld.executable_path))
         ld.working_dir = from_slash(expand_env_go(ld.working_dir))
         env_exe = os.environ.get("PANDORA_DS_EXE") or ""
-        if env_exe and (ld.executable_path == "" or not os.path.exists(ld.executable_path)):
+        if env_exe and not _local_ds_executable_usable(ld.executable_path, ld.launcher):
             ld.executable_path = from_slash(env_exe)
             # ★ working_dir 只在**确实用了** env 可执行文件时才跟着换。
             #   提到 if 外面会让 yaml 里写死的 exe + 脚本注入的 dir 配成一对,

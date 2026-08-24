@@ -521,6 +521,56 @@ async def test_grant_instances_assigns_lowest_free_slots_and_replays(repo) -> No
     assert len(await repo.list_instances(1)) == 2
 
 
+def _ids_with_digits(n: int, digits: int) -> list[int]:
+    """造 n 个**指定十进制位数**的 id,模拟真实雪花的编码宽度(与 Go 的 idsWithDigits 同构)。
+
+    现网雪花 17 位;20 位是"若干年后涨到顶"的形态。
+    """
+    base = 10 ** (digits - 1)
+    return [base + i for i in range(n)]
+
+
+async def test_grant_instances_replay_survives_oversized_detail(repo, pool) -> None:
+    """★ 在真库上钉死 detail 列宽闸的**位置**:必须排在幂等回放之后。
+
+    为什么非要真库:这条闸的机制依赖 MySQL 的报错顺序 —— 超长 INSERT 先撞列宽(Error 1406)
+    而不是撞唯一键,所以"INSERT 撞唯一键即判重"这条原子声明在超长时根本走不通,
+    必须由 grant_instances 显式探一次旧流水。假仓复刻不了这个顺序,只能在这里验。
+
+    场景是真实的:每次调用都重新生成一批雪花 id,而雪花位数随时间单调增长。
+    "首发时刚好装得下"的批次,位数涨上去后按新 id 重算 detail 会超列宽;闸若前置,
+    这笔早已提交的发放就再也回放不了 —— 掉落出箱行永久卡死(货已发、行清不掉)。
+    """
+    player, batch, capacity = 9101, 13, 40  # 13 = 17 位雪花下正好装满 detail 列的批量
+    configs = [10003] * batch
+
+    first_ids = _ids_with_digits(batch, 17)
+    assert ifp.grant_instances_detail_fits(first_ids), f"用例前提:17 位 id 的 {batch} 件本应装得下"
+    insts, already = await repo.grant_instances(player, first_ids, configs, capacity, "drop-batch")
+    assert already is False
+    assert len(insts) == batch
+
+    # 雪花涨到 20 位后重试:新 id 重算 detail 必然超列宽,但这批早已提交,必须回放。
+    grown_ids = _ids_with_digits(batch, 20)
+    assert not ifp.grant_instances_detail_fits(grown_ids), f"用例前提:20 位 id 的 {batch} 件本应超列宽"
+    replayed, already = await repo.grant_instances(
+        player, grown_ids, configs, capacity, "drop-batch"
+    )
+    assert already is True, "已提交批次在雪花涨位后仍必须能回放"
+    assert sorted(i.instance_id for i in replayed) == sorted(first_ids), "回放必须返回首发那批实例"
+
+    # 真·新的超长请求仍必须被拒(有业务语义的 ErrInvalidArg,不是撞列宽的 ErrInternal),
+    # 且一件都不许落库。
+    with pytest.raises(errcode.PandoraError) as ei:
+        await repo.grant_instances(player, grown_ids, configs, capacity, "fresh-key")
+    assert ei.value.code == errcode.ErrInvalidArg
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT COUNT(*) FROM player_item_instance WHERE player_id=%s", (player,)
+        )
+        assert (await cur.fetchone())[0] == batch, "被拒的发放不得落库"
+
+
 async def test_grant_instances_capacity_full(repo) -> None:
     await repo.grant_instances(1, [901, 902], [10, 11], 2, "g1")
     with pytest.raises(errcode.PandoraError) as ei:
@@ -993,6 +1043,65 @@ async def test_purchase_equipment_mints_instances_and_replays_them(repo) -> None
     assert [i.instance_id for i in replay.instances] == [901, 902]
     assert replay.cost == 200
     assert len(await repo.list_instances(1)) == 2
+
+
+async def test_purchase_replay_survives_oversized_detail(repo, pool) -> None:
+    """★ 购买侧的同一条:列宽闸必须排在幂等回放之后。
+
+    购买比发放更狠一档:回放失败意味着**钱已扣、货已发**的订单永远拿不到成功回包,
+    客户端只会一直重试。真库验的是 MySQL 的报错顺序 —— 超长 INSERT 先撞列宽(1406)
+    而不是唯一键,所以"声明即判重"在超长时走不通,必须显式探一次旧流水。
+    """
+    player, units, cost = 9201, 11, 550  # 11 = 17 位雪花下 shop=1/item=6002 正好装满的份数
+    await repo.grant_items(player, [], {GOLD: 100000}, "seed-9201", "d")
+
+    def _req(ids: list[int], key: str = "buy-batch") -> PurchaseRequest:
+        return _purchase(
+            shop_id=1,
+            item_config_id=6002,
+            unit_count=units,
+            total_items=0,
+            is_equipment=True,
+            instance_ids=ids,
+            total_cost=cost,
+            capacity=40,
+            idempotency_key=key,
+        )
+
+    first_ids = _ids_with_digits(units, 17)
+    assert ifp.purchase_detail_fits(1, 6002, units, 0, first_ids), (
+        f"用例前提:17 位 id 的 {units} 份本应装得下"
+    )
+    out, already = await repo.purchase_shop_item(player, _req(first_ids))
+    assert already is False
+    assert len(out.instances) == units and out.cost == cost
+
+    # 雪花涨到 20 位后重试:新 id 重算 detail 必然超列宽,但这笔早已成交,必须回放。
+    grown_ids = _ids_with_digits(units, 20)
+    assert not ifp.purchase_detail_fits(1, 6002, units, 0, grown_ids), (
+        f"用例前提:20 位 id 的 {units} 份本应超列宽"
+    )
+    replayed, already = await repo.purchase_shop_item(player, _req(grown_ids))
+    assert already is True, "已成交订单在雪花涨位后仍必须能回放"
+    assert replayed.cost == cost, "回放必须回放首次扣费额"
+    assert sorted(i.instance_id for i in replayed.instances) == sorted(first_ids)
+
+    balance_after_first_buy = 100000 - cost
+    assert (await repo.get_inventory(player))[0] == {GOLD: balance_after_first_buy}
+
+    # 真·新的超长购买仍必须被拒(ErrInventoryNotPurchasable,不是撞列宽的 ErrInternal),
+    # 且一分钱不扣、一件不发、连 claim 行都不留。
+    with pytest.raises(errcode.PandoraError) as ei:
+        await repo.purchase_shop_item(player, _req(grown_ids, key="buy-fresh"))
+    assert ei.value.code == errcode.ErrInventoryNotPurchasable
+    assert (await repo.get_inventory(player))[0] == {GOLD: balance_after_first_buy}
+    assert len(await repo.list_instances(player)) == units
+    async with pool.acquire() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT COUNT(*) FROM inventory_ledger WHERE player_id=%s AND idempotency_key='buy-fresh'",
+            (player,),
+        )
+        assert (await cur.fetchone())[0] == 0
 
 
 async def test_purchase_capacity_full_rolls_back_the_charge(repo) -> None:

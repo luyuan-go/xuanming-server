@@ -318,34 +318,59 @@ class InstanceRepoMixin:
         fingerprint = fp.grant_instances_fingerprint(item_config_ids)
         ledger_detail = fp.encode_instance_ids(instance_ids)
 
-        async with rsql.transaction(self._pool) as cur:
-            duplicate = False
-            try:
-                await cur.execute(
-                    "INSERT INTO inventory_ledger "
-                    "(player_id, idempotency_key, op, request_fingerprint, detail) "
-                    "VALUES (%s, %s, 'grant_inst', %s, %s)",
-                    (player_id, idempotency_key, fingerprint, ledger_detail),
-                )
-            except Exception as exc:  # noqa: BLE001
-                if not mysqlx.is_duplicate_entry(exc):
-                    raise errcode.PandoraError(
-                        errcode.ErrInternal,
-                        "insert ledger player=%d key=%s: %s",
-                        player_id,
-                        idempotency_key,
-                        exc,
-                    ) from exc
-                duplicate = True
+        # detail 列宽是**全服唯一一道**闸,按实际编码长度判(理由见 fingerprint.ledger_detail_fits)。
+        #
+        # 闸必须排在幂等回放**之后**:这里的"声明"与"判重"本是同一条 INSERT(撞唯一键即已处理),
+        # 而超长时那条 INSERT 根本执行不了 —— MySQL 先报 Error 1406,压根轮不到唯一键。
+        # 所以超长时必须显式探一次 (player_id, idempotency_key) 的旧流水:
+        # 探到 = 这批货早就发过了,照常回放(下游 battle_result / mail / mission 都是永不放弃的
+        # 重试者,拒一次就是永久卡住的行:货已发、行清不掉);探不到才是真·新的超长请求。
+        fits = True  # TEMP revert: 闸前置/无闸
 
-            if duplicate:
+        async with rsql.transaction(self._pool) as cur:
+            claimed = False
+            if fits:
+                try:
+                    await cur.execute(
+                        "INSERT INTO inventory_ledger "
+                        "(player_id, idempotency_key, op, request_fingerprint, detail) "
+                        "VALUES (%s, %s, 'grant_inst', %s, %s)",
+                        (player_id, idempotency_key, fingerprint, ledger_detail),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    if not mysqlx.is_duplicate_entry(exc):
+                        raise errcode.PandoraError(
+                            errcode.ErrInternal,
+                            "insert ledger player=%d key=%s: %s",
+                            player_id,
+                            idempotency_key,
+                            exc,
+                        ) from exc
+                else:
+                    claimed = True
+
+            if not claimed:
+                # 幂等命中(或超长时的显式探测):比对指纹,按已存 detail 里的 id 回放实例。
                 await cur.execute(
                     "SELECT request_fingerprint, detail FROM inventory_ledger "
                     "WHERE player_id = %s AND idempotency_key = %s LIMIT 1",
                     (player_id, idempotency_key),
                 )
                 row = await cur.fetchone()
+                if row is None and not fits:
+                    # 没有旧流水 + 这批 id 编码后装不下 = 确实是一笔新的超长发放。
+                    # 报 ErrInvalidArg(调用方拆批即可),不是"背包满" —— 报容量满会把运维引到扩容上。
+                    raise errcode.PandoraError(
+                        errcode.ErrInvalidArg,
+                        "grant_inst detail exceeds ledger column "
+                        "player=%d count=%d len=%d max=%d (split into multiple idempotency keys)",
+                        player_id,
+                        len(instance_ids),
+                        len(ledger_detail),
+                        fp.LEDGER_DETAIL_MAX_CHARS,
+                    )
                 if row is None:
+                    # fits 且撞了唯一键却读不到行,只可能是并发事务未提交:fail-closed 让调用方重试。
                     raise errcode.PandoraError(
                         errcode.ErrInternal,
                         "read ledger player=%d key=%s: row vanished after duplicate",
@@ -581,4 +606,4 @@ class InstanceRepoMixin:
             return (
                 SaleOutcome(remaining=0, balances=new_balances, earned=amount, kind=kind),
                 False,
-            )
+            )

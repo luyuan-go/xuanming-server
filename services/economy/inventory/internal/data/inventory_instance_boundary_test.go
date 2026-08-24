@@ -86,3 +86,107 @@ func TestItemClosureFingerprintsSeparateOperationsAndExactInstance(t *testing.T)
 		t.Fatal("旧 ledger detail 必须精确解析，不得接受尾随内容")
 	}
 }
+
+// idsWithDigits 造 n 个**指定十进制位数**的 id,用来模拟真实雪花的编码宽度。
+// 现网雪花是 17 位(2026-08 时 id≈2.7e16);20 位是 uint64 的最坏情况,
+// 也是"若干年后雪花涨到顶"的形态。
+func idsWithDigits(n, digits int) []uint64 {
+	base := uint64(1)
+	for i := 1; i < digits; i++ {
+		base *= 10
+	}
+	out := make([]uint64, n)
+	for i := range out {
+		out[i] = base + uint64(i)
+	}
+	return out
+}
+
+// TestLedgerDetailGateJudgesActualEncodedLength 钉死列宽闸的判定口径:
+// **只看这一条 detail 的实际编码长度**,不按 uint64 最坏 20 位反推件数。
+//
+// 事故背景(2026-08-24):detail 是幂等回放的唯一事实源,一次发太多件会撞
+// VARCHAR(255),INSERT 报 Error 1406 被包成 ErrInternal —— 玩家和策划都看不出原因。
+// 第一版修复在 biz 按"最坏 20 位"反推件数上闸(grant 11 / 购买 9),复核实测判为 P0 回退:
+// 现网雪花只有 17 位,那道闸把今天 100% 能成的 12、13 件直接改判为拒。
+// 这条测试就钉住"按实际长度判"这个口径:今天的 17 位 id 必须能发 13 件 / 买 11 份。
+func TestLedgerDetailGateJudgesActualEncodedLength(t *testing.T) {
+	const snowflakeDigitsToday = 17
+
+	t.Run("grant_inst 今天能发 13 件", func(t *testing.T) {
+		if !GrantInstancesDetailFits(idsWithDigits(13, snowflakeDigitsToday)) {
+			t.Fatalf("17 位 id 的 13 件必须装得下,实际编码 %d 字符",
+				len(encodeInstanceIDs(idsWithDigits(13, snowflakeDigitsToday))))
+		}
+		if GrantInstancesDetailFits(idsWithDigits(14, snowflakeDigitsToday)) {
+			t.Fatalf("14 件已超列容量却被判为装得下")
+		}
+	})
+
+	t.Run("shop_buy 今天能买 11 份", func(t *testing.T) {
+		mk := func(n int) PurchaseRequest {
+			return PurchaseRequest{
+				ShopID: 1, ItemConfigID: 6002, UnitCount: uint32(n),
+				InstanceIDs: idsWithDigits(n, snowflakeDigitsToday),
+			}
+		}
+		if !PurchaseDetailFits(mk(11)) {
+			t.Fatalf("17 位 id 的 11 份必须装得下,实际编码 %d 字符", len(purchaseDetail(mk(11))))
+		}
+		if PurchaseDetailFits(mk(12)) {
+			t.Fatalf("12 份已超列容量却被判为装得下")
+		}
+	})
+
+	t.Run("最坏 20 位仍按实际长度收敛", func(t *testing.T) {
+		// 位数涨上去后能装的件数自然变少 —— 这正是不按最坏位数硬定件数的代价与前提:
+		// 已提交批次的回放由 data 层"超长先探旧流水"兜住,不是靠这里少发几件。
+		if GrantInstancesDetailFits(idsWithDigits(13, 20)) {
+			t.Fatalf("20 位 id 的 13 件不可能装得下")
+		}
+		if !GrantInstancesDetailFits(idsWithDigits(11, 20)) {
+			t.Fatalf("20 位 id 的 11 件应仍装得下")
+		}
+	})
+}
+
+// TestPurchaseDetailRoundTripAtBudgetBoundary 列宽边界处 detail 仍必须能被原样解析回来。
+// 幂等重放靠 parsePurchaseDetail 还原"首次到底发了什么",解析不出就 fail-closed 报内部错;
+// 列宽闸只保证"写得进去",这条保证"读得回来"。
+func TestPurchaseDetailRoundTripAtBudgetBoundary(t *testing.T) {
+	const shopID, itemID, units = uint32(1), uint32(6002), uint32(9)
+	// 取该档位下正好还装得进列的最大件数(直接问生产的闸,不另算一套公式)。
+	n := 0
+	for k := 1; k <= 64; k++ {
+		if PurchaseDetailFits(PurchaseRequest{
+			ShopID: shopID, ItemConfigID: itemID, UnitCount: units, InstanceIDs: idsWithDigits(k, 20),
+		}) {
+			n = k
+		}
+	}
+	if n == 0 {
+		t.Fatalf("列容量必须允许至少 1 件")
+	}
+	want := make([]uint64, n)
+	for i := range want {
+		want[i] = ^uint64(0) - uint64(i)
+	}
+	detail := purchaseDetail(PurchaseRequest{
+		ShopID: shopID, ItemConfigID: itemID, UnitCount: units, InstanceIDs: want,
+	})
+	count, got, ok := parsePurchaseDetail(detail)
+	if !ok {
+		t.Fatalf("边界处 detail 必须可解析: %q", detail)
+	}
+	if count != 0 {
+		t.Fatalf("装备购买的 count 应为 0, got %d", count)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("回放件数不符: got=%d want=%d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("第 %d 件 id 不符: got=%d want=%d", i, got[i], want[i])
+		}
+	}
+}

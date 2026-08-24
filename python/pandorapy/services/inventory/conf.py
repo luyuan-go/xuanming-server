@@ -375,6 +375,23 @@ class InventoryConf(BaseModel):
         不设这道闸会怎样:重复的 item_config_id 会让"哪条规则生效"取决于遍历顺序;
         min > max 会让 roll 的区间宽度为负,鉴定出的数值不可预期。
         """
+        # ★ 额度类配置必须拒负数 —— Go 侧对应字段是 uint64/uint32,负数在那边**根本表示不出来**,
+        # 所以 Go 不需要这道闸;Python 没有类型保护,负数会一路走到"0 → 取默认,否则用配置值"
+        # 的三元里被当成**真实限额**:`max_currency_per_grant: -1` 会让每一笔发放都撞
+        # `amount > -1` 而拒(战后结算、活动、补偿全线静默失败,错误码还是 ErrInvalidArg,
+        # 看上去像业务参数错);`max_shop_units_per_purchase: -1` 会让整个商店买不了任何东西。
+        # 两者都没有任何"配置错了"的信号,只能从启动期拒掉。
+        if self.max_currency_per_grant < 0:
+            raise ValueError(
+                f"max_currency_per_grant must not be negative (got {self.max_currency_per_grant}); "
+                f"留空 / 0 表示取默认额度"
+            )
+        if self.max_shop_units_per_purchase < 0:
+            raise ValueError(
+                f"max_shop_units_per_purchase must not be negative "
+                f"(got {self.max_shop_units_per_purchase}); 留空 / 0 表示取默认份数上限"
+            )
+
         seen_id: set[int] = set()
         for i, rule in enumerate(self.identify_rules):
             if rule.item_config_id == 0:

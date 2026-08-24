@@ -84,6 +84,8 @@ _DDL = [
         item_config_ids VARCHAR(512) NOT NULL,
         stack_item_config_ids VARCHAR(512) NOT NULL DEFAULT '',
         instance_item_config_ids VARCHAR(512) NOT NULL DEFAULT '',
+        -- currency_amount 必须 UNSIGNED(同 000011 迁移):有符号列会静默收下负数发放。
+        currency_amount BIGINT UNSIGNED NOT NULL DEFAULT 0,
         created_at_ms BIGINT NOT NULL DEFAULT 0,
         PRIMARY KEY (id),
         UNIQUE KEY uk_match_player (match_id, player_id)
@@ -276,12 +278,13 @@ def _outbox(*player_ids) -> list[brepo.OutboxRecord]:
     return [brepo.OutboxRecord(player_id=pid, payload=b"pb-" + str(pid).encode()) for pid in player_ids]
 
 
-def _drop(player_id=1) -> brepo.DropOutboxRecord:
+def _drop(player_id=1, currency_amount=0) -> brepo.DropOutboxRecord:
     return brepo.DropOutboxRecord(
         player_id=player_id,
         item_config_ids=[10001, 10002],
         stack_item_config_ids=[10002],
         instance_item_config_ids=[10001],
+        currency_amount=currency_amount,
     )
 
 
@@ -640,8 +643,51 @@ async def test_drop_outbox_csv_round_trip(repo) -> None:
     assert await repo.fetch_drop_outbox(10) == []
 
 
+async def test_drop_outbox_currency_round_trips(repo) -> None:
+    """★ currency_amount 必须**写得进也读得回**。
+
+    漏写列(走默认 0)与漏读列(恒 0)都是同一种失败:金币静默不发、零报错、
+    战绩表上却明明白白记着这局赚了多少。
+    """
+    await repo.save_result(_result(), _outbox(1, 2), [_drop(1, currency_amount=777)], None, 0)
+    rows = await repo.fetch_drop_outbox(10)
+    assert [r.currency_amount for r in rows] == [777]
+
+
+async def test_gold_only_row_is_persisted(pool, repo) -> None:
+    """★ 没掉落但有金币的行必须入库。
+
+    旧判据 `没有 item_config_ids 就 continue` 会把它整条丢掉 —— 而"这局没爆装备
+    只赚了钱"是最常见的一局。
+    """
+    gold_only = brepo.DropOutboxRecord(player_id=1, item_config_ids=[], currency_amount=88)
+    await repo.save_result(_result(), _outbox(1, 2), [gold_only], None, 0)
+    assert await _count(pool, "battle_drop_outbox") == 1
+    assert [r.currency_amount for r in await repo.fetch_drop_outbox(10)] == [88]
+
+
+async def test_suppressed_drops_still_persist_currency(pool, repo) -> None:
+    """★★ 水位 >0 抑制的是**掉落**,不是金币。
+
+    实时进度通道逐事件发掉落(所以结算路径再写一遍就是双发),但它**不发金币** ——
+    金币只有结算这一条路径。整行跳过等于这局的金币蒸发,且没有任何报错。
+    落库的行必须是"三份路由全空 + 金币"的纯货币行,不能把掉落也捎带写进去。
+    """
+    await _seed_stream(pool, 1001, last_seq=9)
+    _, info = await repo.save_result(
+        _result(), _outbox(1, 2), [_drop(1, currency_amount=66)], None, 9
+    )
+    assert info.drops_suppressed is True
+    rows = await repo.fetch_drop_outbox(10)
+    assert len(rows) == 1
+    assert rows[0].currency_amount == 66
+    assert rows[0].item_config_ids == []
+    assert rows[0].stack_item_config_ids == []
+    assert rows[0].instance_item_config_ids == []
+
+
 async def test_drop_outbox_skips_empty_rows(pool, repo) -> None:
-    """item_config_ids 为空的行不入库:空行会让发布器每轮取出来又发现无路由。"""
+    """既无掉落也无金币的行不入库:空行会让发布器每轮取出来又发现无路由。"""
     empty = brepo.DropOutboxRecord(player_id=1, item_config_ids=[])
     await repo.save_result(_result(), _outbox(1, 2), [empty], None, 0)
     assert await _count(pool, "battle_drop_outbox") == 0

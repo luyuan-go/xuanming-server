@@ -183,6 +183,47 @@ def _duration_str(value: _dt.timedelta) -> str:
 # 的(不存在的)路径 → 触发下面的 PANDORA_DS_EXE 兜底;Python 却得到一条含
 # `${PANDORA_DS_ROOT}` 字面量的路径,同样不存在、同样走兜底 —— 现在恰好同结果,
 # 但一旦哪天有人拿这个字段做前缀匹配或日志比对,两栈就分叉了。
+def _local_ds_executable_mismatched(path: str, launcher: str) -> bool:
+    """两种形态的 exe 被互换了没有 —— 只认这一种确定错配。
+
+    editor 形态拿到出包的 PandoraServer*,或 packaged 形态拿到引擎的 UnrealEditor*。
+    刻意不做白名单(不要求「必须叫 UnrealEditor」):策划机可能用 UnrealEditor-Cmd.exe、
+    包装脚本,测试用 stub.exe,这些都是合法的;拦已知错配比放行未知形态更不容易误伤。
+    与 Go 侧 services/battle/*/internal/conf/conf.go 的同名判据逐条一致。
+    """
+    base = os.path.basename(path).lower()
+    if launcher == LAUNCHER_EDITOR:
+        return base.startswith("pandoraserver")
+    return base.startswith("unrealeditor")
+
+
+def _local_ds_executable_usable(path: str, launcher: str) -> bool:
+    """yaml 里写死的 DS 可执行路径,在当前 launcher 形态下算不算「可用的那一个」。
+
+    只判 os.path.exists 是不够的:2026-08-24 事故 —— `-DsLauncher editor` 一次注入
+    PANDORA_DS_LAUNCHER / PANDORA_DS_UPROJECT / PANDORA_DS_EXE 三个变量,而 dev 机
+    yaml 里写死的 PandoraServer.exe 确实存在,于是唯独 EXE 那一个被跳过 → 出包 server
+    拿到 .uproject 当关卡 URL → LoadPackage 失败 → world 为空 →
+    UMyLevelModel::OnEnginePostLoadMap 解空指针,DS 启动十几秒后 ACCESS_VIOLATION 崩。
+    """
+    if path == "":
+        return False
+    if not os.path.exists(path):
+        return False
+    return not _local_ds_executable_mismatched(path, launcher)
+
+
+def _resolve_ds_launcher(raw: str) -> str:
+    """launcher 归一(env 优先)。与下方正式归一化逐字等价,幂等。
+
+    需要它是因为 PANDORA_DS_EXE 的兜底判据要按形态判断,而形态在原代码里是**之后**
+    才归一的 —— 只判「路径存在」看不出形态,而两种形态要的 exe 根本不是同一个。
+    """
+    env = (os.environ.get(ENV_DS_LAUNCHER) or "").strip()
+    value = (env or raw or "").strip().lower()
+    return LAUNCHER_EDITOR if value == LAUNCHER_EDITOR else LAUNCHER_PACKAGED
+
+
 _ENV_REF_RE = re.compile(r"\$(?:\{([^}]*)\}|([A-Za-z0-9_]+))")
 
 
@@ -766,7 +807,9 @@ class Config(pconfig.BaseConf):
 
         env_exe = os.environ.get(ENV_DS_EXE, "")
         if env_exe != "":
-            if lh.executable_path == "" or not os.path.exists(lh.executable_path):
+            if not _local_ds_executable_usable(
+                lh.executable_path, _resolve_ds_launcher(lh.launcher)
+            ):
                 lh.executable_path = _from_slash(env_exe)
                 env_dir = os.environ.get(ENV_DS_DIR, "")
                 if env_dir != "":

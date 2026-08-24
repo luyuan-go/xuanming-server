@@ -318,8 +318,8 @@ def validate_inventory_tables(t: Tables) -> None:
 def _index_shop_rows(rows, items) -> dict[int, list[ShopEntry]]:  # noqa: ANN001
     """商店表逐行校验 + 外键 + 按 shop_id 聚合排序。
 
-    对应 Go 的 validateShopRow(逐行业务校验)+ validateCrossTables 里的
-    shop.道具ID → item 外键 + ShopEntriesOf(排序)。
+    对应 Go 的 validateShopRow(逐行业务校验)+ ValidateShopCrossTables
+    (shop.道具ID → item 外键 + 同店同道具唯一 + 买入价 > 回收价)+ ShopEntriesOf(排序)。
 
     这些校验之所以必须在**加载期整批拒**而不是购买时逐次拒:一张配错的商店表
     会让整个商店页签在玩家面前半死不活(有的商品能买有的报错),而加载期拒批次
@@ -328,8 +328,15 @@ def _index_shop_rows(rows, items) -> dict[int, list[ShopEntry]]:  # noqa: ANN001
     ★ 外键这一条尤其不能省:Go 侧在加载期就拒,Python 侧若放行,同一份漂移批次
       会出现"Go 副本拒载、Python 副本正常启动"的不对称 —— 而 Python 副本上的表现
       是每次购买那件道具都报 ErrInternal,查起来比"整批拒载"难得多。
+
+    ★ 重复档与买入价这两条同理,而且更严重(它们曾经只有 Go 有):
+      重复档在这里放行、只由 lookup_shop_entry 在**查询期**返回 None,等于配错的表
+      照样上线,而那件道具永远买不了、表面上却"配了";买入价那条根本不存在,
+      于是同一份配错的表在 Go 副本上拒载(可见失败)、在 Python 副本上静默开始漏钱。
     """
     grouped: dict[int, list[ShopEntry]] = {}
+    # (shop_id, item_config_id) → 首次出现的行主键,只为把重复档的两行都报出来。
+    seen: dict[tuple[int, int], int] = {}
     for row in rows:
         if row.id == 0:
             raise ConfigTableError("shop 表主键为 0")
@@ -357,6 +364,50 @@ def _index_shop_rows(rows, items) -> dict[int, list[ShopEntry]]:  # noqa: ANN001
             # UNSPECIFIED / 未知值一律拒,**不回退成金币**:静默回退会让配错的商品
             # 按金币扣钱,是不可观测的经济事故(currency.proto)。
             raise ConfigTableError(f"shop 主键 {row.id}: 货币类型 非法: {int(row.currency_kind)}")
+
+        # ── 跨表闸一:同一商店内同一道具不得配多档 ──────────────────────────
+        #
+        # 购买请求只带 (shop_id, item_config_id),没有档位标识。配了两档且价格不同时,
+        # 服务端无法判断玩家要买哪一档 —— lookup_shop_entry 只能 fail-closed,
+        # 结果是**这个道具在这个商店里永远买不了**,而表面上看表是"配了的",没有任何报错。
+        # 打包商品(如"药水×10")应当用独立的道具 ID,不要给同一道具配两个单价。
+        key = (row.shop_id, row.item_config_id)
+        prev_id = seen.get(key)
+        if prev_id is not None:
+            raise ConfigTableError(
+                f"商店 {row.shop_id} 的道具 {row.item_config_id} 配了多档"
+                f"(shop 行 {prev_id} 与 {row.id}):购买请求无法区分档位,"
+                f"该道具会永远买不了;打包商品请用独立道具 ID"
+            )
+        seen[key] = row.id
+
+        # ── 跨表闸二:买入价必须严格高于回收总价 ────────────────────────────
+        #
+        # 商店买入价在 shop 表,出售回收价在道具表 sell_price,两者相互独立、谁都能单独改。
+        # 一旦某档买入价 <= 回收总价,玩家「买进 → 立刻卖出」就净赚或不亏,而买和卖现在
+        # **都是服务端权威且都可反复执行**,这就是一条严格闭合的无限刷钱循环。
+        #
+        # 这个失败模式**没有任何运行期信号**:每笔买卖单独看都合法、都成功、都记流水,
+        # 异常只在总量上 —— 所以只能挡在加载期,挡在购买期等于给配错的表发通行证
+        # (报错的是别的商品,刷钱的正是那些"没报错"的档)。
+        #
+        # 比较口径是**同一份**的总价:买 1 份得 count_per_unit 个,卖掉这些能得
+        # count_per_unit × sell_price,所以判据是 unit_price > count_per_unit × sell_price。
+        #
+        # 只对**同币种可比**的情况生效:回收统一结算金币(inventory 的 sell_currency_kind,
+        # 默认金币),所以非金币计价的商品之间不存在直接套利路径,跳过。
+        # 真要做跨币种兑换那是汇率设计,不能靠这条不变量兜。
+        if int(row.currency_kind) == _ccy.CURRENCY_GOLD:
+            item = items[row.item_config_id]
+            recycle = int(item.sell_price) * int(row.count_per_unit)
+            if int(row.unit_price) <= recycle:
+                raise ConfigTableError(
+                    f"shop 主键 {row.id}(商店 {row.shop_id},道具 {row.item_config_id})"
+                    f"买入价 {row.unit_price} <= 回收总价 {recycle}"
+                    f"(={item.sell_price}×{row.count_per_unit}):买进立刻卖出即可刷钱,"
+                    f"买入价必须严格高于回收价"
+                )
+
         grouped.setdefault(row.shop_id, []).append(
             ShopEntry(
                 item_config_id=row.item_config_id,

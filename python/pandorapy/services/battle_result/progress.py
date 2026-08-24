@@ -1488,7 +1488,9 @@ class ProgressMixin:
             idempotency_key = progress_idempotency_key(
                 r.match_id, r.seq, r.player_id, "stack"
             )
-            await self._granter.grant_items(r.player_id, stacks, idempotency_key)
+            # 金币位固定传 0:实时进度通道**只发道具不发金币**(金币是结算路径的收益,
+            # 见 biz._build_drop_outbox)。这里传非 0 会让同一局的金币被两条链各发一次。
+            await self._granter.grant_items(r.player_id, stacks, 0, idempotency_key)
         elif kind in (
             int(bprepo.ProgressGrantKind.CONSUME_STACK),
             int(bprepo.ProgressGrantKind.DISCARD_STACK),

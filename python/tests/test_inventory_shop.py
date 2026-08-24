@@ -4,8 +4,10 @@
   1. ★ 定价链只有一条:商店表 → unit_price × unit_count。**客户端不传价格**,
      所以根本不存在"客户端报价与服务端不一致"这个失败模式(§17.2)。
   2. ★ fail-closed:商店表未注入 / 商店不存在 / 不在售 / 币种未知,一律拒,不猜。
-  3. ★ 同一商店里同一道具配了多档 → 拒(服务端不能替玩家选便宜的那档)。
-  4. 鉴权边界:GetShop 不鉴权(价目表是公开展示信息),PurchaseShopItem 以
+  3. ★ 同一商店里同一道具配了多档 → **加载期整批拒**;查询期 fail-closed 只是兜底。
+  4. ★ 买入价必须严格高于回收总价 —— 否则"买进立刻卖出"是一条闭合的无限刷钱环,
+     而且它**没有任何运行期信号**(每笔买卖单独看都合法),只能挡在加载期。
+  5. 鉴权边界:GetShop 不鉴权(价目表是公开展示信息),PurchaseShopItem 以
      Envoy 注入的调用者身份为准,不信任请求体 player_id。
 """
 
@@ -13,6 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
+import json
+import pathlib
+import shutil
 
 import pytest
 
@@ -377,7 +383,13 @@ def test_purchase_requires_a_caller_and_ignores_nothing() -> None:
     assert [(g.item_config_id, g.count) for g in r2.granted_items] == [(1001, 30)]
 
 
-# ── 真实配置表:加载 + 排序 + 重复档 fail-closed ───────────────────────────
+# ── 真实配置表:加载 + 排序 + 当前批次干净 ─────────────────────────────────
+#
+# ★ 这一节与下一节是**两层**,谁也证明不了谁:
+#     真实 dist 断言的是"当前发布数据干净"(数据回归);
+#     合成批次断言的是"闸门本身有效"(代码回归)。
+#   只留前者:闸门被误删也照样绿(因为数据本来就没触发它)。
+#   只留后者:策划把表配成刷钱档时没有任何测试会红。
 
 
 def test_real_dist_shop_table_loads_and_sorts(configtable_dist) -> None:
@@ -395,20 +407,136 @@ def test_real_dist_shop_table_loads_and_sorts(configtable_dist) -> None:
         ccy.validate_currency_kind(e.currency_kind)
 
 
-def test_real_dist_duplicate_entry_is_fail_closed(configtable_dist) -> None:
-    """★ 当前发布批次里 shop_id=1 把道具 10001 配了两档(单买 60 / 10 个装 560)。
+def test_real_dist_shop_table_is_clean(configtable_dist) -> None:
+    """★ 当前发布批次必须**不含**重复档、也不含买入价 <= 回收总价的档。
 
-    lookup 必须返回 None(拒),而不是挑一档 —— 与 Go 的 ShopEntryOf 同语义。
-    这条同时是一份**数据问题的存证**:真要卖打包商品应当用独立的道具ID。
+    load_tables 本身已经会拒掉这两类数据(见下一节的合成批次用例),所以本条真正的
+    作用是把失败信息落到**具体哪一档**上 —— 只靠加载期抛异常的话,策划看到的是
+    "整批拒载",而这里能直接指出是哪个商店哪件道具。
+
+    历史:这条用例曾经反过来断言"真表里存在重复档"(shop_id=1 的道具 10001 配了
+    单买 60 / 10 个装 560 两档),但那份数据从未发布过 —— 表被重导后用例就永远红。
+    断言"当前数据干净"才是能长期成立的口径。
     """
-    store = icat.Store(icat.load_tables(configtable_dist).tables, str(configtable_dist))
-    dupes: list[tuple[int, int]] = []
+    result = icat.load_tables(configtable_dist)
+    store = icat.Store(result.tables, str(configtable_dist))
+    items = result.tables.items
     for shop_id in sorted(store.tables.shops):
         seen: set[int] = set()
         for e in store.list_shop(shop_id):
-            if e.item_config_id in seen:
-                dupes.append((shop_id, e.item_config_id))
+            assert e.item_config_id not in seen, (
+                f"商店 {shop_id} 的道具 {e.item_config_id} 配了多档:购买请求无法区分档位,"
+                f"该道具会永远买不了;打包商品请用独立道具 ID"
+            )
             seen.add(e.item_config_id)
-    assert dupes, "本条测试的前提(真实表里存在重复档)已不成立,请复核数据与断言"
-    for shop_id, item in dupes:
-        assert store.lookup_shop_entry(shop_id, item) is None
+            if e.currency_kind != GOLD:
+                continue  # 非金币计价与金币回收不可比(与加载期口径一致)
+            recycle = items[e.item_config_id].sell_price * e.count_per_unit
+            assert e.unit_price > recycle, (
+                f"商店 {shop_id} 的道具 {e.item_config_id} 买入价 {e.unit_price} "
+                f"<= 回收总价 {recycle}:买进立刻卖出即可刷钱"
+            )
+
+
+# ── 合成批次:证明两条加载期闸门本身有效 ───────────────────────────────────
+
+
+# load_tables 只读这五个文件(其余 dist 表与本服务无关),所以合成批次只复制它们 ——
+# 整棵 dist 复制一遍要 650KB,而这里每个用例都要建一份。
+_LOADED_FILES = ("manifest.json", "item.json", "equipment_affix.json", "role_attr_map.json",
+                 "shop.json")
+
+
+def _fork_dist(src: pathlib.Path, dst: pathlib.Path, mutate) -> pathlib.Path:  # noqa: ANN001
+    """从真实 dist 派生一份改过 shop.json 的批次(checksum / rows 同步重算)。
+
+    ★ 必须重算 manifest 里的 checksum 与 rows:加载器会先验这两项,不重算的话
+      用例会**在校验层就红**,根本走不到我们想验的商店闸 —— 那是一条假绿(假红)。
+    """
+    dst.mkdir(parents=True, exist_ok=True)
+    for name in _LOADED_FILES:
+        shutil.copyfile(src / name, dst / name)
+
+    shop = json.loads((dst / "shop.json").read_text("utf-8"))
+    mutate(shop["rows"])
+    raw = json.dumps(shop, ensure_ascii=False).encode("utf-8")
+    (dst / "shop.json").write_bytes(raw)
+
+    manifest = json.loads((dst / "manifest.json").read_text("utf-8"))
+    for t in manifest["tables"]:
+        if t["name"] == "shop":
+            t["rows"] = len(shop["rows"])
+            t["checksum"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    (dst / "manifest.json").write_bytes(json.dumps(manifest, ensure_ascii=False).encode("utf-8"))
+    return dst
+
+
+def test_duplicate_shop_entry_rejects_the_whole_batch(configtable_dist, tmp_path) -> None:
+    """★ 同店同道具配两档 → **整批拒载**,而不是"这件道具买不了、其余照常上线"。
+
+    购买期挡只会让个别商品报错,配错的表照样上线;加载期拒批次会保留上一份正确配置
+    继续服务(§9.15 加载成功才切换),策划立刻看到失败原因。
+    """
+    def add_dupe(rows: list) -> None:
+        first = dict(rows[0])
+        first["id"] = max(r["id"] for r in rows) + 1
+        first["unit_price"] = str(int(first["unit_price"]) * 10)
+        first["count_per_unit"] = 10
+        rows.append(first)
+
+    active = _fork_dist(configtable_dist, tmp_path / "dupe", add_dupe)
+    with pytest.raises(icat.ConfigTableError) as ei:
+        icat.load_tables(active)
+    assert "配了多档" in str(ei.value)
+
+
+def test_underpriced_shop_entry_rejects_the_whole_batch(configtable_dist, tmp_path) -> None:
+    """★ 买入价 <= 回收总价 → 整批拒载(无限刷钱环,没有任何运行期信号)。
+
+    这里刻意把买入价压到**恰等于**回收总价:判据必须是"严格高于",配成相等时
+    买进卖出不亏不赚,已经足以用来洗额度/刷任务量。
+    """
+    items = {r.id: r for r in icat.load_tables(configtable_dist).tables.items.values()}
+
+    def underprice(rows: list) -> None:
+        row = rows[0]
+        assert row["currency_kind"] == GOLD
+        recycle = items[row["item_config_id"]].sell_price * row["count_per_unit"]
+        assert recycle > 0, "本用例需要一件 sell_price > 0 的道具"
+        row["unit_price"] = str(recycle)
+
+    active = _fork_dist(configtable_dist, tmp_path / "cheap", underprice)
+    with pytest.raises(icat.ConfigTableError) as ei:
+        icat.load_tables(active)
+    assert "买进立刻卖出即可刷钱" in str(ei.value)
+
+
+def test_non_gold_entry_is_not_compared_against_gold_recycle(configtable_dist, tmp_path) -> None:
+    """非金币计价的档**不比**金币回收价 —— 那是汇率设计,不能靠这条不变量兜。
+
+    (否则钻石标价 1 的商品会因为"1 <= 金币回收价"被误拒,整批加载不了。)
+    """
+    def to_diamond(rows: list) -> None:
+        rows[0]["currency_kind"] = DIAMOND
+        rows[0]["unit_price"] = "1"
+
+    active = _fork_dist(configtable_dist, tmp_path / "diamond", to_diamond)
+    assert icat.load_tables(active).tables.shops  # 不抛即为通过
+
+
+def test_lookup_shop_entry_fails_closed_on_duplicate() -> None:
+    """查询期兜底:万一重复档绕过了加载期闸,lookup 必须返回 None 而不是挑一档。
+
+    ★ 这条不能靠真实 dist 来证明(当前数据是干净的,永远走不到这个分支),
+      只能用合成 Tables —— 与 Go 的 ShopEntryOf 同语义。
+    """
+    tables = icat.Tables(
+        version=1, source_rev="test", items={}, affix_by_pool={}, role_attrs={},
+        shops={1: [_entry(unit_price=60), _entry(unit_price=560, count_per_unit=10)]},
+    )
+    store = icat.Store(tables, "test")
+    assert store.lookup_shop_entry(1, STACK_ITEM) is None
+    # 同一件道具只配一档时**必须取得到** —— 否则上面那个 None 可能只是"这个查询恒空",
+    # 证明不了 fail-closed 分支真的被走到了。
+    tables.shops[2] = [_entry(unit_price=60)]
+    assert store.lookup_shop_entry(2, STACK_ITEM) is not None

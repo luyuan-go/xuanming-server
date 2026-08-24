@@ -180,6 +180,11 @@ func (u *InventoryUsecase) PurchaseShopItem(
 			return data.PurchaseOutcome{}, errcode.New(errcode.ErrInventoryCapacityFull,
 				"instance inventory disabled (capacity<=0) player=%d", playerID)
 		}
+		// 这里**刻意没有**按"uint64 最坏 20 位"反推的份数闸(2026-08-24 删)。
+		// 那道闸比现实严(现网雪花 17 位,shop=1/item=6002 实际能买 11 份,它只放 9 份),
+		// 且挡在 data 的幂等回放之前 —— 已成交订单的重试会被拒死(钱已扣、货已发,
+		// 客户端永远拿不到成功回包)。detail 列宽改由 data.claimPurchaseLedger 按
+		// **实际编码长度**在回放之后判,超长的新请求照样返回 ErrInventoryNotPurchasable。
 		// 每件一个雪花 ID;批量预留一次拿整段,避免逐件 CAS。
 		ids := make([]uint64, totalUnits)
 		u.sf.GenerateInto(ids)

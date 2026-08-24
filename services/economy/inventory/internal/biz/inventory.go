@@ -194,6 +194,11 @@ func (u *InventoryUsecase) GrantInstances(ctx context.Context, playerID uint64, 
 	if len(itemConfigIDs) == 0 {
 		return nil, errcode.New(errcode.ErrInvalidArg, "nothing to grant")
 	}
+	// 这里**刻意没有**按"uint64 最坏 20 位"反推的单批件数上闸(2026-08-24 删)。
+	// 那道闸比现实严(现网雪花 17 位,实际能发 13 件,它只放 11 件),更致命的是它挡在
+	// data 的幂等回放之前:已提交成功的旧批次再也回放不了,而掉落出箱 / 邮件领取 /
+	// 任务补扫都是永不放弃的重试者 —— 拒一次就是永久卡住的行(货已发、行清不掉)。
+	// detail 列宽由 data.GrantInstances 按**实际编码长度**在回放之后判定,那里天然对回放安全。
 	for _, id := range itemConfigIDs {
 		if id == 0 {
 			return nil, errcode.New(errcode.ErrInvalidArg, "item_config_id required")

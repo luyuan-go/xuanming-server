@@ -10,7 +10,9 @@ package biz
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/luyuancpp/pandora/pkg/dbguard"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -114,22 +116,23 @@ func (r *fakeRepo) SaveResult(_ context.Context, result *battlev1.BattleResult, 
 		r.nextID++
 		r.outbox = append(r.outbox, data.OutboxRecord{ID: r.nextID, PlayerID: o.PlayerID, Payload: o.Payload})
 	}
-	if !settleInfo.DropsSuppressed {
-		for _, d := range dropOutbox {
-			// 与真实 MySQLBattleRepo.SaveResult 同一判据:只带金币、不带掉落的行也要写。
-			// 旧判据只看 ItemConfigIDs,会把纯金币收益整条丢掉(假仓比生产严会让漏发测不出来)。
-			if len(d.ItemConfigIDs) == 0 && d.CurrencyAmount == 0 {
-				continue
-			}
-			r.nextDropID++
-			r.dropOutbox = append(r.dropOutbox, data.DropOutboxRecord{
-				ID: r.nextDropID, MatchID: result.GetMatchId(), PlayerID: d.PlayerID,
-				ItemConfigIDs:         append([]uint32(nil), d.ItemConfigIDs...),
-				StackItemConfigIDs:    append([]uint32(nil), d.StackItemConfigIDs...),
-				InstanceItemConfigIDs: append([]uint32(nil), d.InstanceItemConfigIDs...),
-				CurrencyAmount:        d.CurrencyAmount,
-			})
+	// 入箱判据直接调生产的 data.SettleDropOutboxRow,**刻意不在假仓里复刻一份**。
+	// 历史教训:假仓曾逐字抄了 `if !settleInfo.DropsSuppressed { ... }` 整个循环,
+	// 假仓与生产同构 → "实时通道一介入就把整局金币静默吞掉"这类漏发在单测里完全不可见。
+	// 共用同一个函数后,下面这些出箱行断言观察到的就是生产判据本身。
+	for _, d := range dropOutbox {
+		row, keep := data.SettleDropOutboxRow(d, settleInfo.DropsSuppressed)
+		if !keep {
+			continue
 		}
+		r.nextDropID++
+		r.dropOutbox = append(r.dropOutbox, data.DropOutboxRecord{
+			ID: r.nextDropID, MatchID: result.GetMatchId(), PlayerID: row.PlayerID,
+			ItemConfigIDs:         append([]uint32(nil), row.ItemConfigIDs...),
+			StackItemConfigIDs:    append([]uint32(nil), row.StackItemConfigIDs...),
+			InstanceItemConfigIDs: append([]uint32(nil), row.InstanceItemConfigIDs...),
+			CurrencyAmount:        row.CurrencyAmount,
+		})
 	}
 	if terminalRelease != nil {
 		r.nextTerminalID++
@@ -681,13 +684,46 @@ type fakeGranter struct {
 	discardCalls []consumeCall
 	failPlayer   uint64
 	capacityFull bool
-	failStack    bool
-	failConsume  bool
-	failDiscard  bool
-	consumeErr   error
-	discardErr   error
-	consumeTries int
-	discardTries int
+	// maxInstancesPerCall 复刻 inventory 侧那条真实的单次发放上闸:一次 GrantInstances 的
+	// instance_id 列表要编进 inventory_ledger.detail(VARCHAR(255))当幂等回放事实源,
+	// 装不下就整笔返错。生产判据是
+	// services/economy/inventory/internal/data/inventory_instance.go 的
+	// **GrantInstancesDetailFits**(按实际编码长度判,17 位雪花下一次约 13 件);
+	// 这里用件数近似它,只为让"超限"这个形态在假仓里可达。
+	//
+	// ⚠ 别再写 "data.MaxGrantInstances() = (255-15+1)/(20+1) = 11 件":那个按最坏 20 位
+	// 反推件数的函数**已被删除**(会把今天能发的批次改判为拒,并挡死已提交批次的回放),
+	// 全仓 grep 只会剩注释自己在自说自话。
+	//
+	// 0 = 不设限(保持既有用例行为不变)。不复刻这一条,
+	// "单场掉落超上限 → 出箱行永久卡死"在假仓里全绿。
+	maxInstancesPerCall int
+	failStack           bool
+	failConsume         bool
+	failDiscard         bool
+	consumeErr          error
+	discardErr          error
+	consumeTries        int
+	discardTries        int
+
+	// grantedKeys 记录已成功入账的幂等键 → 请求指纹,复刻 inventory 侧真实幂等语义:
+	// 同键同指纹 = 重放放行;同键不同指纹 = ErrInventoryIdempotencyConflict。
+	// 不复刻这一条,"两路发放共用同一个幂等键"这类 P0(装备永远发不出去)在假仓里全绿。
+	grantedKeys map[string]string
+}
+
+// claimKey 占用一个幂等键。只在**发放成功**时调用:inventory 侧失败的请求不会留下幂等记录,
+// 假仓若在失败前就占键,会把"背包满下轮重试"误判成指纹冲突。
+func (g *fakeGranter) claimKey(key, fingerprint string) error {
+	if g.grantedKeys == nil {
+		g.grantedKeys = map[string]string{}
+	}
+	if prev, ok := g.grantedKeys[key]; ok && prev != fingerprint {
+		return errcode.New(errcode.ErrInventoryIdempotencyConflict,
+			"idempotency key %q reused: %s vs %s", key, prev, fingerprint)
+	}
+	g.grantedKeys[key] = fingerprint
+	return nil
 }
 
 type grantCall struct {
@@ -720,6 +756,19 @@ func (g *fakeGranter) GrantInstances(_ context.Context, playerID uint64, itemCon
 	if g.failPlayer != 0 && playerID == g.failPlayer {
 		return simpleErr("bag full")
 	}
+	if g.maxInstancesPerCall > 0 && len(itemConfigIDs) > g.maxInstancesPerCall {
+		// 真实错误码是 **errcode.ErrInvalidArg**(inventory_instance.go 那句
+		// "grant_inst detail exceeds ledger column ... (split into multiple idempotency keys)"),
+		// 不是 ErrInternal、更不是 capacity-full —— 码必须对上,因为 deliverDropRecord
+		// 只对 ErrInventoryCapacityFull 转邮件,ErrInvalidArg 走的是"保留出箱行下轮重试",
+		// 即永久卡死。假仓这里要是返成 capacity-full,那条永久卡死的路径就被测糊了。
+		return errcode.New(errcode.ErrInvalidArg,
+			"grant_inst detail exceeds ledger column: count=%d max=%d",
+			len(itemConfigIDs), g.maxInstancesPerCall)
+	}
+	if err := g.claimKey(key, fmt.Sprintf("instances:%d:%v", playerID, itemConfigIDs)); err != nil {
+		return err
+	}
 	g.calls = append(g.calls, grantCall{playerID: playerID, items: append([]uint32(nil), itemConfigIDs...), key: key})
 	return nil
 }
@@ -727,6 +776,9 @@ func (g *fakeGranter) GrantInstances(_ context.Context, playerID uint64, itemCon
 func (g *fakeGranter) GrantItems(_ context.Context, playerID uint64, items []data.StackGrant, goldAmount uint64, key string) error {
 	if g.failStack {
 		return simpleErr("stack grant failed")
+	}
+	if err := g.claimKey(key, fmt.Sprintf("items:%d:%v:gold=%d", playerID, items, goldAmount)); err != nil {
+		return err
 	}
 	cpy := append([]data.StackGrant(nil), items...)
 	g.stackCalls = append(g.stackCalls, stackGrantCall{playerID: playerID, items: cpy, gold: goldAmount, key: key})
@@ -1912,6 +1964,204 @@ func TestBattleGoldClampedToServerCap(t *testing.T) {
 	// 战绩落库读的是同一份 stats:钳一次两处一致,不能出现"战绩显示天文数字、钱包只到 500"。
 	if got := res.Stats[0].GetGold(); got != 500 {
 		t.Fatalf("stats 必须被就地钳到 500, got %d", got)
+	}
+}
+
+// TestBattleGoldSurvivesProgressStreamSuppression 走过实时进度通道的对局,战后金币照常入箱并发放。
+//
+// 2026-08-24 P0 回归:抑制条件 DropsSuppressed 曾包住整个入箱循环,连"纯货币、零道具"的行
+// 一起跳过;而实时通道自己明确不发金币(progress.go 里 GrantItems 第三实参硬编码 0)。
+// 两处代码互相指望对方发金币 → 任何走过实时通道的对局(= 拾取/击杀走第三通道的正常局)
+// 战后金币永久丢失且零错误日志。这条用例同时钉住反向不变量:已被实时通道发过的道具不得再发一遍。
+func TestBattleGoldSurvivesProgressStreamSuppression(t *testing.T) {
+	repo := newFakeRepo()
+	granter := &fakeGranter{}
+	uc := newDropUsecase(repo, granter, []uint32{5001})
+	repo.progressSeq[622] = 3 // 本场应用过实时进度事件 → 水位>0 → DropsSuppressed
+
+	res := dropResult(622, []uint32{5001}, nil)
+	res.Stats[0].Gold = 250
+	if _, err := uc.ReportResult(context.Background(), res, 3); err != nil {
+		t.Fatalf("ReportResult err: %v", err)
+	}
+	if len(repo.dropOutbox) != 1 {
+		t.Fatalf("实时通道介入不该吞掉金币行, got %d 行: %+v", len(repo.dropOutbox), repo.dropOutbox)
+	}
+	d := repo.dropOutbox[0]
+	if d.PlayerID != 1 || d.CurrencyAmount != 250 {
+		t.Fatalf("金币出箱行不符: %+v", d)
+	}
+	// 道具部分必须被抑制掉:那些已经由实时通道逐事件发过了。
+	if len(d.ItemConfigIDs) != 0 || len(d.StackItemConfigIDs) != 0 || len(d.InstanceItemConfigIDs) != 0 {
+		t.Fatalf("已实时发放的道具不得再入箱(双发): %+v", d)
+	}
+
+	n, err := uc.publishDropBatch(context.Background())
+	if err != nil || n != 1 {
+		t.Fatalf("publishDropBatch n=%d err=%v", n, err)
+	}
+	if len(granter.stackCalls) != 1 || granter.stackCalls[0].gold != 250 {
+		t.Fatalf("金币必须照常发放: %+v", granter.stackCalls)
+	}
+	if len(granter.calls) != 0 {
+		t.Fatalf("装备已由实时通道发放,结算路径不得重复发: %+v", granter.calls)
+	}
+	if len(repo.dropOutbox) != 0 {
+		t.Fatalf("发放成功后出箱应排空, got %d", len(repo.dropOutbox))
+	}
+}
+
+// TestDropPublisherForksKeysForEquipmentPlusGold 「爆装备 + 有金币、但没爆可堆叠道具」必须分叉幂等键。
+//
+// 2026-08-24 P0 回归:分叉条件曾只看 stacks/instances(`len(stacks)>0 && len(instances)>0`),
+// 而发放条件在加金币时变成了 `len(stacks)>0 || CurrencyAmount>0` —— 本形态下两路发放
+// 共用 baseKey:金币先发成功占了键,装备随即被判幂等冲突 → 整行返错 → 出箱行永不删,
+// 装备永远发不到玩家手上,worker 每轮都在这行失败。fakeGranter 复刻了 inventory 的
+// 键指纹冲突语义,修回归后这条用例会重新变红。
+func TestDropPublisherForksKeysForEquipmentPlusGold(t *testing.T) {
+	repo := newFakeRepo()
+	granter := &fakeGranter{}
+	uc := newDropUsecase(repo, granter, []uint32{5001})
+
+	res := dropResult(623, []uint32{5001}, nil) // 白名单 fallback 判定为装备 → instances 非空、stacks 空
+	res.Stats[0].Gold = 250
+	if _, err := uc.ReportResult(context.Background(), res, 0); err != nil {
+		t.Fatalf("ReportResult err: %v", err)
+	}
+	if len(repo.dropOutbox) != 1 {
+		t.Fatalf("expected 1 drop outbox row, got %d", len(repo.dropOutbox))
+	}
+	if d := repo.dropOutbox[0]; len(d.StackItemConfigIDs) != 0 || len(d.InstanceItemConfigIDs) != 1 || d.CurrencyAmount != 250 {
+		t.Fatalf("本用例要的形态是「货币 + 装备、无堆叠道具」, got %+v", d)
+	}
+
+	n, err := uc.publishDropBatch(context.Background())
+	if err != nil || n != 1 {
+		t.Fatalf("publishDropBatch n=%d err=%v(装备+金币同行必须两路都成功)", n, err)
+	}
+	if len(granter.stackCalls) != 1 || len(granter.calls) != 1 {
+		t.Fatalf("两路都要发:stack=%d instance=%d", len(granter.stackCalls), len(granter.calls))
+	}
+	stackKey, instanceKey := granter.stackCalls[0].key, granter.calls[0].key
+	if stackKey == instanceKey {
+		t.Fatalf("两路发放必须用不同幂等键, both=%q", stackKey)
+	}
+	if stackKey != "battle_drop:623:1:stack" || instanceKey != "battle_drop:623:1:instance" {
+		t.Fatalf("子幂等键不符: stack=%q instance=%q", stackKey, instanceKey)
+	}
+	if granter.stackCalls[0].gold != 250 || len(granter.calls[0].items) != 1 || granter.calls[0].items[0] != 5001 {
+		t.Fatalf("发放内容不符: stack=%+v instance=%+v", granter.stackCalls[0], granter.calls[0])
+	}
+	if len(repo.dropOutbox) != 0 {
+		t.Fatalf("两路都成功后出箱行必须删除, got %d", len(repo.dropOutbox))
+	}
+}
+
+// TestBuildDropOutboxPartitionsItemConfigIDs 钉住出箱三列的分区不变量:
+//
+//	ItemConfigIDs == StackItemConfigIDs ⊎ InstanceItemConfigIDs(不相交并集)
+//
+// 为什么要钉:data.SettleDropOutboxRow 的成行判据已改成看三列并集(丢行的陷阱被消除了),
+// 但 ItemConfigIDs 仍然是**下游对账用的全量视图** —— 掉落审计、battle_drop_suppressed_by_progress
+// 的 suppressed_items 计数、以及库里 item_config_ids 列都以它为准。buildDropOutbox 是这三列
+// 唯一的生产者,它一旦漏 append(例如以后加第三种路由却忘了写进 allowed),
+// 全仓没有第二处能发现,审计口径会悄悄少算。
+//
+// 把 buildDropOutbox 里 `allowed = append(allowed, id)` 删掉 / 只对某一路由 append,这条会变红。
+func TestBuildDropOutboxPartitionsItemConfigIDs(t *testing.T) {
+	uc := newDropUsecase(newFakeRepo(), &fakeGranter{}, nil)
+	uc.SetBattleItemCatalog(mapBattleItemCatalog{
+		7001: {Droppable: true, MaxStack: 99},                 // 可堆叠
+		7002: {Equipment: true, Droppable: true, MaxStack: 1}, // 装备
+		7003: {Droppable: true, MaxStack: 99},                 // 可堆叠
+		7004: {Equipment: true, Droppable: true, MaxStack: 1}, // 装备
+		7005: {MaxStack: 99},                                  // 配了但不可掉落 → 三列都不该出现
+	})
+	res := dropResult(640, []uint32{7001, 7002, 7005, 7003}, []uint32{7004})
+	res.Stats[0].Gold = 10
+
+	recs := uc.buildDropOutbox(context.Background(), res)
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %+v", len(recs), recs)
+	}
+	for _, r := range recs {
+		inAll := map[uint32]int{}
+		for _, id := range r.ItemConfigIDs {
+			inAll[id]++
+		}
+		routed := append(append([]uint32(nil), r.StackItemConfigIDs...), r.InstanceItemConfigIDs...)
+		for _, id := range routed {
+			if inAll[id] == 0 {
+				t.Fatalf("路由列里的 %d 不在 ItemConfigIDs 里(审计视图漏项): %+v", id, r)
+			}
+		}
+		// 不相交:每个 ID 恰好落进 stack / instance 之一,总数必须与全量视图一致。
+		if len(routed) != len(r.ItemConfigIDs) {
+			t.Fatalf("三列不构成不相交并集: all=%d stack=%d instance=%d (%+v)",
+				len(r.ItemConfigIDs), len(r.StackItemConfigIDs), len(r.InstanceItemConfigIDs), r)
+		}
+		if inAll[7005] != 0 {
+			t.Fatalf("不可掉落的 7005 混进了出箱行(DS 不可信,白名单是唯一闸): %+v", r)
+		}
+	}
+	if p1 := recs[0]; len(p1.StackItemConfigIDs) != 2 || len(p1.InstanceItemConfigIDs) != 1 || p1.CurrencyAmount != 10 {
+		t.Fatalf("player1 行形态不符(2 堆叠 + 1 装备 + 金币): %+v", p1)
+	}
+}
+
+// ── 单行装备数超 inventory 单次上限 = **已知未修边界**(2026-08-24)──────────────
+
+// TestDropPublisherOversizeInstanceRowStaysStuck 钉住**现状**:单行装备数超过 inventory 的
+// ledger.detail 上限时,这一行出箱永久卡死 —— 每轮重试每轮失败,不转邮件、也不删除。
+//
+// 这是一条 characterization test(钉现状),不是"期望行为"。它存在的理由:
+//   - 这个边界**先于**掉落金币 / 幂等键那批改造就存在,本轮明确**不修**;
+//   - 上一轮曾试图在发布器侧拆批绕过它(grantInstancesBatched / grantInstanceChunk),
+//     结果打破了"转邮件即终态"这条不变量:批 0 转邮件成功后循环继续,后面任一批失败
+//     (最典型是 mail 响应丢包,见 drop_overflow_ack_loss_test.go)整行保留 → 下轮把已经
+//     邮寄出去的批 0 再发一次。实测 8 件装备变 16 件,已整块回退。**拆批不是这个问题的解**;
+//   - 正解是 expand 迁移把 inventory_ledger.detail 列加宽,或把 instance_id 挪进独立子表,
+//     让"一次发放"仍是一次原子记账。那属于 inventory 域的 schema 演进,不在本服。
+//
+// 所以这条用例的作用是:谁哪天在本服又想"顺手拆个批",先在这里看见为什么不行;
+// 等 inventory 侧真把上限抬上去了,这条会变红,提醒把它一起改掉。
+func TestDropPublisherOversizeInstanceRowStaysStuck(t *testing.T) {
+	repo := newFakeRepo()
+	const gate = 8 // 近似 inventory 的 GrantInstancesDetailFits,只为让"超限"这个形态可达
+	granter := &fakeGranter{maxInstancesPerCall: gate}
+	mail := &fakeMailSender{}
+	ids := make([]uint32, gate+1)
+	for i := range ids {
+		ids[i] = 5001 + uint32(i)
+	}
+	uc := newDropUsecaseWithMail(repo, granter, mail, ids)
+	if _, err := uc.ReportResult(context.Background(), dropResult(633, ids, nil), 0); err != nil {
+		t.Fatalf("ReportResult err: %v", err)
+	}
+	if d := repo.dropOutbox[0]; len(d.InstanceItemConfigIDs) != len(ids) {
+		t.Fatalf("本用例要的形态是「一行 %d 件装备」, got %+v", len(ids), d)
+	}
+
+	// 连跑两轮:两轮都发不出去、行都还在 —— 这就是"永久卡死"的可观测形态。
+	for round := 1; round <= 2; round++ {
+		n, err := uc.publishDropBatch(context.Background())
+		if err != nil {
+			t.Fatalf("第 %d 轮 publishDropBatch 不该整批返错(单行失败只保留该行): %v", round, err)
+		}
+		if n != 0 {
+			t.Fatalf("第 %d 轮不该有行发放成功, got n=%d", round, n)
+		}
+		if len(repo.dropOutbox) != 1 {
+			t.Fatalf("第 %d 轮后出箱行必须原样保留(留待重试), got %d", round, len(repo.dropOutbox))
+		}
+	}
+	if len(granter.calls) != 0 {
+		t.Fatalf("超限时 inventory 侧不该有任何成功入账: %+v", granter.calls)
+	}
+	// 关键:ErrInvalidArg **不是** capacity-full,绝不能走溢出邮件 ——
+	// 走了就等于把"发不出去"伪装成"已经寄给你了",装备实际两边都没有。
+	if len(mail.calls) != 0 {
+		t.Fatalf("detail 超长不是背包满,不得转邮件: %+v", mail.calls)
 	}
 }
 

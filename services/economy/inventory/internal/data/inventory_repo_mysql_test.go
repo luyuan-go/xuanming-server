@@ -830,3 +830,148 @@ func queryEscrow(t *testing.T, db *sql.DB, playerID, orderID uint64) mysqlEscrow
 	}
 	return got
 }
+
+// TestGrantInstancesReplaySurvivesOversizedDetail_MySQL 在真库上钉死 detail 列宽闸的**位置**:
+// 必须排在幂等回放之后。
+//
+// 为什么非要真库:这条闸的机制依赖 MySQL 的报错顺序 —— 超长 INSERT 先撞列宽(Error 1406)
+// 而不是撞唯一键,所以"INSERT 撞唯一键即判重"这条原子声明在超长时根本走不通,
+// 必须由 GrantInstances 显式探一次旧流水。假仓复刻不了这个顺序,只能在这里验。
+//
+// 场景是真实的:每次调用都重新生成一批雪花 id,而雪花位数随时间单调增长。
+// "首发时刚好装得下"的批次,位数涨上去后按新 id 重算 detail 会超列宽;闸若前置,
+// 这笔早已提交的发放就再也回放不了 —— 掉落出箱行永久卡死(货已发、行清不掉)。
+func TestGrantInstancesReplaySurvivesOversizedDetail_MySQL(t *testing.T) {
+	f := openInventoryMySQLFixture(t)
+	repo := NewMySQLInventoryRepo(f.db)
+	ctx := context.Background()
+	const player = uint64(9101)
+	const batch = 13 // 17 位雪花下正好装满 detail 列的批量
+	const capacity = int32(40)
+
+	configs := make([]uint32, batch)
+	for i := range configs {
+		configs[i] = 10003
+	}
+
+	firstIDs := idsWithDigits(batch, 17)
+	if !GrantInstancesDetailFits(firstIDs) {
+		t.Fatalf("用例前提不成立:17 位 id 的 %d 件本应装得下", batch)
+	}
+	insts, already, err := repo.GrantInstances(ctx, player, firstIDs, configs, capacity, "drop-batch", "")
+	if err != nil || already || len(insts) != batch {
+		t.Fatalf("首发: already=%v 件数=%d err=%v", already, len(insts), err)
+	}
+
+	// 雪花涨到 20 位后重试:新 id 重算 detail 必然超列宽,但这批早已提交,必须回放。
+	grownIDs := idsWithDigits(batch, 20)
+	if GrantInstancesDetailFits(grownIDs) {
+		t.Fatalf("用例前提不成立:20 位 id 的 %d 件本应超列宽", batch)
+	}
+	replayed, already, err := repo.GrantInstances(ctx, player, grownIDs, configs, capacity, "drop-batch", "")
+	if err != nil || !already {
+		t.Fatalf("已提交批次在雪花涨位后仍必须能回放: already=%v err=%v", already, err)
+	}
+	got := make(map[uint64]struct{}, len(replayed))
+	for _, inst := range replayed {
+		got[inst.InstanceID] = struct{}{}
+	}
+	if len(got) != batch {
+		t.Fatalf("回放件数不符: got=%d want=%d", len(got), batch)
+	}
+	for _, id := range firstIDs {
+		if _, ok := got[id]; !ok {
+			t.Fatalf("回放必须返回首发那批实例,缺 id=%d", id)
+		}
+	}
+
+	// 真·新的超长请求仍必须被拒(有业务语义的 ErrInvalidArg,不是撞列宽的 ErrInternal),
+	// 且一件都不许落库。
+	if _, _, err := repo.GrantInstances(ctx, player, idsWithDigits(batch, 20), configs, capacity, "fresh-key", ""); errcode.As(err) != errcode.ErrInvalidArg {
+		t.Fatalf("新的超长发放应 ErrInvalidArg, got %v", err)
+	}
+	var rows int
+	if err := f.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM player_item_instance WHERE player_id = ?`, player).Scan(&rows); err != nil {
+		t.Fatalf("统计实例行: %v", err)
+	}
+	if rows != batch {
+		t.Fatalf("被拒的发放不得落库: 实例行=%d want=%d", rows, batch)
+	}
+}
+
+// TestPurchaseShopItemReplaySurvivesOversizedDetail_MySQL 购买侧的同一条:
+// claimPurchaseLedger 的列宽闸必须排在幂等回放之后。
+//
+// 购买比发放更狠一档:回放失败意味着**钱已扣、货已发**的订单永远拿不到成功回包,
+// 客户端只会一直重试。真库验的是 MySQL 的报错顺序 —— 超长 INSERT 先撞列宽(1406)
+// 而不是唯一键,所以"声明即判重"在超长时走不通,必须显式探一次旧流水。
+func TestPurchaseShopItemReplaySurvivesOversizedDetail_MySQL(t *testing.T) {
+	f := openInventoryMySQLFixture(t)
+	repo := NewMySQLInventoryRepo(f.db)
+	ctx := context.Background()
+	const player = uint64(9201)
+	const units = 11 // 17 位雪花下 shop=1/item=6002 正好装满 detail 列的份数
+	const cost = uint64(550)
+	seedGold(t, f.db, player, 100000)
+
+	req := PurchaseRequest{
+		ShopID: 1, ItemConfigID: 6002, UnitCount: units,
+		Kind: CurrencyGold, TotalCost: cost, IsEquipment: true,
+		InstanceIDs: idsWithDigits(units, 17), Capacity: 40,
+		IdempotencyKey: "buy-batch",
+	}
+	if !PurchaseDetailFits(req) {
+		t.Fatalf("用例前提不成立:17 位 id 的 %d 份本应装得下", units)
+	}
+	out, already, err := repo.PurchaseShopItem(ctx, player, req)
+	if err != nil || already || len(out.Instances) != units || out.Cost != cost {
+		t.Fatalf("首购: already=%v 件数=%d cost=%d err=%v", already, len(out.Instances), out.Cost, err)
+	}
+
+	// 雪花涨到 20 位后重试:新 id 重算 detail 必然超列宽,但这笔早已成交,必须回放。
+	grown := req
+	grown.InstanceIDs = idsWithDigits(units, 20)
+	if PurchaseDetailFits(grown) {
+		t.Fatalf("用例前提不成立:20 位 id 的 %d 份本应超列宽", units)
+	}
+	replayed, already, err := repo.PurchaseShopItem(ctx, player, grown)
+	if err != nil || !already {
+		t.Fatalf("已成交订单在雪花涨位后仍必须能回放: already=%v err=%v", already, err)
+	}
+	if replayed.Cost != cost {
+		t.Fatalf("回放必须回放首次扣费额: got=%d want=%d", replayed.Cost, cost)
+	}
+	got := make(map[uint64]struct{}, len(replayed.Instances))
+	for _, inst := range replayed.Instances {
+		got[inst.InstanceID] = struct{}{}
+	}
+	for _, id := range req.InstanceIDs {
+		if _, ok := got[id]; !ok {
+			t.Fatalf("回放必须返回首购那批实例,缺 id=%d", id)
+		}
+	}
+
+	// 真·新的超长购买仍必须被拒(ErrInventoryNotPurchasable,不是撞列宽的 ErrInternal),
+	// 且一分钱不扣、一件不发。
+	fresh := grown
+	fresh.IdempotencyKey = "buy-fresh"
+	if _, _, err := repo.PurchaseShopItem(ctx, player, fresh); errcode.As(err) != errcode.ErrInventoryNotPurchasable {
+		t.Fatalf("新的超长购买应 ErrInventoryNotPurchasable, got %v", err)
+	}
+	var balance uint64
+	if err := f.db.QueryRowContext(ctx,
+		`SELECT amount FROM player_wallet WHERE player_id = ? AND currency_kind = ?`,
+		player, int32(CurrencyGold)).Scan(&balance); err != nil {
+		t.Fatalf("查余额: %v", err)
+	}
+	if balance != 100000-cost {
+		t.Fatalf("被拒的购买不得扣钱: 余额=%d want=%d", balance, 100000-cost)
+	}
+	var rows int
+	if err := f.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM player_item_instance WHERE player_id = ?`, player).Scan(&rows); err != nil {
+		t.Fatalf("统计实例行: %v", err)
+	}
+	if rows != units {
+		t.Fatalf("被拒的购买不得发货: 实例行=%d want=%d", rows, units)
+	}
+}

@@ -117,6 +117,19 @@ func GrantInstancesFingerprint(itemConfigIDs []uint32) string {
 	return hashHex(b.String())
 }
 
+// grantInstDetailPrefix 是 grant_inst 流水 detail 的固定前缀。
+const grantInstDetailPrefix = "grant_inst ids="
+
+// GrantInstancesDetailFits 报告这批 instance_id 编码后是否装得进 ledger.detail 列。
+//
+// 导出是给测试假仓复刻同一道闸用的:假仓若自己另算一套长度,就会与生产漂移
+// (纪律见 biz/inventory_test.go 的 snapshotPlayerTx:假仓可以更严,绝不能更松)。
+// 判定按**实际编码长度**,不按 uint64 最坏位数反推件数 —— 取舍见 inventory_repo.go
+// 的容量预算段(最坏位数闸会把今天能发的批次改判为拒,且挡死已提交批次的回放)。
+func GrantInstancesDetailFits(instanceIDs []uint64) bool {
+	return ledgerDetailFits(encodeInstanceIDs(instanceIDs))
+}
+
 // encodeInstanceIDs / decodeInstanceIDs 把发放的 instance_id 列表编进 / 解出 ledger.detail
 // (格式 "grant_inst ids=123,456";供幂等回放时按 id 重新 SELECT 实例)。
 func encodeInstanceIDs(ids []uint64) string {
@@ -124,7 +137,7 @@ func encodeInstanceIDs(ids []uint64) string {
 	for i, id := range ids {
 		parts[i] = strconv.FormatUint(id, 10)
 	}
-	return "grant_inst ids=" + strings.Join(parts, ",")
+	return grantInstDetailPrefix + strings.Join(parts, ",")
 }
 
 func decodeInstanceIDs(detail string) []uint64 {
@@ -281,17 +294,39 @@ func (r *MySQLInventoryRepo) GrantInstances(ctx context.Context, playerID uint64
 	// 幂等声明:detail 里编入本次 instance_id,供命中 uk 时回放按 id 重新 SELECT。
 	fp := GrantInstancesFingerprint(itemConfigIDs)
 	ledgerDetail := encodeInstanceIDs(instanceIDs)
-	const ins = `INSERT INTO inventory_ledger (player_id, idempotency_key, op, request_fingerprint, detail) VALUES (?, ?, 'grant_inst', ?, ?)`
-	if _, lerr := tx.ExecContext(ctx, ins, playerID, idempotencyKey, fp, ledgerDetail); lerr != nil {
-		if !isDupErr(lerr) {
+
+	// detail 列宽是**全服唯一一道**闸,按实际编码长度判(理由见 inventory_repo.go 容量预算段)。
+	//
+	// 闸必须排在幂等回放**之后**:这里的"声明"与"判重"本是同一条 INSERT(撞唯一键即已处理),
+	// 而超长时那条 INSERT 根本执行不了 —— MySQL 先报 Error 1406,压根轮不到唯一键。
+	// 所以超长时必须显式探一次 (player_id, idempotency_key) 的旧流水:
+	// 探到 = 这批货早就发过了,照常回放(下游 battle_result / mail / mission 都是永不放弃的
+	// 重试者,拒一次就是永久卡住的行:货已发、行清不掉);探不到才是真·新的超长请求。
+	fits := ledgerDetailFits(ledgerDetail)
+	claimed := false
+	if fits {
+		const ins = `INSERT INTO inventory_ledger (player_id, idempotency_key, op, request_fingerprint, detail) VALUES (?, ?, 'grant_inst', ?, ?)`
+		if _, lerr := tx.ExecContext(ctx, ins, playerID, idempotencyKey, fp, ledgerDetail); lerr == nil {
+			claimed = true
+		} else if !isDupErr(lerr) {
 			return nil, false, errcode.New(errcode.ErrInternal, "insert ledger player=%d key=%s: %v", playerID, idempotencyKey, lerr)
 		}
-		// 幂等命中:比对指纹,按已存 detail 里的 id 回放实例。
+	}
+	if !claimed {
+		// 幂等命中(或超长时的显式探测):比对指纹,按已存 detail 里的 id 回放实例。
 		var storedFP, storedDetail string
 		qerr := tx.QueryRowContext(ctx,
 			`SELECT request_fingerprint, detail FROM inventory_ledger WHERE player_id = ? AND idempotency_key = ? LIMIT 1`,
 			playerID, idempotencyKey).Scan(&storedFP, &storedDetail)
-		if qerr != nil {
+		switch {
+		case errors.Is(qerr, sql.ErrNoRows) && !fits:
+			// 没有旧流水 + 这批 id 编码后装不下 = 确实是一笔新的超长发放。
+			// 报 ErrInvalidArg(调用方拆批即可),不是"背包满"—— 报容量满会把运维引到扩容上。
+			return nil, false, errcode.New(errcode.ErrInvalidArg,
+				"grant_inst detail exceeds ledger column player=%d count=%d len=%d max=%d (split into multiple idempotency keys)",
+				playerID, len(instanceIDs), len(ledgerDetail), ledgerDetailMaxChars)
+		case qerr != nil:
+			// fits 且撞了唯一键却读不到行,只可能是并发事务未提交:fail-closed 让调用方重试。
 			return nil, false, errcode.New(errcode.ErrInternal, "read ledger player=%d key=%s: %v", playerID, idempotencyKey, qerr)
 		}
 		if storedFP != fp {

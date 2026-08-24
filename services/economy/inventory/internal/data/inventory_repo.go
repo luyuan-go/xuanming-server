@@ -373,6 +373,41 @@ func hashHex(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// ── ledger.detail 容量预算(§9.24 深度方向的写入侧上限)──────────────────────
+//
+// detail 名义上是"人读摘要",但 grant_inst / shop_buy 已经用它承载 instance_id 列表
+// 作为幂等回放的唯一事实源(见 encodeInstanceIDs / purchaseDetail)。既然它承载业务事实,
+// 就必须像别的集合序列化列一样有写入侧上限,否则列宽就是隐藏的静默失败点:
+// 超长 INSERT 在严格模式下报 Error 1406,被包成 ErrInternal 抛给玩家 ——
+// 玩家和策划从错误码里什么也看不出来。
+//
+// 为什么是"上闸"而不是"加宽列":加宽列要动迁移(版本钉子是三处 lockstep 的高危项),
+// 而且加宽只是把同一个洞往后推 —— 一次发多少件本来就该有业务上限。
+//
+// **为什么按实际编码长度判定,而不是按 uint64 最坏 20 位反推件数**(2026-08-24 改判):
+// 上一版在 biz 层加了一道"最坏位数"上闸(20 位 → grant 11 件 / 购买 9 份),想换取
+// "上限恒定、可写进策划文档"。实测证明这个好处买不起 ——
+//   ① 现网雪花只有 17 位,实际装得下 grant 13 件 / 购买 11 份。最坏位数闸把今天
+//      100% 成功的调用(12、13 件)直接改判为拒绝,是立刻的线上功能回退;
+//   ② 更要命的是它挡在幂等回放**之前**:已经提交成功的旧批次再也回放不了。
+//      下游全是不会放弃的重试者(battle_result 掉落出箱、mail 领取、mission 补扫),
+//      拒一次就永久卡住 —— 货已发,行清不掉。
+// 实际长度闸天然对回放安全:同一批 id 原来写得进去,重算长度还是同一个长度。
+// 唯一残留的风险是"雪花跨位数增长后按新 id 重算变长",由下面的回放探测兜住
+// (见 GrantInstances / claimPurchaseLedger:超长时先探旧流水,探到就照常回放)。
+
+// ledgerDetailMaxChars 是 inventory_ledger.detail 的列容量。
+// 口径来自 deploy/mysql-init/08-inventory-tables.sql 与
+// tools/migrate/migrations/pandora_trade/000001_baseline.up.sql 的 `VARCHAR(255)`。
+// detail 全是 ASCII,所以字符数 == 字节数,不必再算 utf8mb4 膨胀。
+const ledgerDetailMaxChars = 255
+
+// ledgerDetailFits 报告一条编码好的 detail 是否装得进列。
+// 判定只看**这一条 detail 的实际长度**,不做任何按位数反推的件数估算(理由见上)。
+func ledgerDetailFits(detail string) bool {
+	return len(detail) <= ledgerDetailMaxChars
+}
+
 // LedgerSnapshot 是一条幂等流水记下的首次执行结果,重放时原样返回(§9.7)。
 //
 //	Remaining  操作后该道具剩余数量(use / sell / discard 用)

@@ -226,6 +226,65 @@ def transfer_claim_fingerprint(items: Iterable[tuple[int, int]]) -> str:
 
 # ── ledger.detail 编解码(grant_inst 的幂等回放依赖它)────────────────────
 
+# LEDGER_DETAIL_MAX_CHARS 是 inventory_ledger.detail 的列容量。
+# 口径来自 deploy/mysql-init/08-inventory-tables.sql 与
+# tools/migrate/migrations/pandora_trade/000001_baseline.up.sql 的 `VARCHAR(255)`。
+# detail 全是 ASCII,所以字符数 == 字节数 —— Go 侧 `len(detail)` 数的是字节,
+# 这里 `len(str)` 数的是字符,两边因此得到同一个数(对应 Go 的 ledgerDetailMaxChars)。
+LEDGER_DETAIL_MAX_CHARS = 255
+
+
+def ledger_detail_fits(detail: str) -> bool:
+    """报告一条编码好的 detail 是否装得进列。对应 Go 的 ledgerDetailFits。
+
+    ★ 为什么必须有这道闸
+
+      detail 不是"人读审计摘要"那么轻:grant_inst / shop_buy 用它承载 instance_id 列表,
+      它是幂等回放**唯一**的事实源("当初到底发了什么")。超长写入的两种下场都很糟:
+        严格 sql_mode  → Error 1406,被包成 ErrInternal 抛给玩家,错误码里什么也看不出;
+        非严格 sql_mode → **静默截断**,回放时按截断后的 id 列表算,等于算错了发货事实。
+      后者更致命,而且不报任何错。
+
+    ★ 为什么按**实际编码长度**判,而不是按 uint64 最坏 20 位反推件数
+
+      与 Go 侧 2026-08-24 的改判逐条对齐:最坏位数闸(grant 11 件 / 购买 9 份)已被判为
+      P0 回退删除 —— 现网雪花只有 17 位,实际装得下 grant 13 件 / 购买 11 份,那道闸把
+      今天 100% 能成的 12、13 件直接改判为拒;更要命的是它挡在幂等回放**之前**,
+      已提交成功的旧批次再也回放不了(下游掉落出箱 / 邮件领取 / 任务补扫全是永不放弃的
+      重试者,拒一次就是永久卡住的行:货已发、行清不掉)。
+      实际长度闸天然对回放安全:同一批 id 原来写得进去,重算长度还是同一个长度。
+      唯一残留风险是"雪花跨位数增长后按新 id 重算变长",由 repo 层"超长时先探旧流水"兜住
+      (见 repo_instance.grant_instances / repo._claim_purchase_ledger)。
+
+    ★ 为什么不是"加宽列"
+
+      加宽要动迁移(版本钉子是三处 lockstep 的高危项),而且只是把同一个洞往后推 ——
+      一次发多少件本来就该有业务上限。加宽属另开一轮的 expand 迁移。
+    """
+    return len(detail) <= LEDGER_DETAIL_MAX_CHARS
+
+
+def grant_instances_detail_fits(instance_ids: Sequence[int]) -> bool:
+    """这批 instance_id 编码后是否装得进 ledger.detail 列。对应 Go 的 GrantInstancesDetailFits。
+
+    公开出来是给测试复刻同一道闸用的:测试若自己另算一套长度公式,就会与生产漂移
+    (算两套必漂移 —— 与 Go 侧 inventory_test.go 的纪律一致)。
+    """
+    return ledger_detail_fits(encode_instance_ids(instance_ids))
+
+
+def purchase_detail_fits(
+    shop_id: int, item_config_id: int, unit_count: int, total_items: int, instance_ids: Sequence[int]
+) -> bool:
+    """本次购买编码后的 detail 是否装得进 ledger.detail 列。对应 Go 的 PurchaseDetailFits。
+
+    参数与 purchase_detail 逐个对齐:判定必须落在**将要真正写库的那条字符串**上,
+    少传一个字段就会比生产松(比如漏掉 count= 那段,边界处会多放一份进去)。
+    """
+    return ledger_detail_fits(
+        purchase_detail(shop_id, item_config_id, unit_count, total_items, instance_ids)
+    )
+
 
 def encode_instance_ids(ids: Sequence[int]) -> str:
     """把发放的 instance_id 编进 ledger.detail(格式 "grant_inst ids=123,456")。

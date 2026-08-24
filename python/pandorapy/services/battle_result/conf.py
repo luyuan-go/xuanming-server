@@ -262,6 +262,9 @@ class BattleConf(BaseModel):
     # drop_whitelist 仅保留旧配置/单测兼容。生产由 configtable drop×item 热更视图裁决。
     drop_whitelist: list[int] = Field(default_factory=list)
     max_drop_per_player: int = 0
+    # max_gold_per_player 单场结算里单个玩家最多发放的金币(DS 不可信,同 max_drop_per_player
+    # 口径)。默认 100 万(见 max_battle_gold_per_player);超限截断 + Warn,不影响落库。
+    max_gold_per_player: int = 0
     drop_publish_interval: str = ""
     drop_batch_size: int = 0
     mail_addr: str = ""
@@ -321,6 +324,20 @@ class BattleConf(BaseModel):
         if n > MAX_DROP_PER_PLAYER_HARD_CAP:
             n = MAX_DROP_PER_PLAYER_HARD_CAP
         return n
+
+    def max_battle_gold_per_player(self) -> int:
+        """单场单玩家可发放的金币上限(未配置 → 默认 100 万)。
+
+        为什么必须有这道闸(§9.6 数值不信 DS):PlayerStats.gold 是 DS 上报的**数值**,
+        一个出 bug 或被攻破的 DS 可以填任意大的数;它直接进玩家钱包就是不可逆的经济事故。
+        超限**截断而不是拒整场**:战绩落库失败会连带段位、任务、掉落一起丢,代价远大于
+        少发点钱;截断同时打 Warn,异常照样可发现。
+
+        ★ 判据是 `> 0` 而不是 `!= 0`:Go 侧该字段是 uint64,负数表示不出来;Python 没有
+        类型保护,`max_gold_per_player: -1` 若被当成限额,`gold > -1` 恒真 → 每个玩家的
+        金币都被钳成 -1,一路写进战绩表与钱包。非正数一律回落默认值。
+        """
+        return self.max_gold_per_player if self.max_gold_per_player > 0 else 1_000_000
 
     def max_progress_batch_or_default(self) -> int:
         return self.max_progress_batch if self.max_progress_batch > 0 else 256

@@ -126,8 +126,12 @@ class FakeGranter:
         self.instances: list[tuple] = []
         self.instances_error = instances_error
 
-    async def grant_items(self, player_id, items, key):
-        self.items.append((player_id, [(i.item_config_id, i.count) for i in items], key))
+    async def grant_items(self, player_id, items, gold_amount, key):
+        # ★ 位置参数照抄真实 granter 的形状:金币是 grant_items 的**第三个**入参,不是
+        #   另一个方法 —— 用 *args 收会让"金币走了独立发放链"这类回归悄悄漏过。
+        self.items.append(
+            (player_id, [(i.item_config_id, i.count) for i in items], gold_amount, key)
+        )
 
     async def grant_instances(self, player_id, ids, key):
         if self.instances_error is not None:
@@ -652,6 +656,77 @@ async def test_drops_suppressed_logs_audit_only(monkeypatch) -> None:
     assert [e for e in logs if e["event"] == "battle_drop_suppressed_by_progress"]
 
 
+# ── 本局金币:钳位 → 出箱(结算侧;发放侧在「掉落发布器」一节)────────────────
+
+
+async def test_reported_gold_is_clamped_in_place_before_persisting() -> None:
+    """★ DS 上报的金币先钳上限,而且**钳完写回 result**。
+
+    战绩表(battle_player_stats)与钱包发放读的是**同一份** stats:只在出箱侧钳的话,
+    战报会写着"本局 999 亿金币"而钱包只加了 100 万,玩家会认为系统吞了收益。
+    钳位只截断不拒整场 —— 拒了会连带段位 / 任务 / 掉落一起丢,代价远大于少发点钱。
+    """
+    repo = FakeRepo()
+    uc = _uc(repo, cfg=_cfg(max_gold_per_player=100))
+    res = _result()
+    res.stats[0].gold = 10_000
+    res.stats[1].gold = 40
+    with capture_logs() as logs:
+        await uc.report_result(res, 0)
+    # 写回 result 本体 —— 落库的战绩与出箱读到同一个数。
+    assert (res.stats[0].gold, res.stats[1].gold) == (100, 40)
+    saved_result = repo.saved[0][0]
+    assert saved_result.stats[0].gold == 100
+    drops = {d.player_id: d.currency_amount for d in repo.saved[0][2]}
+    assert drops == {1: 100, 2: 40}
+    trunc = [e for e in logs if e["event"] == "battle_gold_truncated"]
+    assert trunc and trunc[0]["reported"] == 10_000 and trunc[0]["kept"] == 100
+
+
+async def test_gold_cap_default_is_used_when_unconfigured() -> None:
+    """留空 = 100 万上限,不是"无上限" —— 任何构造路径都必须带闸(§9.6)。"""
+    assert _cfg().max_battle_gold_per_player() == 1_000_000
+    # ★ 负数不能当限额:Go 侧该字段无符号,负数表示不出来;Python 没有类型保护,
+    #   把 -1 当上限会让每个玩家的金币都被钳成 -1 并写进战绩表与钱包。
+    assert _cfg(max_gold_per_player=-1).max_battle_gold_per_player() == 1_000_000
+
+
+async def test_gold_only_player_still_gets_an_outbox_row() -> None:
+    """★ 没掉落但有金币 → 仍要出一条只带货币的出箱行。
+
+    旧判据(`没有掉落就 continue`)会把这条整行丢掉 —— 而"这局没爆装备只赚了钱"
+    恰恰是最常见的一局,表现是金币静默蒸发、零报错。
+    """
+    repo = FakeRepo()
+    uc = _uc(repo)
+    res = _result()
+    res.stats[0].gold = 77
+    await uc.report_result(res, 0)
+    rows = repo.saved[0][2]
+    assert [(r.player_id, r.item_config_ids, r.currency_amount) for r in rows] == [(1, [], 77)]
+
+
+async def test_gold_survives_when_every_reported_drop_is_filtered() -> None:
+    """掉落全被白名单过滤 ≠ 金币也该丢:两者是**独立**收益来源。"""
+    repo = FakeRepo()
+    uc = _uc(repo)
+    uc.set_battle_item_catalog(FakeCatalog({}))
+    res = _result()
+    res.stats[0].dropped_item_config_ids.append(9999)
+    res.stats[0].gold = 55
+    with capture_logs() as logs:
+        await uc.report_result(res, 0)
+    assert [(r.player_id, r.currency_amount) for r in repo.saved[0][2]] == [(1, 55)]
+    assert [e for e in logs if e["event"] == "battle_drop_all_filtered"]
+
+
+async def test_zero_gold_player_produces_no_row() -> None:
+    """没掉落也没金币的玩家不产出出箱行(否则每场结算凭空多出空行)。"""
+    repo = FakeRepo()
+    await _uc(repo).report_result(_result(), 0)
+    assert repo.saved[0][2] == []
+
+
 # ── 进度对账 ─────────────────────────────────────────────────────────────────
 
 
@@ -791,7 +866,7 @@ async def test_drop_publish_splits_key_when_both_routes_present() -> None:
     uc = _uc(repo)
     uc.set_instance_granter(granter)
     await uc.publish_drop_batch()
-    assert granter.items == [(11, [(10002, 2)], "battle_drop:1001:11:stack")]
+    assert granter.items == [(11, [(10002, 2)], 0, "battle_drop:1001:11:stack")]
     assert granter.instances == [(11, [10001], "battle_drop:1001:11:instance")]
 
 
@@ -866,6 +941,108 @@ def test_aggregate_stack_grants_rejects_zero_and_empty() -> None:
         bbiz.aggregate_stack_grants([])
     with pytest.raises(errcode.PandoraError):
         bbiz.aggregate_stack_grants([0])
+
+
+async def test_gold_and_stack_items_share_one_grant_and_one_key() -> None:
+    """★ 金币与可堆叠道具合并成**一次** grant_items:一个幂等键、一个 inventory 事务。
+
+    拆成两次调用就会出现"道具到了钱没到"(或反过来),而两次调用各自重试还会
+    让重试窗口不一致。纯金币行也走同一条路径。
+    """
+    repo = FakeRepo()
+    repo.drop_rows = [
+        _drop_row(
+            item_config_ids=[10002], stack_item_config_ids=[10002],
+            instance_item_config_ids=[], currency_amount=88,
+        )
+    ]
+    granter = FakeGranter()
+    uc = _uc(repo)
+    uc.set_instance_granter(granter)
+    assert await uc.publish_drop_batch() == 1
+    assert granter.items == [(11, [(10002, 1)], 88, "battle_drop:1001:11")]
+    assert granter.instances == []
+
+
+async def test_gold_only_row_is_delivered_not_rejected_as_routeless() -> None:
+    """纯金币行(两份路由都空)不是"无冻结路由",必须照发。"""
+    repo = FakeRepo()
+    repo.drop_rows = [
+        _drop_row(item_config_ids=[], instance_item_config_ids=[], currency_amount=42)
+    ]
+    granter = FakeGranter()
+    uc = _uc(repo)
+    uc.set_instance_granter(granter)
+    assert await uc.publish_drop_batch() == 1
+    assert granter.items == [(11, [], 42, "battle_drop:1001:11")]
+
+
+async def test_gold_plus_equipment_uses_split_keys() -> None:
+    """★ 金币 + 装备(可堆叠为空)也必须分叉幂等键。
+
+    分叉判据是"这一行会不会真的发两次调用",不是"stacks 和 instances 都非空" ——
+    按后者判,这一行的 GrantItems 与 GrantInstances 会拿到同一把键,inventory 端把
+    第二次当重放吞掉,**装备静默不发**。
+    """
+    repo = FakeRepo()
+    repo.drop_rows = [
+        _drop_row(
+            item_config_ids=[10001], stack_item_config_ids=[],
+            instance_item_config_ids=[10001], currency_amount=15,
+        )
+    ]
+    granter = FakeGranter()
+    uc = _uc(repo)
+    uc.set_instance_granter(granter)
+    assert await uc.publish_drop_batch() == 1
+    assert granter.items == [(11, [], 15, "battle_drop:1001:11:stack")]
+    assert granter.instances == [(11, [10001], "battle_drop:1001:11:instance")]
+
+
+async def test_empty_row_without_gold_is_still_rejected() -> None:
+    """三样全空的行仍是脏数据,必须 ErrInvalidState —— 别为了让金币过而放软这条。"""
+    repo = FakeRepo()
+    repo.drop_rows = [_drop_row(item_config_ids=[], instance_item_config_ids=[])]
+    granter = FakeGranter()
+    uc = _uc(repo)
+    uc.set_instance_granter(granter)
+    with capture_logs() as logs:
+        assert await uc.publish_drop_batch() == 0
+    assert [e for e in logs if e["event"] == "drop_grant_failed"]
+    assert repo.deleted_drop == []
+
+
+# ── 实时进度通道:发放形状 ───────────────────────────────────────────────────
+
+
+async def test_progress_stack_grant_passes_zero_gold() -> None:
+    """★ 实时进度通道**只发道具不发金币**,金币位必须固定传 0。
+
+    金币是结算路径(_build_drop_outbox)的收益;这里若跟着传非 0,同一局的金币会被
+    实时通道与结算路径**各发一次**。这条同时钉住 grant_items 的入参形状:金币是它的
+    第三个位置参数,改签名时这条会红,不会静默把参数错位成幂等键。
+    """
+    from pandorapy.services.battle_result import progress_repo as bprepo
+
+    class _Repo(FakeRepo):
+        def __init__(self):
+            super().__init__()
+            self.deleted_progress: list[int] = []
+
+        async def delete_progress_outbox(self, outbox_id):
+            self.deleted_progress.append(outbox_id)
+
+    repo = _Repo()
+    granter = FakeGranter()
+    uc = _uc(repo)
+    uc.set_instance_granter(granter)
+    rec = bprepo.ProgressOutboxRecord(
+        id=7, match_id=1001, seq=3, player_id=11,
+        kind=int(bprepo.ProgressGrantKind.STACK), item_config_ids=[10002, 10002],
+    )
+    assert await uc.process_progress_record(rec) is None
+    assert granter.items == [(11, [(10002, 2)], 0, "progress:1001:3:11:stack")]
+    assert repo.deleted_progress == [7]
 
 
 # ── 撮合状态释放发布器 ───────────────────────────────────────────────────────

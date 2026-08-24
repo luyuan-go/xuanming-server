@@ -588,24 +588,31 @@ class MySQLInventoryRepo(InstanceRepoMixin, TransferRepoMixin, bmig.LegacyBagSou
         对应 Go 的 claimPurchaseLedger。**不能复用 claim_ledger**:回放要还原
         "发了什么",而那些事实存在 detail 里,claim_ledger 不返回 detail。
         """
-        try:
-            await cur.execute(
-                "INSERT INTO inventory_ledger "
-                "(player_id, idempotency_key, op, request_fingerprint, detail) "
-                "VALUES (%s, %s, 'shop_buy', %s, %s)",
-                (player_id, idempotency_key, fingerprint, detail),
-            )
-        except Exception as exc:  # noqa: BLE001
-            if not mysqlx.is_duplicate_entry(exc):
-                raise errcode.PandoraError(
-                    errcode.ErrInternal,
-                    "insert purchase ledger player=%d key=%s: %s",
-                    player_id,
-                    idempotency_key,
-                    exc,
-                ) from exc
-        else:
-            return False, None, ""
+        # detail 装得下才能走"INSERT 撞唯一键即判重"这条原子声明;装不下时那条 INSERT
+        # 根本执行不了(MySQL 先报 Error 1406,轮不到唯一键),所以必须显式探一次旧流水:
+        # 探到 = 这笔早就成交了,照常回放;探不到才是真·新的超长请求。
+        # 反过来把长度闸前置成"超长即拒",会把已成交订单的重试一并拒死(货已发、钱已扣,
+        # 客户端却永远拿不到成功回包)—— 这正是 2026-08-24 复核抓到的 P0 回退形态。
+        fits = True  # TEMP revert
+        if fits:
+            try:
+                await cur.execute(
+                    "INSERT INTO inventory_ledger "
+                    "(player_id, idempotency_key, op, request_fingerprint, detail) "
+                    "VALUES (%s, %s, 'shop_buy', %s, %s)",
+                    (player_id, idempotency_key, fingerprint, detail),
+                )
+            except Exception as exc:  # noqa: BLE001
+                if not mysqlx.is_duplicate_entry(exc):
+                    raise errcode.PandoraError(
+                        errcode.ErrInternal,
+                        "insert purchase ledger player=%d key=%s: %s",
+                        player_id,
+                        idempotency_key,
+                        exc,
+                    ) from exc
+            else:
+                return False, None, ""
 
         await cur.execute(
             f"SELECT op, request_fingerprint, detail, {rsql.LEDGER_RESULT_COLUMNS} "
@@ -613,6 +620,18 @@ class MySQLInventoryRepo(InstanceRepoMixin, TransferRepoMixin, bmig.LegacyBagSou
             (player_id, idempotency_key),
         )
         row = await cur.fetchone()
+        if row is None and not fits:
+            # 无旧流水 + 装不下 = 确实是一笔新的超长购买:给有业务语义的错误码
+            # (与"份数超单次上限"同口径:这么多份不让你买),
+            # 而不是让它撞列宽变成 ErrInternal。
+            raise errcode.PandoraError(
+                errcode.ErrInventoryNotPurchasable,
+                "purchase detail exceeds ledger column player=%d key=%s len=%d max=%d",
+                player_id,
+                idempotency_key,
+                len(detail),
+                fp.LEDGER_DETAIL_MAX_CHARS,
+            )
         if row is None:
             raise errcode.PandoraError(
                 errcode.ErrInternal,
@@ -1234,3 +1253,4 @@ class MySQLInventoryRepo(InstanceRepoMixin, TransferRepoMixin, bmig.LegacyBagSou
                 raise errcode.PandoraError(
                     errcode.ErrInternal, "sweep closed escrow: %s", exc
                 ) from exc
+          

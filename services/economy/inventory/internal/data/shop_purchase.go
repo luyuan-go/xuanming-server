@@ -15,6 +15,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -74,8 +75,25 @@ func purchaseDetail(req PurchaseRequest) string {
 	for _, id := range req.InstanceIDs {
 		ids = append(ids, fmt.Sprintf("%d", id))
 	}
-	return fmt.Sprintf("shop_buy shop=%d item=%d units=%d count=%d inst=%s",
-		req.ShopID, req.ItemConfigID, req.UnitCount, req.TotalItems, strings.Join(ids, ","))
+	return purchaseDetailPrefix(req) + strings.Join(ids, ",")
+}
+
+// purchaseDetailPrefix 是 detail 里 `inst=` 之前(含 `inst=`)的固定部分。
+// 抽出来只为 detail 编码本身可读;**它只接受完整的 PurchaseRequest**,
+// 不再有"只填三个字段、靠 TotalItems 零值"的半截调用方(那条隐含约定曾只由
+// currency.go 单方面维持,2026-08-24 随最坏位数上闸一起删掉了)。
+func purchaseDetailPrefix(req PurchaseRequest) string {
+	return fmt.Sprintf("shop_buy shop=%d item=%d units=%d count=%d inst=",
+		req.ShopID, req.ItemConfigID, req.UnitCount, req.TotalItems)
+}
+
+// PurchaseDetailFits 报告本次购买编码后的 detail 是否装得进 ledger.detail 列。
+//
+// 导出是给测试假仓复刻同一道闸用的(同 GrantInstancesDetailFits):
+// 假仓自己另算一套长度就会与生产漂移。判定按**实际编码长度**,不按 uint64 最坏位数
+// 反推份数 —— 取舍见 inventory_repo.go 的容量预算段。
+func PurchaseDetailFits(req PurchaseRequest) bool {
+	return ledgerDetailFits(purchaseDetail(req))
 }
 
 // parsePurchaseDetail 从流水 detail 还原首次执行发放的事实。
@@ -129,6 +147,8 @@ func (r *MySQLInventoryRepo) PurchaseShopItem(ctx context.Context, playerID uint
 
 	fp := PurchaseFingerprint(req.ShopID, req.ItemConfigID, req.UnitCount)
 	detail := purchaseDetail(req)
+	// detail 列宽闸在 claimPurchaseLedger 里判,且**排在幂等回放之后**(见那里的说明):
+	// 在这里前置拒绝会连"早已成交的同一笔"都回放不了,而购买链的重试者不会放弃。
 
 	already, snap, storedDetail, lerr := claimPurchaseLedger(ctx, tx, playerID, req.IdempotencyKey, fp, detail)
 	if lerr != nil {
@@ -196,12 +216,20 @@ func (r *MySQLInventoryRepo) PurchaseShopItem(ctx context.Context, playerID uint
 
 // claimPurchaseLedger 声明购买幂等键,并在命中时返回首次执行的结果快照与 detail。
 func claimPurchaseLedger(ctx context.Context, tx *sql.Tx, playerID uint64, idempotencyKey, fingerprint, detail string) (already bool, snap LedgerSnapshot, storedDetail string, err error) {
-	const ins = `INSERT INTO inventory_ledger (player_id, idempotency_key, op, request_fingerprint, detail) VALUES (?, ?, 'shop_buy', ?, ?)`
-	if _, lerr := tx.ExecContext(ctx, ins, playerID, idempotencyKey, fingerprint, detail); lerr == nil {
-		return false, LedgerSnapshot{}, "", nil
-	} else if !isDupErr(lerr) {
-		return false, LedgerSnapshot{}, "", errcode.New(errcode.ErrInternal,
-			"insert purchase ledger player=%d key=%s: %v", playerID, idempotencyKey, lerr)
+	// detail 装得下才能走"INSERT 撞唯一键即判重"这条原子声明;装不下时那条 INSERT
+	// 根本执行不了(MySQL 先报 Error 1406,轮不到唯一键),所以必须显式探一次旧流水:
+	// 探到 = 这笔早就成交了,照常回放;探不到才是真·新的超长请求。
+	// 反过来把长度闸前置成"超长即拒",会把已成交订单的重试一并拒死(货已发、钱已扣,
+	// 客户端却永远拿不到成功回包)—— 这正是 2026-08-24 复核抓到的 P0 回退形态。
+	fits := ledgerDetailFits(detail)
+	if fits {
+		const ins = `INSERT INTO inventory_ledger (player_id, idempotency_key, op, request_fingerprint, detail) VALUES (?, ?, 'shop_buy', ?, ?)`
+		if _, lerr := tx.ExecContext(ctx, ins, playerID, idempotencyKey, fingerprint, detail); lerr == nil {
+			return false, LedgerSnapshot{}, "", nil
+		} else if !isDupErr(lerr) {
+			return false, LedgerSnapshot{}, "", errcode.New(errcode.ErrInternal,
+				"insert purchase ledger player=%d key=%s: %v", playerID, idempotencyKey, lerr)
+		}
 	}
 
 	var storedOp, storedFP string
@@ -212,6 +240,14 @@ func claimPurchaseLedger(ctx context.Context, tx *sql.Tx, playerID uint64, idemp
 FROM inventory_ledger WHERE player_id = ? AND idempotency_key = ? LIMIT 1`,
 		playerID, idempotencyKey).
 		Scan(&storedOp, &storedFP, &storedDetail, &remaining, &legacyGold, &rawBalances, &rawDelta); qerr != nil {
+		if errors.Is(qerr, sql.ErrNoRows) && !fits {
+			// 无旧流水 + 装不下 = 确实是一笔新的超长购买:给有业务语义的错误码
+			// (与 currency.go 的"份数超单次上限"同口径:这么多份不让你买),
+			// 而不是让它撞列宽变成 ErrInternal。
+			return false, LedgerSnapshot{}, "", errcode.New(errcode.ErrInventoryNotPurchasable,
+				"purchase detail exceeds ledger column player=%d key=%s len=%d max=%d",
+				playerID, idempotencyKey, len(detail), ledgerDetailMaxChars)
+		}
 		return false, LedgerSnapshot{}, "", errcode.New(errcode.ErrInternal,
 			"read purchase ledger player=%d key=%s: %v", playerID, idempotencyKey, qerr)
 	}

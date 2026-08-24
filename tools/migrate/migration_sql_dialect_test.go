@@ -88,6 +88,56 @@ func TestSameColumnDropAddDetector(t *testing.T) {
 	}
 }
 
+// TestStripLineCommentsSkipsStringLiterals 钉住 2026-08-24 收口轮修掉的门禁盲区。
+//
+// expand-only 主门禁判的是 stripLineComments **之后**的正文。旧实现"整行从第一个 `--` 起
+// 截断"不认字符串字面量,于是字面量里随便一个 `--`(破折号、CSV 样例、注释文案)就能把
+// 同一行后面的真 DDL 一起吃掉,破坏性 DDL 对门禁完全隐形。
+//
+// 回退验证:把 stripLineComments 换回旧的按行截断实现,本用例第一条立刻红
+// (剥完得到 []),CHANGE / DROP 两条同理。
+func TestStripLineCommentsSkipsStringLiterals(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{
+			// 复核实测原样本:COMMENT 文案里带 `--`,同一行后面还有 DROP COLUMN。
+			name: "字面量里的 -- 不得吃掉同行后面的 DDL",
+			sql:  "SET @s := 'ALTER TABLE `t` COMMENT = ''a--b'', DROP COLUMN `x`';",
+			want: []string{"DROP COLUMN"},
+		},
+		{
+			name: "字面量里的 -- 不得吃掉同行后面的 CHANGE",
+			sql:  "SET @s := 'ALTER TABLE `t` COMMENT = ''x--y'', CHANGE COLUMN `a` `b` INT';",
+			want: []string{"CHANGE COLUMN"},
+		},
+		{
+			// 反向:真正的行注释仍必须被剥掉,否则注释里成段讲解 DROP/RENAME 的迁移会全红。
+			name: "真行注释仍要剥掉",
+			sql:  "-- 本迁移不做 DROP COLUMN / RENAME TABLE，只加列。\nALTER TABLE `t` ADD COLUMN `c` INT;",
+			want: nil,
+		},
+		{
+			// 行注释里出现落单单引号(中文行文里很常见)不得把状态机带跑偏:
+			// `--` 是在 outside 状态下识别的,注释正文里的引号根本不参与状态。
+			name: "行注释里的落单单引号不影响后续剥离",
+			sql:  "-- 别写成 'DROP COLUMN，见 §9.21\n-- 这一行也该被剥掉：RENAME TABLE\nALTER TABLE `t` ADD COLUMN `c` INT;",
+			want: nil,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := destructiveHits(stripLineComments(testCase.sql))
+			if strings.Join(got, "|") != strings.Join(testCase.want, "|") {
+				t.Fatalf("剥注释后探测=%v，期望=%v；剥出来的正文=%q",
+					got, testCase.want, stripLineComments(testCase.sql))
+			}
+		})
+	}
+}
+
 func forEachMigrationFile(t *testing.T, visit func(file, content string)) {
 	t.Helper()
 	err := fs.WalkDir(migrationsFS, "migrations", func(p string, entry fs.DirEntry, err error) error {
@@ -111,19 +161,75 @@ func forEachMigrationFile(t *testing.T, visit func(file, content string)) {
 
 // stripLineComments 去掉 `-- ...` 行注释。注释里成段解释这条规则本身(含 DROP/ADD 字样)
 // 属正常,不能让说明文字触发断言。
+//
+// **必须跳过字符串字面量与反引号标识符内部**(2026-08-24 收口轮补)。上一版是"整行从第一个
+// `--` 起截断",不认字面量;而本仓的条件迁移把整条 DDL 装在单引号字面量里(000005 的
+// PREPARE 写法),字面量里出现 `--` 是完全合法的正文。复核实测:
+//
+//	SET @s := 'ALTER TABLE `t` COMMENT = ''a--b'', DROP COLUMN `x`';
+//	destructiveHits(原文)                    -> [DROP COLUMN]
+//	destructiveHits(stripLineComments(原文)) -> []
+//
+// 主门禁判的正是剥完的那一份,于是**字面量里带 `--` 的破坏性 DDL 对门禁完全隐形** ——
+// 而且 `--` 不必是人写的注释,COMMENT 文案里一个破折号、一段 CSV 样例就能触发。
+//
+// 剥掉注释正文时保留换行:别的断言(以及报错里的语句片段)按行/按分号切,吃掉换行会串行。
+//
+// 刻意没做的两件事:①不认 `#` 与 `/* */` 注释 —— 本仓迁移一律用 `--`,加了反而多一份要维护的
+// 状态机;②单引号状态**不在换行处复位** —— MySQL 的字符串字面量本就允许跨行,复位是错的。
+// 代价是全文件若出现落单的单引号,其后的 `--` 注释会被当成字面量正文保留下来 —— 那是
+// **保守**方向(注释里的散文会去撞破坏性 DDL 正则,红给你看),不是漏报方向。
 func stripLineComments(content string) string {
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		if idx := strings.Index(line, "--"); idx >= 0 {
-			lines[i] = line[:idx]
+	const (
+		outside    = iota
+		inQuote    // 单引号字符串字面量,`''` 是转义不是结束
+		inBacktick // 反引号标识符
+	)
+
+	var out strings.Builder
+	out.Grow(len(content))
+	state := outside
+	for i := 0; i < len(content); i++ {
+		c := content[i]
+		switch state {
+		case outside:
+			if c == '-' && i+1 < len(content) && content[i+1] == '-' {
+				for i < len(content) && content[i] != '\n' {
+					i++
+				}
+				if i < len(content) {
+					out.WriteByte('\n')
+				}
+				continue
+			}
+			if c == '\'' {
+				state = inQuote
+			} else if c == '`' {
+				state = inBacktick
+			}
+		case inQuote:
+			if c == '\'' {
+				if i+1 < len(content) && content[i+1] == '\'' {
+					out.WriteByte(c)
+					i++
+					c = content[i] // 连写的第二个单引号原样留下,状态不变
+				} else {
+					state = outside
+				}
+			}
+		case inBacktick:
+			if c == '`' {
+				state = outside
+			}
 		}
+		out.WriteByte(c)
 	}
-	return strings.Join(lines, "\n")
+	return out.String()
 }
 
 // alterStatements 取出每段 ALTER TABLE 文本。DDL 既可能是裸语句，也可能是 PREPARE 用的
 // 单引号字符串字面量(条件迁移的写法)，两种都要覆盖：从 ALTER TABLE 起扫到语句分号或
-// 字符串字面量的结束单引号为止（`''` 是转义，不算结束）。
+// 字符串字面量的结束单引号为止（`”` 是转义，不算结束）。
 func alterStatements(content string) []string {
 	matches := alterTablePattern.FindAllStringIndex(content, -1)
 	statements := make([]string, 0, len(matches))

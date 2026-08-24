@@ -303,3 +303,231 @@ func TestGetShopReturnsAuthoritativePriceList(t *testing.T) {
 		t.Fatalf("不存在的商店应 ErrInvalidArg, got %v", err)
 	}
 }
+
+// newShopUCCap 同 newShopUC,但允许指定实例背包容量(测 detail 列宽边界时要买到十几件,
+// 默认容量 4 会先撞背包满,断言就测不到想测的那道闸)。
+func newShopUCCap(repo *fakeRepo, shops mapShopCatalog, capacity int32) *InventoryUsecase {
+	return newShopUCCapDigits(repo, shops, capacity, 0)
+}
+
+// newShopUCCapDigits 再多一个"雪花 id 位数"旋钮:detail 列宽闸按**实际编码长度**判,
+// 而默认的 seqGen 只产个位数 id,用它永远撞不到列宽 —— 测边界必须给真实宽度的 id
+// (digits=0 表示沿用 seqGen,给不关心 id 宽度的老用例用)。
+func newShopUCCapDigits(repo *fakeRepo, shops mapShopCatalog, capacity int32, digits int) *InventoryUsecase {
+	uc := NewInventoryUsecase(repo, conf.InventoryConf{Capacity: capacity})
+	uc.SetItemCatalog(mapItemCatalog{
+		6001: {MaxStack: 99},
+		6002: {Equipment: true, MaxStack: 1},
+	})
+	if digits > 0 {
+		uc.SetSnowflake(newDigitsGen(digits))
+	} else {
+		uc.SetSnowflake(&seqGen{})
+	}
+	uc.SetShopCatalog(shops)
+	return uc
+}
+
+// maxEquipUnits 求本档商品一次最多能买几份:直接问生产的编码闸 data.PurchaseDetailFits,
+// 不在测试里另抄一套长度公式。注意**份数自己也编在 detail 里**(位数变多会挤占
+// instance_id 的预算),所以要连份数一起代入试算。6002 每份 1 件,故份数 == 件数。
+func maxEquipUnits(t *testing.T, shopID, itemConfigID uint32, digits int) uint32 {
+	t.Helper()
+	best := uint32(0)
+	for n := uint32(1); n <= 99; n++ {
+		if data.PurchaseDetailFits(data.PurchaseRequest{
+			ShopID: shopID, ItemConfigID: itemConfigID, UnitCount: n,
+			InstanceIDs: idsOfDigits(int(n), digits),
+		}) {
+			best = n
+		}
+	}
+	if best == 0 {
+		t.Fatalf("列容量必须允许至少买 1 件")
+	}
+	return best
+}
+
+// TestPurchaseShopItem_EquipmentUnitsBoundedByLedgerDetail 钉死"一次能买几件装备"这道闸。
+//
+// 事故背景(2026-08-24):每件装备的雪花 instance_id 都要写进 inventory_ledger.detail
+// (VARCHAR(255),幂等回放"到底发了什么"的唯一事实源)。买太多必然撞列宽,
+// INSERT 报 Error 1406 被包成 ErrInternal —— 玩家和策划都看不出这是列容量的事。
+// 现在由 data.claimPurchaseLedger 按**实际编码长度**判:装得下的份数照买,
+// 再多一份返回 ErrInventoryNotPurchasable(与 maxShopUnitsPerPurchase 同口径),且一分钱不扣。
+//
+// 口径:现网 17 位雪花下,shop=1 / item=6002 一次能买 11 份。
+// 上一版在 biz 按 uint64 最坏 20 位反推只放 9 份,把今天能成的 10、11 份改判为拒,
+// 是线上功能回退,已删(取舍见 data/inventory_repo.go 的容量预算段)。
+func TestPurchaseShopItem_EquipmentUnitsBoundedByLedgerDetail(t *testing.T) {
+	ctx := context.Background()
+	maxUnits := maxEquipUnits(t, 1, 6002, snowflakeDigitsToday)
+	if maxUnits != 11 {
+		t.Fatalf("17 位雪花下 shop=1/item=6002 应能买 11 份, got %d", maxUnits)
+	}
+
+	t.Run("恰好装得下", func(t *testing.T) {
+		repo := newFakeRepo()
+		// 容量给够,确保这里只可能被 detail 列宽或 nothing 挡住,不会误撞背包满。
+		uc := newShopUCCapDigits(repo, defaultShops(), int32(maxUnits)+4, snowflakeDigitsToday)
+		seedWallet(repo, 100, data.CurrencyDiamond, 10000)
+
+		out, err := uc.PurchaseShopItem(ctx, 100, 1, 6002, maxUnits, "buy-max")
+		if err != nil {
+			t.Fatalf("恰好装得下的份数必须能买: units=%d err=%v", maxUnits, err)
+		}
+		if len(out.Instances) != int(maxUnits) {
+			t.Fatalf("应发 %d 件, got %d", maxUnits, len(out.Instances))
+		}
+		if got := repo.balanceOf(100, data.CurrencyDiamond); got != 10000-50*uint64(maxUnits) {
+			t.Fatalf("扣费额不符: 余额=%d", got)
+		}
+	})
+
+	t.Run("再多一件被业务错误码拒", func(t *testing.T) {
+		repo := newFakeRepo()
+		uc := newShopUCCapDigits(repo, defaultShops(), int32(maxUnits)+4, snowflakeDigitsToday)
+		seedWallet(repo, 100, data.CurrencyDiamond, 10000)
+
+		_, err := uc.PurchaseShopItem(ctx, 100, 1, 6002, maxUnits+1, "buy-over")
+		if errcode.As(err) != errcode.ErrInventoryNotPurchasable {
+			// 这里最怕的就是 ErrInternal:那说明闸没生效,又退化成撞列宽。
+			t.Fatalf("超 detail 列宽应 ErrInventoryNotPurchasable, got %v", err)
+		}
+		if got := repo.balanceOf(100, data.CurrencyDiamond); got != 10000 {
+			t.Fatalf("被拒不得扣钱: 余额=%d want=10000", got)
+		}
+		if len(repo.instMap(100)) != 0 {
+			t.Fatalf("被拒不得发货: 实例数=%d", len(repo.instMap(100)))
+		}
+	})
+}
+
+// TestPurchaseShopItem_ReplayNeverBlockedByDetailGate 购买侧的"闸必须排在回放之后"。
+//
+// 与发放侧同构(见 biz/inventory_test.go 的 TestGrantInstances_ReplayNeverBlockedByDetailGate):
+// 重试时 biz 会重新生成一批雪花 id,雪花位数涨上去后按新 id 重算 detail 会超列宽。
+// 闸若前置成"超长即拒",这笔**钱已扣、货已发**的订单就永远拿不到成功回包,
+// 客户端只会一直重试下去。
+//
+// 回退检验:把 fakeRepo.purchaseShopItemTx 的列宽闸挪到幂等命中判断之前,本用例立刻变红。
+func TestPurchaseShopItem_ReplayNeverBlockedByDetailGate(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	maxUnits := maxEquipUnits(t, 1, 6002, snowflakeDigitsToday)
+	seedWallet(repo, 100, data.CurrencyDiamond, 10000)
+	const key = "buy-retry"
+	capacity := int32(maxUnits) + 4
+
+	first, err := newShopUCCapDigits(repo, defaultShops(), capacity, snowflakeDigitsToday).
+		PurchaseShopItem(ctx, 100, 1, 6002, maxUnits, key)
+	if err != nil {
+		t.Fatalf("恰好达到上限的份数必须能买: units=%d err=%v", maxUnits, err)
+	}
+	spent := 10000 - 50*uint64(maxUnits)
+
+	// 雪花涨到 20 位后重试:新 id 重算 detail 必然超列宽,但这笔早已成交,必须回放。
+	if data.PurchaseDetailFits(data.PurchaseRequest{
+		ShopID: 1, ItemConfigID: 6002, UnitCount: maxUnits,
+		InstanceIDs: idsOfDigits(int(maxUnits), 20),
+	}) {
+		t.Fatalf("用例前提不成立:20 位 id 的 %d 份本应超列宽", maxUnits)
+	}
+	replayed, err := newShopUCCapDigits(repo, defaultShops(), capacity, 20).
+		PurchaseShopItem(ctx, 100, 1, 6002, maxUnits, key)
+	if err != nil {
+		t.Fatalf("已成交订单在雪花涨位后仍必须能回放(否则客户端永远收不到成功回包): %v", err)
+	}
+	assertSameInstanceIDs(t, first.Instances, replayed.Instances)
+	if replayed.Cost != first.Cost {
+		t.Fatalf("回放必须回放首次扣费额: got=%d want=%d", replayed.Cost, first.Cost)
+	}
+	if got := repo.balanceOf(100, data.CurrencyDiamond); got != spent {
+		t.Fatalf("回放不得二次扣费: 余额=%d want=%d", got, spent)
+	}
+	if n := len(repo.instMap(100)); n != int(maxUnits) {
+		t.Fatalf("回放不得重复发货: 实例数=%d want=%d", n, maxUnits)
+	}
+}
+
+// TestPurchaseShopItem_CapacityFullRollsBackCharge 背包满 → 整笔回滚,余额一分没少。
+//
+// 这条是购买链的原子性本体(§9.7):生产靠单事务 defer tx.Rollback() 撤销已扣的钱。
+// 此前假仓在这条路径上**与真实现相反**(先改余额 map、容量满直接 return 不还原),
+// 所以这个用例既测业务不变量,也把假仓钉在"失败必回滚"上。
+func TestPurchaseShopItem_CapacityFullRollsBackCharge(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	uc := newShopUCCap(repo, defaultShops(), 4) // 实例背包只有 4 格
+	seedWallet(repo, 100, data.CurrencyDiamond, 1000)
+
+	_, err := uc.PurchaseShopItem(ctx, 100, 1, 6002, 5, "buy-full")
+	if errcode.As(err) != errcode.ErrInventoryCapacityFull {
+		t.Fatalf("背包装不下应 ErrInventoryCapacityFull, got %v", err)
+	}
+	if got := repo.balanceOf(100, data.CurrencyDiamond); got != 1000 {
+		t.Fatalf("背包满必须整笔回滚扣费: 余额=%d want=1000", got)
+	}
+	if n := len(repo.instMap(100)); n != 0 {
+		t.Fatalf("失败购买不得留下半批实例: %d 件", n)
+	}
+	// 幂等流水也不能留:失败的一笔留下 ledger 行,重试会被当成"已处理"直接回放空结果。
+	if _, ok := repo.ledger[keyOf(100, "buy-full")]; ok {
+		t.Fatalf("失败购买不得落幂等流水")
+	}
+	// 回滚后清出格子再买,必须能正常成交(证明上一笔没留下任何残留)。
+	out, err := uc.PurchaseShopItem(ctx, 100, 1, 6002, 4, "buy-fit")
+	if err != nil {
+		t.Fatalf("回滚后重买应成功: %v", err)
+	}
+	if len(out.Instances) != 4 || repo.balanceOf(100, data.CurrencyDiamond) != 800 {
+		t.Fatalf("重买结果不符: 件数=%d 余额=%d", len(out.Instances), repo.balanceOf(100, data.CurrencyDiamond))
+	}
+}
+
+// TestPurchaseShopItem_SameKeyDifferentRequestConflicts 同幂等键 + 不同请求指纹 = 反作弊冲突。
+//
+// 这是 data/shop_purchase.go claimPurchaseLedger 的分支:同一个 key 被拿去买"另一笔",
+// 绝不能静默当成 no-op 回放(那等于白送一笔),也不能重新执行(那等于凭一个 key 刷两次)。
+// 指纹刻意不含价格,所以"策划改了价"不会误判成冲突 —— 这里改的是份数,是真的换了一笔请求。
+func TestPurchaseShopItem_SameKeyDifferentRequestConflicts(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	uc := newShopUC(repo, defaultShops())
+	seedWallet(repo, 100, data.CurrencyGold, 1000)
+
+	if _, err := uc.PurchaseShopItem(ctx, 100, 1, 6001, 2, "same-key"); err != nil {
+		t.Fatalf("首次购买: %v", err)
+	}
+
+	// ① 换份数(2 → 3):指纹变了。
+	if _, err := uc.PurchaseShopItem(ctx, 100, 1, 6001, 3, "same-key"); errcode.As(err) != errcode.ErrInventoryIdempotencyConflict {
+		t.Fatalf("同键不同份数应判冲突, got %v", err)
+	}
+	// ② 换商品(6001 → 6002):指纹同样要变。
+	seedWallet(repo, 100, data.CurrencyDiamond, 500)
+	if _, err := uc.PurchaseShopItem(ctx, 100, 1, 6002, 2, "same-key"); errcode.As(err) != errcode.ErrInventoryIdempotencyConflict {
+		t.Fatalf("同键不同商品应判冲突, got %v", err)
+	}
+	// 冲突路径一分钱不动、一件货不发(首次的 2 份 × 100 = 200 已扣,之后不得再变)。
+	if got := repo.goldOf(100); got != 800 {
+		t.Fatalf("冲突不得再扣金币: %d want=800", got)
+	}
+	if got := repo.balanceOf(100, data.CurrencyDiamond); got != 500 {
+		t.Fatalf("冲突不得扣钻石: %d want=500", got)
+	}
+	if repo.items[100][6001] != 20 {
+		t.Fatalf("冲突不得二次发货: 背包=%d want=20", repo.items[100][6001])
+	}
+	if n := len(repo.instMap(100)); n != 0 {
+		t.Fatalf("冲突不得发装备实例: %d 件", n)
+	}
+	// 原样重放(同键同请求)仍必须正常回放首次结果 —— 冲突判定不能误伤真正的重试。
+	replay, err := uc.PurchaseShopItem(ctx, 100, 1, 6001, 2, "same-key")
+	if err != nil {
+		t.Fatalf("同键同请求重放应成功: %v", err)
+	}
+	if replay.Cost != 200 || replay.Items[0].Count != 20 {
+		t.Fatalf("重放结果不符: cost=%d items=%+v", replay.Cost, replay.Items)
+	}
+}

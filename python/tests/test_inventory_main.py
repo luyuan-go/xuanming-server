@@ -165,6 +165,32 @@ def test_retention_mode_default_is_report_only_and_typo_is_rejected() -> None:
     assert bad.inventory.retention_mode_parsed().value == "report_only"
 
 
+@pytest.mark.parametrize(
+    "cfg",
+    [
+        iconf.InventoryConf(max_currency_per_grant=-1),
+        iconf.InventoryConf(max_shop_units_per_purchase=-1),
+    ],
+)
+def test_negative_quota_config_is_rejected_at_startup(cfg: iconf.InventoryConf) -> None:
+    """★ 额度类配置配成负数必须**拒启**。
+
+    Go 侧这两个字段是无符号的,负数根本表示不出来,所以那边没有这道闸;Python 没有
+    类型保护,负数会被"0 取默认、否则用配置值"的三元当成**真实限额**:
+      max_currency_per_grant=-1  → 每一笔发放都撞 `amount > -1` 而拒(战后结算 / 活动 /
+                                   补偿全线静默失败,错误码看上去还像业务参数错);
+      max_shop_units_per_purchase=-1 → 整个商店一件都买不了。
+    两者都没有"配置错了"的运行期信号,只能挡在启动期。
+    """
+    with pytest.raises(ValueError):
+        cfg.validate_rules()
+
+
+def test_zero_quota_config_means_default_not_forbid() -> None:
+    """留空 / 0 是"取默认额度",不是"额度为 0" —— 这正是负数不能当限额的原因。"""
+    iconf.InventoryConf().validate_rules()  # 不抛
+
+
 # ── bag 配置校验(即使 Python 不提供 BagService,这道闸也必须与 Go 同结论)──
 
 
@@ -315,6 +341,85 @@ def test_grant_inst_detail_roundtrip_matches_go_format(repo_root: pathlib.Path) 
     # 脏 detail 不能炸,只丢解不出来的部分(与 Go 的 ParseUint 失败即跳过一致)。
     assert ifp.decode_instance_ids("grant_inst ids=1,x,0,3") == [1, 3]
     assert ifp.decode_instance_ids("no marker") == []
+
+
+def _ids_with_digits(n: int, digits: int) -> list[int]:
+    """造 n 个**指定十进制位数**的 id,模拟真实雪花的编码宽度。
+
+    现网雪花是 17 位(2026-08 时 id≈2.7e16);20 位是 uint64 的最坏情况,
+    也是"若干年后雪花涨到顶"的形态。与 Go 的 idsWithDigits 同构。
+    """
+    base = 10 ** (digits - 1)
+    return [base + i for i in range(n)]
+
+
+def test_ledger_detail_gate_judges_actual_encoded_length(repo_root: pathlib.Path) -> None:
+    """钉死 ledger.detail 列宽闸的判定口径:**只看这一条 detail 的实际编码长度**,
+    不按 uint64 最坏 20 位反推件数。与 Go 的
+    TestLedgerDetailGateJudgesActualEncodedLength 逐条对齐。
+
+    事故背景(2026-08-24):detail 是幂等回放的唯一事实源,一次发太多件会撞
+    VARCHAR(255) —— 严格 sql_mode 下 Error 1406 被包成 ErrInternal,非严格下**静默截断**
+    (回放时按截断后的 id 算,等于算错了"当初发了什么")。
+    第一版修复在 biz 按"最坏 20 位"反推件数上闸(grant 11 / 购买 9),复核实测判为 P0 回退:
+    现网雪花只有 17 位,那道闸把今天 100% 能成的 12、13 件直接改判为拒。
+    这条测试钉住"按实际长度判"这个口径:今天的 17 位 id 必须能发 13 件 / 买 11 份。
+    """
+    snowflake_digits_today = 17
+
+    # grant_inst 今天能发 13 件。
+    assert ifp.grant_instances_detail_fits(_ids_with_digits(13, snowflake_digits_today)), (
+        "17 位 id 的 13 件必须装得下,实际编码 "
+        f"{len(ifp.encode_instance_ids(_ids_with_digits(13, snowflake_digits_today)))} 字符"
+    )
+    assert not ifp.grant_instances_detail_fits(
+        _ids_with_digits(14, snowflake_digits_today)
+    ), "14 件已超列容量却被判为装得下"
+
+    # shop_buy 今天能买 11 份(shop=1 / item=6002 这一档)。
+    def _buy_fits(n: int, digits: int) -> bool:
+        return ifp.purchase_detail_fits(1, 6002, n, 0, _ids_with_digits(n, digits))
+
+    assert _buy_fits(11, snowflake_digits_today), "17 位 id 的 11 份必须装得下"
+    assert not _buy_fits(12, snowflake_digits_today), "12 份已超列容量却被判为装得下"
+
+    # 最坏 20 位仍按实际长度收敛:位数涨上去后能装的件数自然变少 —— 这正是不按最坏位数
+    # 硬定件数的代价与前提;已提交批次的回放由 repo 层"超长先探旧流水"兜住,
+    # 不是靠这里少发几件。
+    assert not ifp.grant_instances_detail_fits(_ids_with_digits(13, 20))
+    assert ifp.grant_instances_detail_fits(_ids_with_digits(11, 20))
+
+    # 列容量与判定式必须与 Go 同源(两栈口径分叉 = 同一批 id 一边写得进、一边被拒)。
+    repo_src = (repo_root / GO_REPO).read_text(encoding="utf-8")
+    assert "ledgerDetailMaxChars = 255" in repo_src
+    assert "len(detail) <= ledgerDetailMaxChars" in repo_src
+    assert ifp.LEDGER_DETAIL_MAX_CHARS == 255
+    # 边界本身:255 放行、256 拒。
+    assert ifp.ledger_detail_fits("x" * 255)
+    assert not ifp.ledger_detail_fits("x" * 256)
+
+
+def test_purchase_detail_still_parses_at_the_column_boundary() -> None:
+    """列宽边界处 detail 仍必须能被原样解析回来。对应 Go 的
+    TestPurchaseDetailRoundTripAtBudgetBoundary。
+
+    幂等重放靠 parse_purchase_detail 还原"首次到底发了什么",解析不出就 fail-closed 报内部错;
+    列宽闸只保证"写得进去",这条保证"读得回来"。
+    """
+    shop_id, item_id, units = 1, 6002, 9
+    # 取该档位下正好还装得进列的最大件数(直接问生产的闸,**不另算一套长度公式** ——
+    # 算两套必漂移)。
+    n = 0
+    for k in range(1, 65):
+        if ifp.purchase_detail_fits(shop_id, item_id, units, 0, _ids_with_digits(k, 20)):
+            n = k
+    assert n > 0, "列容量必须允许至少 1 件"
+    want = [(2**64 - 1) - i for i in range(n)]
+    detail = ifp.purchase_detail(shop_id, item_id, units, 0, want)
+    assert len(detail) <= ifp.LEDGER_DETAIL_MAX_CHARS
+    parsed = ifp.parse_purchase_detail(detail)
+    assert parsed is not None
+    assert parsed == (0, want)
 
 
 def test_settle_idempotency_keys_are_cross_service_contract() -> None:
