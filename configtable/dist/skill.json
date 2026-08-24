@@ -1001,6 +1001,8 @@
       "remark": "普攻1段",
       "segment": 1,
       "next_segment_id": 101402,
+      "cd_timing": 3,
+      "cd_duration": 5,
       "disable_move": true,
       "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Attack01.GA_Wukong_Attack01_C",
       "target_camp": 4,
@@ -1081,7 +1083,7 @@
       "target_camp": 4,
       "use_distance": 500,
       "rot_mode": 1,
-      "damage_rate": 1
+      "damage_rate": 3
     },
     {
       "id": 101423,
@@ -1093,7 +1095,7 @@
       "target_camp": 4,
       "use_distance": 1200,
       "rot_mode": 1,
-      "damage_rate": 2
+      "damage_rate": 4
     },
     {
       "id": 101424,
@@ -1105,7 +1107,7 @@
       "target_camp": 4,
       "use_distance": 1500,
       "rot_mode": 1,
-      "damage_rate": 3
+      "damage_rate": 5
     },
     {
       "id": 101431,
@@ -1115,9 +1117,55 @@
       "cd_duration": 30,
       "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Skill03.GA_Wukong_Skill03_C",
       "target_camp": 4,
+      "damage_rate": 1
+    },
+    {
+      "id": 600101,
+      "remark": "普攻1段",
+      "segment": 1,
+      "next_segment_id": 600102,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Monster/Minions/Wukong_Summon/GA/GA_Wukong_Summon_Attack01.GA_Wukong_Summon_Attack01_C",
+      "target_camp": 4,
       "use_distance": 500,
       "rot_mode": 1,
-      "damage_rate": 1
+      "damage_rate": 0.3
+    },
+    {
+      "id": 600102,
+      "remark": "普攻2段",
+      "segment": 2,
+      "next_segment_id": 600103,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Monster/Minions/Wukong_Summon/GA/GA_Wukong_Summon_Attack02.GA_Wukong_Summon_Attack02_C",
+      "target_select_mode": 1,
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 0.3
+    },
+    {
+      "id": 600103,
+      "remark": "普攻3段",
+      "segment": 3,
+      "next_segment_id": 600104,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Monster/Minions/Wukong_Summon/GA/GA_Wukong_Summon_Attack03.GA_Wukong_Summon_Attack03_C",
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 0.35
+    },
+    {
+      "id": 600104,
+      "remark": "普攻4段",
+      "segment": 4,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Monster/Minions/Wukong_Summon/GA/GA_Wukong_Summon_Attack04.GA_Wukong_Summon_Attack04_C",
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 0.45
     }
   ]
 }

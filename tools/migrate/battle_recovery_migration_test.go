@@ -11,8 +11,8 @@ func TestPandoraBattleRecoveryMigrationsStayAdditive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("latestMigrationVersion: %v", err)
 	}
-	if version != 10 {
-		t.Fatalf("pandora_battle latest version=%d, want 10", version)
+	if version != 11 {
+		t.Fatalf("pandora_battle latest version=%d, want 11", version)
 	}
 
 	v3 := readEmbeddedMigration(t, "migrations/pandora_battle/000003_match_release_outbox.up.sql")
@@ -165,6 +165,38 @@ func TestPandoraBattleRecoveryMigrationsStayAdditive(t *testing.T) {
 	}
 	if strings.Contains(v10down, "battle_progress_outbox") {
 		t.Fatal("000010 down must roll back only battle_mission_outbox")
+	}
+
+	// 000011 战后金币收益(currency-and-shop.md):金币搭**既有**掉落出箱发放,不另起一条
+	// 发放链——出箱表的幂等键 / 失败重试 / 投递成功即删 / 容量预算全部免费复用。
+	// 因此本迁移只准给 battle_drop_outbox 加一列,新建"金币发放表"就是把同一笔资产
+	// 拆成两条投递链(§9.22 唯一权威)。列装的是**入箱时已过服务端上限闸的既成事实**,
+	// 与同表 stack_item_config_ids / instance_item_config_ids 同纪律:重试不回头现算,
+	// 否则上限热改会让同一场战斗第一次与重试发出不同额度。
+	v11 := readEmbeddedMigration(t, "migrations/pandora_battle/000011_battle_gold_grant.up.sql")
+	for _, fragment := range []string{
+		"information_schema.columns", // 条件加列:fresh-init 已建列时跳过
+		"ALTER TABLE `battle_drop_outbox` ADD COLUMN `currency_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0",
+	} {
+		if !strings.Contains(v11, fragment) {
+			t.Fatalf("000011 up missing contract fragment %q", fragment)
+		}
+	}
+	// 金币语义非负(§5.12):列型退回有符号会让"扣成负数"在非严格 sql_mode 下静默落库。
+	if strings.Contains(v11, "`currency_amount` BIGINT NOT NULL") {
+		t.Fatal("000011 currency_amount must stay BIGINT UNSIGNED; signed column silently accepts negative payouts")
+	}
+	// 存量出箱行必须留在 0:补发要走运营邮件,迁移里回填等于给升级前的对局追发金币,
+	// 同一场战斗的收益口径会前后不一致。
+	if strings.Contains(v11, "UPDATE `battle_drop_outbox`") {
+		t.Fatal("000011 must not backfill currency_amount for pre-upgrade rows; use ops mail instead")
+	}
+	v11down := readEmbeddedMigration(t, "migrations/pandora_battle/000011_battle_gold_grant.down.sql")
+	if !strings.Contains(v11down, "ALTER TABLE `battle_drop_outbox` DROP COLUMN `currency_amount`") {
+		t.Fatal("000011 down must drop currency_amount")
+	}
+	if strings.Contains(v11down, "DROP TABLE") {
+		t.Fatal("000011 down must roll back only the added column")
 	}
 }
 

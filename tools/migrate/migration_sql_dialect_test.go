@@ -169,15 +169,10 @@ const (
 // TestTradeAttributesProtoBinaryContract 固化 000004 的两条要害:列型换成 VARBINARY，
 // 以及 ADD 的执行条件必须是"现查列不存在"而不是复用 DROP 的判断 —— 两条 ALTER 之间进程
 // 被杀会留下"已删未加"，只有现查才能在重跑时自愈。
+// pandora_trade 的"最新版本号"钉子在 trade_currency_migration_test.go —— 每套迁移集只留
+// 一处钉子,且钉在**最新那条**迁移的契约测试里:钉在旧版本的测试里,下次加迁移时红的是
+// 一个名字与新迁移毫无关系的用例,排查者会先怀疑自己改坏了 000004。
 func TestTradeAttributesProtoBinaryContract(t *testing.T) {
-	version, err := latestMigrationVersion("pandora_trade")
-	if err != nil {
-		t.Fatalf("latestMigrationVersion: %v", err)
-	}
-	if version != 4 {
-		t.Fatalf("pandora_trade latest version=%d, 期望=4", version)
-	}
-
 	up := readEmbeddedMigration(t, tradeAttributesUpPath)
 	for _, fragment := range []string{
 		"ALTER TABLE `player_item_instance` DROP COLUMN `attributes`'",

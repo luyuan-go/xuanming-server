@@ -4458,7 +4458,51 @@ function Test-LocalTcpPort([int]$Port) {
 
 # Get-LocalServiceProcess:只接受 run_services 写下的 PID + 当前 exact exe。
 # 不能按进程名取第一个：并发启动、旧残留或另一份工作区都可能有同名服务。
+# Get-LocalPythonServiceProcess:Python 栈的 exact 服务进程。
+# Python 栈由 run stack 直接 spawn,**不落 .pid 文件**,所以身份证明只能从进程自身取。
+# 两个坑必须一起处理:
+#   1. venv 的 Scripts\python.exe 在本机是个 **trampoline** —— 它自己不绑端口,而是再 spawn
+#      一个真解释器(uv 装在 %APPDATA%\uv\python\... 下)当子进程,**listener 属主是那个子进程**。
+#      只认 venv 那个 exe 会让调用方的 listener-owner 复核恒不相等。
+#   2. 光认命令行模块名不够强 —— 别的工作区 / 系统 python 起同名服务会被误认。
+# 所以:先用「映像 == 本工作区 venv python.exe」把锚定死,再顺着 ParentProcessId 取它派生的
+# 那个真解释器;venv 不是 trampoline 形态(映像即解释器)时没有子进程,直接返回锚本身。
+function Get-LocalPythonServiceProcess([string]$Name) {
+    $expectedExe = ''
+    try { $expectedExe = [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'python/.venv/Scripts/python.exe')) } catch { return $null }
+    if (-not (Test-Path -LiteralPath $expectedExe -PathType Leaf)) { return $null }
+    $token = "pandorapy.services.$Name.main"
+    $procs = @()
+    try { $procs = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction Stop) } catch { return $null }
+
+    $candidates = @($procs | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and $_.CommandLine -like "*$token*"
+        })
+    if ($candidates.Count -eq 0) { return $null }
+
+    # 锚:映像逐字等于本工作区 venv 的 python.exe。没有锚就不是本工作区起的,直接不认。
+    $anchors = @($candidates | Where-Object {
+            if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) { return $false }
+            $exe = ''
+            try { $exe = [IO.Path]::GetFullPath($_.ExecutablePath) } catch { return $false }
+            [string]::Equals($exe, $expectedExe, [StringComparison]::OrdinalIgnoreCase)
+        })
+    if ($anchors.Count -eq 0) { return $null }
+
+    $anchorPids = @($anchors | ForEach-Object { [int]$_.ProcessId })
+    $listener = @($candidates | Where-Object { $anchorPids -contains [int]$_.ParentProcessId }) | Select-Object -First 1
+    if (-not $listener) { $listener = $anchors[0] }
+    return (Get-Process -Id ([int]$listener.ProcessId) -ErrorAction SilentlyContinue)
+}
+
 function Get-LocalServiceProcess([string]$Name) {
+    # 两条栈的「登记」形态本就不同:Go 落 PID 文件 + run/dev/bin/<name>.exe,Python 直接 spawn
+    # venv 里的 python.exe。这里原来只有 Go 那一套,于是 -Python 下 exact exe 恒不相等,
+    # Wait-LocalPlannerPlayable 必报「login :20001 不是当前工作区登记进程的 exact listener」——
+    # 22 个 Python 服务全 READY 也永远走不到可玩(2026-08-24)。Wait-LocalHubDsReady 找 hub_allocator
+    # 也走这里,所以这一处分派同时修好了两道门。
+    if ($Python) { return Get-LocalPythonServiceProcess -Name $Name }
+
     $pidFile = Join-Path $ProjectRoot "run/dev/logs/$Name.pid"
     if (-not (Test-Path -LiteralPath $pidFile -PathType Leaf)) { return $null }
 

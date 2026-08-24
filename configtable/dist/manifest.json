@@ -1,8 +1,8 @@
 {
-  "version": 20260824001,
-  "generated_at_ms": 1787552890630,
+  "version": 20260824002,
+  "generated_at_ms": 1787559866453,
   "generator": "configtable-gen@0.1.0",
-  "source_rev": "svn-r2242",
+  "source_rev": "svn-r2256",
   "tables": [
     {
       "name": "attr_point_effect",
@@ -148,7 +148,7 @@
       "name": "role",
       "file": "role.json",
       "proto": "pandora.config.v1.RoleTableData",
-      "checksum": "sha256:7dde22032b68226d735929cd99af5d2471814304653f84883925a0922b5ff1ef",
+      "checksum": "sha256:d6d47553f315aa963183831afb9b7a5d9fefa17b36abb822bac20ca4e8c5a7d9",
       "rows": 27
     },
     {
@@ -211,8 +211,8 @@
       "name": "skill",
       "file": "skill.json",
       "proto": "pandora.config.v1.SkillTableData",
-      "checksum": "sha256:478c41cbf15df9d0096fc137e50e4ae7410ea82a7f07f1279f104d42fa9750a6",
-      "rows": 77
+      "checksum": "sha256:6f210378c099b85325897d65a323c70c92def795710d78b6976ae19af83dc10e",
+      "rows": 81
     },
     {
       "name": "spawn_group",

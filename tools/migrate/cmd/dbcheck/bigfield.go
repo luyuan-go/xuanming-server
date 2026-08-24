@@ -95,6 +95,18 @@ var bigFields = []fieldBudget{
 		Why:      "托管行原样搬运 player_item_instance.attributes(同为 VARBINARY(1024) 存 pb),阀值与源表一致;超限先查源表",
 	},
 	{
+		DB: "pandora_trade", Table: "inventory_ledger", Column: "result_currencies", PK: "id",
+		MaxBytes: 192,
+		Why: "列是 VARBINARY(256),装 pb CurrencyBalancesStorageRecord(首次执行后的多币种余额快照,幂等重放原样回放)。" +
+			"条目数被 CurrencyKind 枚举取值数封顶(当前 3 种,单项约十几字节),正常在百字节以内。" +
+			"超 192(75%)即逼近列上限——写满会让整条流水写失败、重放拿不回首次结果,查是否新增了大量币种或有人绕过 kind 校验直写",
+	},
+	{
+		DB: "pandora_trade", Table: "inventory_ledger", Column: "result_currency_delta", PK: "id",
+		MaxBytes: 192,
+		Why:      "同表 result_currencies 的变动额侧(同为 VARBINARY(256) 装同一 pb),条目数上限与阀值一致;超限先按 result_currencies 排查",
+	},
+	{
 		DB: "pandora_leaderboard", Table: "leaderboard_reward_log", Column: "reward_pb", PK: "id",
 		MaxBytes: 1536,
 		Why:      "列是 VARBINARY(2048),装 pb RewardGrantStorageRecord(单档奖励明细 + 补发重放入参)。超 1536(75%)即逼近列上限,再涨会拒写整条发奖记录——查 RewardTier.items 条数是否有上限",

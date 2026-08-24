@@ -408,7 +408,7 @@
       "behavior_tree_path": "/Game/Test/Role/Monster/Minions/Wukong_Summon/BT/BT_Wukong_Summon.BT_Wukong_Summon",
       "entity_type": 2,
       "sub_type": 1,
-      "skill_ids": "101401,101402,101403,101404",
+      "skill_ids": "600101,600102,600103,600104",
       "guard_distance": 5000,
       "call_distance": 5000,
       "fight_exit_distance": 5000,
