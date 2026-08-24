@@ -85,20 +85,20 @@ var destructiveDDL = []destructiveRule{
 	// 全是"旧副本的目标对象当场消失",与 CHANGE 完全同级。
 	//
 	// `DROP [COLUMN] <名>`:MySQL 的 COLUMN 关键字可省(和 CHANGE 一模一样的省法)。
-	{"DROP COLUMN", regexp.MustCompile(`(?i)\bDROP\s+COLUMN\b`), nil}, // REVERT-PROBE
+	{"DROP COLUMN", regexp.MustCompile(`(?i)\bDROP\s+(?:(COLUMN)\s+)?(` + sqlIdent + `)`), dropObjectHeads},
 	{"DROP TABLE", regexp.MustCompile(`(?i)\bDROP\s+TABLE\b`), nil},
 	{"DROP INDEX", regexp.MustCompile(`(?i)\bDROP\s+(?:INDEX|KEY)\b`), nil},
 	// `DROP PRIMARY KEY` / `DROP FOREIGN KEY`:DROP 后面跟的是 PRIMARY / FOREIGN,
 	// 不是 INDEX 也不是 KEY,所以旧的 `\bDROP\s+(INDEX|KEY)\b` 一条都抓不到。
 	// 掉主键 = 旧副本按主键的 upsert / FOR UPDATE 当场语义变化,同级破坏。
-	// REVERT-PROBE: DROP PRIMARY KEY 条目已摘
-	// REVERT-PROBE: DROP FOREIGN KEY 条目已摘
+	{"DROP PRIMARY KEY", regexp.MustCompile(`(?i)\bDROP\s+PRIMARY\s+KEY\b`), nil},
+	{"DROP FOREIGN KEY", regexp.MustCompile(`(?i)\bDROP\s+FOREIGN\s+KEY\b`), nil},
 	{"RENAME COLUMN", regexp.MustCompile(`(?i)\bRENAME\s+COLUMN\b`), nil},
 	// `RENAME KEY old TO new` 与 `RENAME INDEX` 是同一个动作的两种拼法(和 DROP INDEX|KEY 对称)。
 	{"RENAME INDEX", regexp.MustCompile(`(?i)\bRENAME\s+(?:INDEX|KEY)\b`), nil},
 	// `ALTER TABLE old RENAME [TO|AS] new` 是在 ALTER 内改表名的正规写法,TO/AS 还都能省。
 	// 旧的 `\bRENAME\s+TABLE\b` 只认独立的 `RENAME TABLE a TO b`,ALTER 内那三种拼法全漏。
-	{"RENAME TABLE", regexp.MustCompile(`(?i)\bRENAME\s+TABLE\b`), nil}, // REVERT-PROBE
+	{"RENAME TABLE", regexp.MustCompile(`(?i)\bRENAME\s+(?:(TABLE|TO|AS)\s+)?(` + sqlIdent + `)`), renameObjectHeads},
 	// CHANGE COLUMN 在兼容性上与 RENAME COLUMN **完全等价**:两者都让旧列名当场消失,
 	// 还在运行的旧副本查旧列名一律报错。门禁上线时只列了 RENAME,于是 2026-08-22 的
 	// pandora_trade/000005 用 `CHANGE COLUMN frozen_gold frozen_amount` 做硬切,

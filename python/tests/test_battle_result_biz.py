@@ -645,15 +645,46 @@ async def test_drop_outbox_falls_back_to_whitelist_without_catalog() -> None:
 
 
 async def test_drops_suppressed_logs_audit_only(monkeypatch) -> None:
-    """水位 >0 时结算掉落只作审计 —— 这条 INFO 是"为什么这局没走结算掉落"的唯一解释。"""
+    """水位 >0 时结算掉落只作审计 —— 这条 INFO 是"为什么这局没走结算掉落"的唯一解释。
+
+    ★ 字段必须是**可核对的分项**,不是"等于被跳过的行数"的假字段(2026-08-24 与 Go 对齐)。
+      原先只打 `audit_rows=len(drop_outbox)`:名字承诺"被跳过的行数",实际值是"本来要入箱的
+      全部行数",而金币行根本没被跳过(实时通道不发金币)。排障的人按 audit_rows
+      会认定"抑制局什么都没入箱",而同一 match_id 紧接着就有 drop_grant_delivered 把金币发了。
+    """
     repo = FakeRepo(settle=brepo.ProgressSettleInfo(stream_existed=True, last_applied_seq=9, drops_suppressed=True))
     uc = bbiz.BattleResultUsecase(repo, FakeMMR(), None, None, _cfg())
     uc.set_battle_item_catalog(FakeCatalog({10001: (True, True)}))
     res = _result()
-    res.stats[0].dropped_item_config_ids.append(10001)
+    res.stats[0].dropped_item_config_ids.extend([10001, 10001])
+    res.stats[0].gold = 250
     with capture_logs() as logs:
         await uc.report_result(res, 9)
-    assert [e for e in logs if e["event"] == "battle_drop_suppressed_by_progress"]
+    ev = [e for e in logs if e["event"] == "battle_drop_suppressed_by_progress"]
+    assert len(ev) == 1
+    e = ev[0]
+    assert "audit_rows" not in e, "假字段必须删掉,不能与新分项并存"
+    assert e["built_rows"] == 1
+    assert (e["suppressed_item_rows"], e["suppressed_items"]) == (1, 2)
+    # 金币行照常入箱 —— 日志必须自己把这半边说清楚,否则排障方向会被带偏。
+    assert (e["granted_currency_rows"], e["granted_currency_total"]) == (1, 250)
+
+
+async def test_pure_currency_row_does_not_claim_drops_were_suppressed() -> None:
+    """★ 一件道具都没被抑制时**不打**这条日志。
+
+    抑制的粒度是「三列道具」而不是「整行」:全是纯金币行时什么都没被掐掉,
+    再打一条 *_suppressed_* 又会是一次名不副实 —— 与 Go 的
+    `if suppressedRows == 0 { return }` 同一道闸。
+    """
+    repo = FakeRepo(settle=brepo.ProgressSettleInfo(stream_existed=True, last_applied_seq=9, drops_suppressed=True))
+    uc = bbiz.BattleResultUsecase(repo, FakeMMR(), None, None, _cfg())
+    uc.set_battle_item_catalog(FakeCatalog({10001: (True, True)}))
+    res = _result()
+    res.stats[0].gold = 250  # 只有金币,一件道具都没掉
+    with capture_logs() as logs:
+        await uc.report_result(res, 9)
+    assert not [e for e in logs if e["event"] == "battle_drop_suppressed_by_progress"]
 
 
 # ── 本局金币:钳位 → 出箱(结算侧;发放侧在「掉落发布器」一节)────────────────
