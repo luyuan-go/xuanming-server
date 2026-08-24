@@ -1,4 +1,5 @@
 from pandora.common.v1 import errcode_pb2 as _errcode_pb2
+from pandora.common.v1 import currency_pb2 as _currency_pb2
 from pandora.bag.v1 import bag_pb2 as _bag_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
@@ -13,16 +14,9 @@ class EscrowSide(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ESCROW_SIDE_UNSPECIFIED: _ClassVar[EscrowSide]
     ESCROW_SIDE_SELL: _ClassVar[EscrowSide]
     ESCROW_SIDE_BUY: _ClassVar[EscrowSide]
-
-class CurrencyKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    CURRENCY_KIND_UNSPECIFIED: _ClassVar[CurrencyKind]
-    CURRENCY_KIND_GOLD: _ClassVar[CurrencyKind]
 ESCROW_SIDE_UNSPECIFIED: EscrowSide
 ESCROW_SIDE_SELL: EscrowSide
 ESCROW_SIDE_BUY: EscrowSide
-CURRENCY_KIND_UNSPECIFIED: CurrencyKind
-CURRENCY_KIND_GOLD: CurrencyKind
 
 class ItemStack(_message.Message):
     __slots__ = ("item_config_id", "count")
@@ -41,18 +35,18 @@ class ItemGrant(_message.Message):
     def __init__(self, item_config_id: _Optional[int] = ..., count: _Optional[int] = ...) -> None: ...
 
 class Inventory(_message.Message):
-    __slots__ = ("player_id", "gold", "items", "capacity", "instances")
+    __slots__ = ("player_id", "items", "capacity", "instances", "currencies")
     PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
-    GOLD_FIELD_NUMBER: _ClassVar[int]
     ITEMS_FIELD_NUMBER: _ClassVar[int]
     CAPACITY_FIELD_NUMBER: _ClassVar[int]
     INSTANCES_FIELD_NUMBER: _ClassVar[int]
+    CURRENCIES_FIELD_NUMBER: _ClassVar[int]
     player_id: int
-    gold: int
     items: _containers.RepeatedCompositeFieldContainer[ItemStack]
     capacity: int
     instances: _containers.RepeatedCompositeFieldContainer[ItemInstance]
-    def __init__(self, player_id: _Optional[int] = ..., gold: _Optional[int] = ..., items: _Optional[_Iterable[_Union[ItemStack, _Mapping]]] = ..., capacity: _Optional[int] = ..., instances: _Optional[_Iterable[_Union[ItemInstance, _Mapping]]] = ...) -> None: ...
+    currencies: _containers.RepeatedCompositeFieldContainer[_currency_pb2.CurrencyAmount]
+    def __init__(self, player_id: _Optional[int] = ..., items: _Optional[_Iterable[_Union[ItemStack, _Mapping]]] = ..., capacity: _Optional[int] = ..., instances: _Optional[_Iterable[_Union[ItemInstance, _Mapping]]] = ..., currencies: _Optional[_Iterable[_Union[_currency_pb2.CurrencyAmount, _Mapping]]] = ...) -> None: ...
 
 class ItemAttribute(_message.Message):
     __slots__ = ("attr_id", "value")
@@ -99,24 +93,24 @@ class GetInventoryResponse(_message.Message):
     def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., inventory: _Optional[_Union[Inventory, _Mapping]] = ...) -> None: ...
 
 class GrantItemsRequest(_message.Message):
-    __slots__ = ("player_id", "items", "gold", "idempotency_key")
+    __slots__ = ("player_id", "items", "idempotency_key", "currencies")
     PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
     ITEMS_FIELD_NUMBER: _ClassVar[int]
-    GOLD_FIELD_NUMBER: _ClassVar[int]
     IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    CURRENCIES_FIELD_NUMBER: _ClassVar[int]
     player_id: int
     items: _containers.RepeatedCompositeFieldContainer[ItemGrant]
-    gold: int
     idempotency_key: str
-    def __init__(self, player_id: _Optional[int] = ..., items: _Optional[_Iterable[_Union[ItemGrant, _Mapping]]] = ..., gold: _Optional[int] = ..., idempotency_key: _Optional[str] = ...) -> None: ...
+    currencies: _containers.RepeatedCompositeFieldContainer[_currency_pb2.CurrencyAmount]
+    def __init__(self, player_id: _Optional[int] = ..., items: _Optional[_Iterable[_Union[ItemGrant, _Mapping]]] = ..., idempotency_key: _Optional[str] = ..., currencies: _Optional[_Iterable[_Union[_currency_pb2.CurrencyAmount, _Mapping]]] = ...) -> None: ...
 
 class GrantItemsResponse(_message.Message):
-    __slots__ = ("code", "gold")
+    __slots__ = ("code", "currencies")
     CODE_FIELD_NUMBER: _ClassVar[int]
-    GOLD_FIELD_NUMBER: _ClassVar[int]
+    CURRENCIES_FIELD_NUMBER: _ClassVar[int]
     code: _errcode_pb2.ErrCode
-    gold: int
-    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., gold: _Optional[int] = ...) -> None: ...
+    currencies: _containers.RepeatedCompositeFieldContainer[_currency_pb2.CurrencyAmount]
+    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., currencies: _Optional[_Iterable[_Union[_currency_pb2.CurrencyAmount, _Mapping]]] = ...) -> None: ...
 
 class CheckItemsOwnedRequest(_message.Message):
     __slots__ = ("player_id", "item_config_ids")
@@ -233,14 +227,16 @@ class SellItemRequest(_message.Message):
     def __init__(self, player_id: _Optional[int] = ..., item_config_id: _Optional[int] = ..., count: _Optional[int] = ..., idempotency_key: _Optional[str] = ...) -> None: ...
 
 class SellItemResponse(_message.Message):
-    __slots__ = ("code", "remaining", "gold")
+    __slots__ = ("code", "remaining", "balance", "earned")
     CODE_FIELD_NUMBER: _ClassVar[int]
     REMAINING_FIELD_NUMBER: _ClassVar[int]
-    GOLD_FIELD_NUMBER: _ClassVar[int]
+    BALANCE_FIELD_NUMBER: _ClassVar[int]
+    EARNED_FIELD_NUMBER: _ClassVar[int]
     code: _errcode_pb2.ErrCode
     remaining: int
-    gold: int
-    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., remaining: _Optional[int] = ..., gold: _Optional[int] = ...) -> None: ...
+    balance: _currency_pb2.CurrencyAmount
+    earned: _currency_pb2.CurrencyAmount
+    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., remaining: _Optional[int] = ..., balance: _Optional[_Union[_currency_pb2.CurrencyAmount, _Mapping]] = ..., earned: _Optional[_Union[_currency_pb2.CurrencyAmount, _Mapping]] = ...) -> None: ...
 
 class DiscardItemRequest(_message.Message):
     __slots__ = ("player_id", "item_config_id", "count", "idempotency_key")
@@ -263,7 +259,7 @@ class DiscardItemResponse(_message.Message):
     def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., remaining: _Optional[int] = ...) -> None: ...
 
 class SettleAuctionMatchRequest(_message.Message):
-    __slots__ = ("match_id", "seller_id", "buyer_id", "item_config_id", "quantity", "unit_price", "sell_order_id", "buy_order_id")
+    __slots__ = ("match_id", "seller_id", "buyer_id", "item_config_id", "quantity", "unit_price", "sell_order_id", "buy_order_id", "currency_kind")
     MATCH_ID_FIELD_NUMBER: _ClassVar[int]
     SELLER_ID_FIELD_NUMBER: _ClassVar[int]
     BUYER_ID_FIELD_NUMBER: _ClassVar[int]
@@ -272,6 +268,7 @@ class SettleAuctionMatchRequest(_message.Message):
     UNIT_PRICE_FIELD_NUMBER: _ClassVar[int]
     SELL_ORDER_ID_FIELD_NUMBER: _ClassVar[int]
     BUY_ORDER_ID_FIELD_NUMBER: _ClassVar[int]
+    CURRENCY_KIND_FIELD_NUMBER: _ClassVar[int]
     match_id: int
     seller_id: int
     buyer_id: int
@@ -280,7 +277,8 @@ class SettleAuctionMatchRequest(_message.Message):
     unit_price: int
     sell_order_id: int
     buy_order_id: int
-    def __init__(self, match_id: _Optional[int] = ..., seller_id: _Optional[int] = ..., buyer_id: _Optional[int] = ..., item_config_id: _Optional[int] = ..., quantity: _Optional[int] = ..., unit_price: _Optional[int] = ..., sell_order_id: _Optional[int] = ..., buy_order_id: _Optional[int] = ...) -> None: ...
+    currency_kind: _currency_pb2.CurrencyKind
+    def __init__(self, match_id: _Optional[int] = ..., seller_id: _Optional[int] = ..., buyer_id: _Optional[int] = ..., item_config_id: _Optional[int] = ..., quantity: _Optional[int] = ..., unit_price: _Optional[int] = ..., sell_order_id: _Optional[int] = ..., buy_order_id: _Optional[int] = ..., currency_kind: _Optional[_Union[_currency_pb2.CurrencyKind, str]] = ...) -> None: ...
 
 class SettleAuctionMatchResponse(_message.Message):
     __slots__ = ("code",)
@@ -289,20 +287,20 @@ class SettleAuctionMatchResponse(_message.Message):
     def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ...) -> None: ...
 
 class SettlePlayerTradeRequest(_message.Message):
-    __slots__ = ("order_id", "seller_id", "buyer_id", "seller_items", "buyer_items", "price")
+    __slots__ = ("order_id", "seller_id", "buyer_id", "seller_items", "buyer_items", "price_amount")
     ORDER_ID_FIELD_NUMBER: _ClassVar[int]
     SELLER_ID_FIELD_NUMBER: _ClassVar[int]
     BUYER_ID_FIELD_NUMBER: _ClassVar[int]
     SELLER_ITEMS_FIELD_NUMBER: _ClassVar[int]
     BUYER_ITEMS_FIELD_NUMBER: _ClassVar[int]
-    PRICE_FIELD_NUMBER: _ClassVar[int]
+    PRICE_AMOUNT_FIELD_NUMBER: _ClassVar[int]
     order_id: int
     seller_id: int
     buyer_id: int
     seller_items: _containers.RepeatedCompositeFieldContainer[ItemGrant]
     buyer_items: _containers.RepeatedCompositeFieldContainer[ItemGrant]
-    price: int
-    def __init__(self, order_id: _Optional[int] = ..., seller_id: _Optional[int] = ..., buyer_id: _Optional[int] = ..., seller_items: _Optional[_Iterable[_Union[ItemGrant, _Mapping]]] = ..., buyer_items: _Optional[_Iterable[_Union[ItemGrant, _Mapping]]] = ..., price: _Optional[int] = ...) -> None: ...
+    price_amount: _currency_pb2.CurrencyAmount
+    def __init__(self, order_id: _Optional[int] = ..., seller_id: _Optional[int] = ..., buyer_id: _Optional[int] = ..., seller_items: _Optional[_Iterable[_Union[ItemGrant, _Mapping]]] = ..., buyer_items: _Optional[_Iterable[_Union[ItemGrant, _Mapping]]] = ..., price_amount: _Optional[_Union[_currency_pb2.CurrencyAmount, _Mapping]] = ...) -> None: ...
 
 class SettlePlayerTradeResponse(_message.Message):
     __slots__ = ("code",)
@@ -311,20 +309,22 @@ class SettlePlayerTradeResponse(_message.Message):
     def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ...) -> None: ...
 
 class FreezeForOrderRequest(_message.Message):
-    __slots__ = ("player_id", "order_id", "side", "item_config_id", "quantity", "unit_price")
+    __slots__ = ("player_id", "order_id", "side", "item_config_id", "quantity", "unit_price", "currency_kind")
     PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
     ORDER_ID_FIELD_NUMBER: _ClassVar[int]
     SIDE_FIELD_NUMBER: _ClassVar[int]
     ITEM_CONFIG_ID_FIELD_NUMBER: _ClassVar[int]
     QUANTITY_FIELD_NUMBER: _ClassVar[int]
     UNIT_PRICE_FIELD_NUMBER: _ClassVar[int]
+    CURRENCY_KIND_FIELD_NUMBER: _ClassVar[int]
     player_id: int
     order_id: int
     side: EscrowSide
     item_config_id: int
     quantity: int
     unit_price: int
-    def __init__(self, player_id: _Optional[int] = ..., order_id: _Optional[int] = ..., side: _Optional[_Union[EscrowSide, str]] = ..., item_config_id: _Optional[int] = ..., quantity: _Optional[int] = ..., unit_price: _Optional[int] = ...) -> None: ...
+    currency_kind: _currency_pb2.CurrencyKind
+    def __init__(self, player_id: _Optional[int] = ..., order_id: _Optional[int] = ..., side: _Optional[_Union[EscrowSide, str]] = ..., item_config_id: _Optional[int] = ..., quantity: _Optional[int] = ..., unit_price: _Optional[int] = ..., currency_kind: _Optional[_Union[_currency_pb2.CurrencyKind, str]] = ...) -> None: ...
 
 class FreezeForOrderResponse(_message.Message):
     __slots__ = ("code",)
@@ -333,20 +333,22 @@ class FreezeForOrderResponse(_message.Message):
     def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ...) -> None: ...
 
 class EnsureAuctionEscrowRequest(_message.Message):
-    __slots__ = ("player_id", "order_id", "side", "item_config_id", "remaining_quantity", "unit_price")
+    __slots__ = ("player_id", "order_id", "side", "item_config_id", "remaining_quantity", "unit_price", "currency_kind")
     PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
     ORDER_ID_FIELD_NUMBER: _ClassVar[int]
     SIDE_FIELD_NUMBER: _ClassVar[int]
     ITEM_CONFIG_ID_FIELD_NUMBER: _ClassVar[int]
     REMAINING_QUANTITY_FIELD_NUMBER: _ClassVar[int]
     UNIT_PRICE_FIELD_NUMBER: _ClassVar[int]
+    CURRENCY_KIND_FIELD_NUMBER: _ClassVar[int]
     player_id: int
     order_id: int
     side: EscrowSide
     item_config_id: int
     remaining_quantity: int
     unit_price: int
-    def __init__(self, player_id: _Optional[int] = ..., order_id: _Optional[int] = ..., side: _Optional[_Union[EscrowSide, str]] = ..., item_config_id: _Optional[int] = ..., remaining_quantity: _Optional[int] = ..., unit_price: _Optional[int] = ...) -> None: ...
+    currency_kind: _currency_pb2.CurrencyKind
+    def __init__(self, player_id: _Optional[int] = ..., order_id: _Optional[int] = ..., side: _Optional[_Union[EscrowSide, str]] = ..., item_config_id: _Optional[int] = ..., remaining_quantity: _Optional[int] = ..., unit_price: _Optional[int] = ..., currency_kind: _Optional[_Union[_currency_pb2.CurrencyKind, str]] = ...) -> None: ...
 
 class EnsureAuctionEscrowResponse(_message.Message):
     __slots__ = ("code",)
@@ -445,12 +447,72 @@ class SellInstanceRequest(_message.Message):
     def __init__(self, player_id: _Optional[int] = ..., instance_id: _Optional[int] = ..., item_config_id: _Optional[int] = ..., idempotency_key: _Optional[str] = ...) -> None: ...
 
 class SellInstanceResponse(_message.Message):
-    __slots__ = ("code", "gold")
+    __slots__ = ("code", "balance", "earned")
     CODE_FIELD_NUMBER: _ClassVar[int]
-    GOLD_FIELD_NUMBER: _ClassVar[int]
+    BALANCE_FIELD_NUMBER: _ClassVar[int]
+    EARNED_FIELD_NUMBER: _ClassVar[int]
     code: _errcode_pb2.ErrCode
-    gold: int
-    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., gold: _Optional[int] = ...) -> None: ...
+    balance: _currency_pb2.CurrencyAmount
+    earned: _currency_pb2.CurrencyAmount
+    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., balance: _Optional[_Union[_currency_pb2.CurrencyAmount, _Mapping]] = ..., earned: _Optional[_Union[_currency_pb2.CurrencyAmount, _Mapping]] = ...) -> None: ...
+
+class GetShopRequest(_message.Message):
+    __slots__ = ("shop_id",)
+    SHOP_ID_FIELD_NUMBER: _ClassVar[int]
+    shop_id: int
+    def __init__(self, shop_id: _Optional[int] = ...) -> None: ...
+
+class ShopEntry(_message.Message):
+    __slots__ = ("item_config_id", "count_per_unit", "currency_kind", "unit_price", "sort_order")
+    ITEM_CONFIG_ID_FIELD_NUMBER: _ClassVar[int]
+    COUNT_PER_UNIT_FIELD_NUMBER: _ClassVar[int]
+    CURRENCY_KIND_FIELD_NUMBER: _ClassVar[int]
+    UNIT_PRICE_FIELD_NUMBER: _ClassVar[int]
+    SORT_ORDER_FIELD_NUMBER: _ClassVar[int]
+    item_config_id: int
+    count_per_unit: int
+    currency_kind: _currency_pb2.CurrencyKind
+    unit_price: int
+    sort_order: int
+    def __init__(self, item_config_id: _Optional[int] = ..., count_per_unit: _Optional[int] = ..., currency_kind: _Optional[_Union[_currency_pb2.CurrencyKind, str]] = ..., unit_price: _Optional[int] = ..., sort_order: _Optional[int] = ...) -> None: ...
+
+class GetShopResponse(_message.Message):
+    __slots__ = ("code", "shop_id", "entries")
+    CODE_FIELD_NUMBER: _ClassVar[int]
+    SHOP_ID_FIELD_NUMBER: _ClassVar[int]
+    ENTRIES_FIELD_NUMBER: _ClassVar[int]
+    code: _errcode_pb2.ErrCode
+    shop_id: int
+    entries: _containers.RepeatedCompositeFieldContainer[ShopEntry]
+    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., shop_id: _Optional[int] = ..., entries: _Optional[_Iterable[_Union[ShopEntry, _Mapping]]] = ...) -> None: ...
+
+class PurchaseShopItemRequest(_message.Message):
+    __slots__ = ("player_id", "shop_id", "item_config_id", "unit_count", "idempotency_key")
+    PLAYER_ID_FIELD_NUMBER: _ClassVar[int]
+    SHOP_ID_FIELD_NUMBER: _ClassVar[int]
+    ITEM_CONFIG_ID_FIELD_NUMBER: _ClassVar[int]
+    UNIT_COUNT_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    player_id: int
+    shop_id: int
+    item_config_id: int
+    unit_count: int
+    idempotency_key: str
+    def __init__(self, player_id: _Optional[int] = ..., shop_id: _Optional[int] = ..., item_config_id: _Optional[int] = ..., unit_count: _Optional[int] = ..., idempotency_key: _Optional[str] = ...) -> None: ...
+
+class PurchaseShopItemResponse(_message.Message):
+    __slots__ = ("code", "balance", "cost", "granted_items", "granted_instances")
+    CODE_FIELD_NUMBER: _ClassVar[int]
+    BALANCE_FIELD_NUMBER: _ClassVar[int]
+    COST_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_ITEMS_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_INSTANCES_FIELD_NUMBER: _ClassVar[int]
+    code: _errcode_pb2.ErrCode
+    balance: _currency_pb2.CurrencyAmount
+    cost: _currency_pb2.CurrencyAmount
+    granted_items: _containers.RepeatedCompositeFieldContainer[ItemGrant]
+    granted_instances: _containers.RepeatedCompositeFieldContainer[ItemInstance]
+    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., balance: _Optional[_Union[_currency_pb2.CurrencyAmount, _Mapping]] = ..., cost: _Optional[_Union[_currency_pb2.CurrencyAmount, _Mapping]] = ..., granted_items: _Optional[_Iterable[_Union[ItemGrant, _Mapping]]] = ..., granted_instances: _Optional[_Iterable[_Union[ItemInstance, _Mapping]]] = ...) -> None: ...
 
 class EscrowOutInstancesRequest(_message.Message):
     __slots__ = ("source_player_id", "to_player_id", "instance_ids", "escrow_key")

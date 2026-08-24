@@ -1,29 +1,36 @@
 {
-  "version": 20260820001,
-  "generated_at_ms": 1787274128140,
+  "version": 20260823003,
+  "generated_at_ms": 1787468499635,
   "generator": "configtable-gen@0.1.0",
-  "source_rev": "svn-r2147",
+  "source_rev": "svn-r2223",
   "tables": [
+    {
+      "name": "attr_point_effect",
+      "file": "attr_point_effect.json",
+      "proto": "pandora.config.v1.AttrPointEffectTableData",
+      "checksum": "sha256:1fc7d92170dca3e8332837e77c65a4f36927e8b079dc4954292742deb440bc35",
+      "rows": 7
+    },
     {
       "name": "chest_drop",
       "file": "chest_drop.json",
       "proto": "pandora.config.v1.ChestDropTableData",
-      "checksum": "sha256:e3707fd69ec6e739272d025f2ca3d32e7202777f7d2831b507df8d66218ce1f4",
-      "rows": 10
+      "checksum": "sha256:3727d2d1dad8694f9a9b3fbfb2c7908dbe7949b7e90f6f3ec3868ef9d2b28180",
+      "rows": 93
     },
     {
       "name": "chest_group",
       "file": "chest_group.json",
       "proto": "pandora.config.v1.ChestGroupTableData",
-      "checksum": "sha256:06e79f32773eb0dd86e4d249d3e1e333b0c5b2ecdd266bc4cec4a54b9c483361",
-      "rows": 2
+      "checksum": "sha256:8519aaee79422031f933a8e3cb8f40fd987b573a007082bd90a2bbc01b2782d3",
+      "rows": 3
     },
     {
       "name": "chest_point",
       "file": "chest_point.json",
       "proto": "pandora.config.v1.ChestPointTableData",
-      "checksum": "sha256:927ee69eab64c5d6bdcb48c3f078c8482e867aaf50c687b5ba1d040b611c54aa",
-      "rows": 151
+      "checksum": "sha256:c97b3bbcc4ac9d0ce458d3dd11f424ba4fdf3a14f3be67bfc4718f9746c94f70",
+      "rows": 155
     },
     {
       "name": "chest_quality_stage",
@@ -59,6 +66,13 @@
       "proto": "pandora.config.v1.EquipmentAffixTableData",
       "checksum": "sha256:218b276afa5fa735cc5ebe120fa14da4621395031c731595a79082aa0049f62c",
       "rows": 18
+    },
+    {
+      "name": "equipment_attr",
+      "file": "equipment_attr.json",
+      "proto": "pandora.config.v1.EquipmentAttrTableData",
+      "checksum": "sha256:01e1f57c7d6723143ff5ab0f498914b497b97ad3325ecc555dfe9817c678e371",
+      "rows": 120
     },
     {
       "name": "game_module",
@@ -127,22 +141,36 @@
       "name": "role_level",
       "file": "role_level.json",
       "proto": "pandora.config.v1.RoleLevelTableData",
-      "checksum": "sha256:5ab2b436bb01055c711c3fab96e95f0c51c87815853ff2bdbfdfa1218b99cd8e",
-      "rows": 28
+      "checksum": "sha256:a2536dc2db9ac7ca82c147b8a7738ae008b9fcff57f5fb91a60b0413544715c0",
+      "rows": 30
     },
     {
       "name": "role",
       "file": "role.json",
       "proto": "pandora.config.v1.RoleTableData",
-      "checksum": "sha256:d1eef46320fa86ed434382ae33bdcc95ac72d6076bcaeeaf6309866592023d80",
-      "rows": 25
+      "checksum": "sha256:7dde22032b68226d735929cd99af5d2471814304653f84883925a0922b5ff1ef",
+      "rows": 27
+    },
+    {
+      "name": "shop",
+      "file": "shop.json",
+      "proto": "pandora.config.v1.ShopTableData",
+      "checksum": "sha256:e5a3532e40472bca2ed1e44469be4d8659ec9bd362123d52ef62ca0d6bd0dd91",
+      "rows": 11
     },
     {
       "name": "skill_bullet",
       "file": "skill_bullet.json",
       "proto": "pandora.config.v1.SkillBulletTableData",
-      "checksum": "sha256:74237bd921d1669b403fd37296c98f086809ebba94b48128441f0b67883068a6",
-      "rows": 3
+      "checksum": "sha256:9b724e78e61f7caf8a541f2d0cc8f89be1bcfec4c15c81f622c0120619899b9d",
+      "rows": 4
+    },
+    {
+      "name": "skill_card_effect",
+      "file": "skill_card_effect.json",
+      "proto": "pandora.config.v1.SkillCardEffectTableData",
+      "checksum": "sha256:7667a3362dd6a7f49e3ddee1f3a1998d69a7dba929fb7095b12f39d0cd5c6ae9",
+      "rows": 12
     },
     {
       "name": "skill_card",
@@ -183,28 +211,28 @@
       "name": "skill",
       "file": "skill.json",
       "proto": "pandora.config.v1.SkillTableData",
-      "checksum": "sha256:72c86f613989f88a6f0553899e711602f998b0ecc4e9c9fa3f38517d63ca4c0b",
-      "rows": 67
+      "checksum": "sha256:b2a337f68ec8931be8ba8c94a03f0393dca5435e8cdc0d837a7516b2fe814444",
+      "rows": 77
     },
     {
       "name": "spawn_group",
       "file": "spawn_group.json",
       "proto": "pandora.config.v1.SpawnGroupTableData",
-      "checksum": "sha256:3aa1e95357c8a82b3f22348167b2ea27884ae1074556785bc9eabb463804aef6",
-      "rows": 7
+      "checksum": "sha256:044fb2c5a624bab669cbfb3f21465a423c01071fcfb7c76d11149f567e5a7cb5",
+      "rows": 8
     },
     {
       "name": "spawn_point",
       "file": "spawn_point.json",
       "proto": "pandora.config.v1.SpawnPointTableData",
-      "checksum": "sha256:8c826f92d7e5c32c120ffa7225c5c83c382ef6c60b0746d3b9e51fcb20a8c889",
-      "rows": 227
+      "checksum": "sha256:65379b8eeccbd3fd4b49d7a05ecc0fb18c7a36fe5c0cfa3b1ab6a539f92bda47",
+      "rows": 232
     },
     {
       "name": "talent_effect",
       "file": "talent_effect.json",
       "proto": "pandora.config.v1.TalentEffectTableData",
-      "checksum": "sha256:23eaa6b6bad7d463a79293b1fa16dd32bae33a6da36ac4d6f8592cbe3814d229",
+      "checksum": "sha256:6c87b2338a8b72260c983ee598fc6d03c5c4c967bf37e0adfecc3721d7b17cb9",
       "rows": 10
     },
     {

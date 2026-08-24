@@ -115,6 +115,10 @@ func newUC(repo *fakeRepo, ledger ResourceLedger) (*TradeUsecase, *fakeAudit) {
 		OrderExpire:      config.Duration(5 * time.Minute),
 		OptimisticRetry:  3,
 		MaxItemsPerOrder: 20,
+		// MaxTradePrice 必须显式给:price 改 uint64 后 CreateOrder 的价格闸是**上界** ——
+		// 零值 0 会把"任何正价"都判成越界(而不是"不限价")。生产由 Config.Defaults()
+		// 填 1e9,但那是 *Config 上的方法,直建 TradeConf 的测试拿不到。
+		MaxTradePrice: 1_000_000_000,
 	}
 	return NewTradeUsecase(repo, ledger, audit, &seqSF{}, cfg), audit
 }
@@ -131,6 +135,57 @@ func wantCode(t *testing.T, err error, code errcode.Code) {
 }
 
 // ── 测试 ───────────────────────────────────────────────────────────────────────
+
+// TestCreateOrder_PriceUpperBound 价格闸从"下界防负数"改成"上界防天文数字"后的回归。
+//
+// 为什么必须有这条:price 是 uint64,旧写法 `price < 0` 恒为 false,编译器与 go vet 都不报,
+// 闸门被静默拆掉也没有任何测试会红。这里钉死三件事:
+//
+//	① 恰好等于上限 → 放行(闸是 `>` 不是 `>=`,别把合法边界值也拒了);
+//	② 超过上限 → ErrInvalidArg,且**零副作用**(不落订单);
+//	③ 一个 price=-1 的老客户端请求在 uint64 里解成 MaxUint64 → 必须被同一道闸挡下,
+//	   而不是一路落库再送进 SettlePlayerTrade。
+func TestCreateOrder_PriceUpperBound(t *testing.T) {
+	const maxPrice = uint64(1_000_000_000)
+
+	t.Run("恰好等于上限放行", func(t *testing.T) {
+		repo := newFakeRepo()
+		uc, _ := newUC(repo, &fakeLedger{})
+		if _, err := uc.CreateOrder(context.Background(), 1, 2, items(), nil, maxPrice); err != nil {
+			t.Fatalf("边界值应放行: %v", err)
+		}
+	})
+
+	t.Run("超上限拒绝且零副作用", func(t *testing.T) {
+		repo := newFakeRepo()
+		uc, _ := newUC(repo, &fakeLedger{})
+		_, err := uc.CreateOrder(context.Background(), 1, 2, items(), nil, maxPrice+1)
+		wantCode(t, err, errcode.ErrInvalidArg)
+		if len(repo.orders) != 0 {
+			t.Fatalf("越界不得落订单: %d", len(repo.orders))
+		}
+	})
+
+	t.Run("负价在uint64里解成天文数字也必须拒", func(t *testing.T) {
+		repo := newFakeRepo()
+		uc, _ := newUC(repo, &fakeLedger{})
+		// int64(-1) 按 uint64 解读 = 18446744073709551615。
+		_, err := uc.CreateOrder(context.Background(), 1, 2, items(), nil, ^uint64(0))
+		wantCode(t, err, errcode.ErrInvalidArg)
+		if len(repo.orders) != 0 {
+			t.Fatalf("越界不得落订单: %d", len(repo.orders))
+		}
+	})
+
+	t.Run("price为0是合法的纯以物易物", func(t *testing.T) {
+		repo := newFakeRepo()
+		uc, _ := newUC(repo, &fakeLedger{})
+		// 上界闸不能顺手把 0 也拒掉:0 = 双方只换道具不付钱,是既有合法形态。
+		if _, err := uc.CreateOrder(context.Background(), 1, 2, items(), items(), 0); err != nil {
+			t.Fatalf("零价以物易物应放行: %v", err)
+		}
+	})
+}
 
 func TestCreateOrder_OK(t *testing.T) {
 	repo := newFakeRepo()
@@ -300,6 +355,7 @@ func newCappedUC(repo *fakeRepo, maxOrders int) *TradeUsecase {
 		OptimisticRetry:    3,
 		MaxItemsPerOrder:   20,
 		MaxOrdersPerPlayer: maxOrders,
+		MaxTradePrice:      1_000_000_000, // 同 newUC:零值等于禁掉一切正价交易。
 	}
 	uc := NewTradeUsecase(repo, &fakeLedger{}, &fakeAudit{}, &seqSF{}, cfg)
 	return uc

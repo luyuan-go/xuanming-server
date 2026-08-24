@@ -112,14 +112,18 @@ func TestDiscardItemAndSellInstanceClosure(t *testing.T) {
 	if _, err := uc.SellInstance(context.Background(), 7, instanceID, 10002, "sell-inst-wrong"); errcode.As(err) != errcode.ErrInventoryNotSellable {
 		t.Fatalf("陈旧 config_id 必须拒绝, got %v", err)
 	}
-	gold, err := uc.SellInstance(context.Background(), 7, instanceID, 10003, "sell-inst")
-	if err != nil || gold != 180 {
-		t.Fatalf("sell instance gold=%d err=%v", gold, err)
+	out, err := uc.SellInstance(context.Background(), 7, instanceID, 10003, "sell-inst")
+	if err != nil || out.Balances.Get(data.CurrencyGold) != 180 || out.Earned != 180 {
+		t.Fatalf("sell instance outcome=%+v err=%v", out, err)
 	}
 	// 实例已删仍由 ledger 回放，不能在 biz 先查实例导致幂等失效。
-	gold, err = uc.SellInstance(context.Background(), 7, instanceID, 10003, "sell-inst")
-	if err != nil || gold != 180 {
-		t.Fatalf("sell instance replay gold=%d err=%v", gold, err)
+	out, err = uc.SellInstance(context.Background(), 7, instanceID, 10003, "sell-inst")
+	if err != nil || out.Balances.Get(data.CurrencyGold) != 180 {
+		t.Fatalf("sell instance replay outcome=%+v err=%v", out, err)
+	}
+	// 回放的入账额必须仍是 180(不是 0):响应丢失后重试的客户端要看到同一笔收入。
+	if out.Earned != 180 {
+		t.Fatalf("sell instance replay earned=%d want=180", out.Earned)
 	}
 }
 
@@ -134,21 +138,30 @@ func TestSaleIdempotencySurvivesPriceReloadAndConfigRemoval(t *testing.T) {
 	uc.SetItemCatalog(catalog)
 	uc.SetSnowflake(&seqGen{})
 
-	remaining, gold, err := uc.SellItem(context.Background(), 7, 10002, 2, "hot-stack")
-	if err != nil || remaining != 3 || gold != 50 {
-		t.Fatalf("first stack sale remaining=%d gold=%d err=%v", remaining, gold, err)
+	out, err := uc.SellItem(context.Background(), 7, 10002, 2, "hot-stack")
+	if err != nil || out.Remaining != 3 || out.Balances.Get(data.CurrencyGold) != 50 || out.Earned != 50 {
+		t.Fatalf("first stack sale outcome=%+v err=%v", out, err)
 	}
 	catalog[10002] = ItemDefinition{SellUnitPrice: 100, MaxStack: 99}
-	remaining, gold, err = uc.SellItem(context.Background(), 7, 10002, 2, "hot-stack")
-	if err != nil || remaining != 3 || gold != 50 || repo.items[7][10002] != 3 {
-		t.Fatalf("price reload stack replay remaining=%d gold=%d stored=%d err=%v",
-			remaining, gold, repo.items[7][10002], err)
+	out, err = uc.SellItem(context.Background(), 7, 10002, 2, "hot-stack")
+	if err != nil || out.Remaining != 3 || out.Balances.Get(data.CurrencyGold) != 50 || repo.items[7][10002] != 3 {
+		t.Fatalf("price reload stack replay outcome=%+v stored=%d err=%v",
+			out, repo.items[7][10002], err)
+	}
+	// 改价后重放:入账额必须仍是首次的 50,而不是按新价 100 重算成 200。
+	if out.Earned != 50 {
+		t.Fatalf("price reload replay earned=%d want=50(不得按新价重算)", out.Earned)
 	}
 	delete(catalog, 10002)
-	remaining, gold, err = uc.SellItem(context.Background(), 7, 10002, 2, "hot-stack")
-	if err != nil || remaining != 3 || gold != 50 || repo.items[7][10002] != 3 {
-		t.Fatalf("removed config stack replay remaining=%d gold=%d stored=%d err=%v",
-			remaining, gold, repo.items[7][10002], err)
+	out, err = uc.SellItem(context.Background(), 7, 10002, 2, "hot-stack")
+	if err != nil || out.Remaining != 3 || out.Balances.Get(data.CurrencyGold) != 50 || repo.items[7][10002] != 3 {
+		t.Fatalf("removed config stack replay outcome=%+v stored=%d err=%v",
+			out, repo.items[7][10002], err)
+	}
+	// 配置删掉后重放:amount 会被算成 0,但 ledger 命中在"不可出售"判定之前,
+	// 所以仍必须回放 50 —— 这条断言就是防止有人把 amount==0 的判定挪到 claim 之前。
+	if out.Earned != 50 {
+		t.Fatalf("removed config replay earned=%d want=50", out.Earned)
 	}
 
 	insts, err := uc.GrantInstances(context.Background(), 7, []uint32{10003}, "hot-grant-inst")
@@ -156,14 +169,15 @@ func TestSaleIdempotencySurvivesPriceReloadAndConfigRemoval(t *testing.T) {
 		t.Fatalf("grant instance=%+v err=%v", insts, err)
 	}
 	instanceID := insts[0].InstanceID
-	gold, err = uc.SellInstance(context.Background(), 7, instanceID, 10003, "hot-instance")
-	if err != nil || gold != 230 { // 先前 stack +50，再 instance +180。
-		t.Fatalf("first instance sale gold=%d err=%v", gold, err)
+	out, err = uc.SellInstance(context.Background(), 7, instanceID, 10003, "hot-instance")
+	// 余额 230 = 先前 stack +50,再 instance +180;本笔入账额只有 180。
+	if err != nil || out.Balances.Get(data.CurrencyGold) != 230 || out.Earned != 180 {
+		t.Fatalf("first instance sale outcome=%+v err=%v", out, err)
 	}
 	delete(catalog, 10003)
-	gold, err = uc.SellInstance(context.Background(), 7, instanceID, 10003, "hot-instance")
-	if err != nil || gold != 230 || repo.gold[7] != 230 {
-		t.Fatalf("removed config instance replay gold=%d stored=%d err=%v", gold, repo.gold[7], err)
+	out, err = uc.SellInstance(context.Background(), 7, instanceID, 10003, "hot-instance")
+	if err != nil || out.Balances.Get(data.CurrencyGold) != 230 || out.Earned != 180 || repo.goldOf(7) != 230 {
+		t.Fatalf("removed config instance replay outcome=%+v stored=%d err=%v", out, repo.goldOf(7), err)
 	}
 }
 
@@ -182,7 +196,7 @@ func TestBoundInstanceCannotDiscardOrSell(t *testing.T) {
 	if _, err := uc.SellInstance(context.Background(), 7, id, 10003, "sell-bound"); errcode.As(err) != errcode.ErrInventoryInstanceBound {
 		t.Fatalf("bound sell got %v", err)
 	}
-	if repo.instances[7][id] == nil || repo.gold[7] != 0 {
+	if repo.instances[7][id] == nil || repo.goldOf(7) != 0 {
 		t.Fatalf("bound reject must preserve instance and gold")
 	}
 }

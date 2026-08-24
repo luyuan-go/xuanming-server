@@ -3,13 +3,13 @@
     {
       "id": 110001,
       "level_id": 11,
-      "level_asset_path": "/Game/Test/Level/SonglinTown.SonglinTown",
-      "remark": "松林镇-静态怪导入",
+      "level_asset_path": "/Game/StylizedCyberpunk/Levels/StylizedCyberpunk.StylizedCyberpunk",
+      "remark": "赛博镇",
       "enabled": true,
       "priority": 100
     },
     {
-      "id": 70001,
+      "id": 80001,
       "level_id": 8,
       "level_asset_path": "/Game/ScifiArctic/Maps/ExampleLevel_Artic01.ExampleLevel_Artic01",
       "remark": "Artic01-自动铺怪",
@@ -24,7 +24,7 @@
       "priority": 100
     },
     {
-      "id": 50001,
+      "id": 70001,
       "level_id": 7,
       "level_asset_path": "/Game/Test/Level/SonglinTown.SonglinTown",
       "remark": "松林镇-静态怪导入",
@@ -52,6 +52,14 @@
       "level_id": 13,
       "level_asset_path": "/Game/StylizedCyberpunk/Levels/StylizedCyberpunk.StylizedCyberpunk",
       "remark": "Level13-防守第二波",
+      "enabled": true,
+      "priority": 100
+    },
+    {
+      "id": 140001,
+      "level_id": 14,
+      "level_asset_path": "/Game/ScifiArctic/Maps/ExampleLevel_Artic01.ExampleLevel_Artic01",
+      "remark": "Artic01-自动铺怪",
       "enabled": true,
       "priority": 100
     }

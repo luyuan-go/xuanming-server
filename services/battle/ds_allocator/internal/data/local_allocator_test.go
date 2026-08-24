@@ -391,7 +391,7 @@ func TestBuildArgs_PackagedLauncherUnchanged(t *testing.T) {
 		PortBase:  7777,
 		PortRange: 10,
 	}
-	want := []string{"/Game/Maps/Default", "-server", "-log", "-port=7788"}
+	want := []string{"/Game/Maps/Default", "-server", "-stdout", "-FullStdOutLogOutput", "-port=7788"}
 
 	for _, tc := range []struct {
 		name string
@@ -438,7 +438,7 @@ func TestBuildArgs_EditorLauncherPutsProjectFirst(t *testing.T) {
 	want := []string{
 		`F:\work\Pandora-Client-SVN\Pandora\Pandora.uproject`,
 		"/Game/Maps/PVE",
-		"-server", "-log", "-port=7788",
+		"-server", "-stdout", "-FullStdOutLogOutput", "-port=7788",
 		conf.EditorLauncherCVarArg,
 	}
 	if !reflect.DeepEqual(got, want) {

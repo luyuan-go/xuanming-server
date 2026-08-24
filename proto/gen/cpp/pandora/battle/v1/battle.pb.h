@@ -930,14 +930,14 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED PlayerStats final : public ::google
   void _internal_set_healing(::int64_t value);
 
   public:
-  // int64 gold = 10 [json_name = "gold"];
+  // uint64 gold = 10 [json_name = "gold"];
   void clear_gold() ;
-  [[nodiscard]] ::int64_t gold() const;
-  void set_gold(::int64_t value);
+  [[nodiscard]] ::uint64_t gold() const;
+  void set_gold(::uint64_t value);
 
   private:
-  ::int64_t _internal_gold() const;
-  void _internal_set_gold(::int64_t value);
+  ::uint64_t _internal_gold() const;
+  void _internal_set_gold(::uint64_t value);
 
   public:
   // repeated uint32 dropped_item_config_ids = 20 [json_name = "droppedItemConfigIds"];
@@ -1003,7 +1003,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED PlayerStats final : public ::google
     ::int32_t assists_;
     ::int32_t mmr_delta_;
     ::int64_t healing_;
-    ::int64_t gold_;
+    ::uint64_t gold_;
     ::google::protobuf::RepeatedField<::uint32_t> dropped_item_config_ids_;
     ::google::protobuf::internal::CachedSize _dropped_item_config_ids_cached_byte_size_;
     PROTOBUF_TSAN_DECLARE_MEMBER
@@ -4083,26 +4083,26 @@ inline void PlayerStats::_internal_set_healing(::int64_t value) {
   _impl_.healing_ = value;
 }
 
-// int64 gold = 10 [json_name = "gold"];
+// uint64 gold = 10 [json_name = "gold"];
 inline void PlayerStats::clear_gold() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = ::int64_t{0};
+  _impl_.gold_ = ::uint64_t{0u};
   ClearHasBit(_impl_._has_bits_[0], 0x00000400U);
 }
-inline ::int64_t PlayerStats::gold() const {
+inline ::uint64_t PlayerStats::gold() const {
   // @@protoc_insertion_point(field_get:pandora.battle.v1.PlayerStats.gold)
   return _internal_gold();
 }
-inline void PlayerStats::set_gold(::int64_t value) {
+inline void PlayerStats::set_gold(::uint64_t value) {
   _internal_set_gold(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000400U);
   // @@protoc_insertion_point(field_set:pandora.battle.v1.PlayerStats.gold)
 }
-inline ::int64_t PlayerStats::_internal_gold() const {
+inline ::uint64_t PlayerStats::_internal_gold() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.gold_;
 }
-inline void PlayerStats::_internal_set_gold(::int64_t value) {
+inline void PlayerStats::_internal_set_gold(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.gold_ = value;
 }

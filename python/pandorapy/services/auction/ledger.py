@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import grpc
 from pandora.common.v1 import errcode_pb2
+from pandora.common.v1 import currency_pb2
 from pandora.inventory.v1 import inventory_pb2, inventory_pb2_grpc
 
 from pandorapy import errcode
@@ -102,6 +103,9 @@ class GrpcInventoryLedger:
                 item_config_id=item_config_id,
                 quantity=quantity,
                 unit_price=price,
+                # 拍卖行当前只用金币计价。显式传而不是留 UNSPECIFIED:
+                # inventory 侧对未知币种一律 fail-closed,**不会**回退成金币(currency.proto)。
+                currency_kind=currency_pb2.CURRENCY_KIND_GOLD,
             )
         )
         _raise_unless_ok(
@@ -135,6 +139,7 @@ class GrpcInventoryLedger:
                 item_config_id=item_config_id,
                 remaining_quantity=remaining,
                 unit_price=price,
+                currency_kind=currency_pb2.CURRENCY_KIND_GOLD,
             )
         )
         _raise_unless_ok(
@@ -158,6 +163,7 @@ class GrpcInventoryLedger:
                 # 成交价 = **被动挂单价**。传 incoming 的报价会让买家多付 / 卖家少收,
                 # 而账目两边都平 —— 对不出账,只有玩家能察觉。
                 unit_price=m.price,
+                currency_kind=currency_pb2.CURRENCY_KIND_GOLD,
             )
         )
         _raise_unless_ok(

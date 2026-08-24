@@ -41,6 +41,7 @@ from pandorapy import errcode
 from pandorapy import interceptors as pintercept
 from pandorapy import log as plog
 from pandorapy.services.inventory import biz as ibiz
+from pandorapy.services.inventory import currency_biz as cbiz
 from pandorapy.services.inventory.models import (
     InstanceOwnershipQuery,
     ItemGrant,
@@ -70,6 +71,16 @@ def _to_proto_instance(inst: ItemInstance) -> pb.ItemInstance:
         slot_index=inst.slot_index,
         bound=inst.bound,
     )
+
+
+def _balance_of(balances, kind: int) -> int:  # noqa: ANN001
+    """从余额快照取某币种(缺项 = 0)。
+
+    下行只带**本次涉及的那一种**币种余额(与 Go 的
+    `outcome.Balances.Get(outcome.Kind)` 同口径):出售 / 购买响应回答的是
+    "这笔之后你这种钱还有多少",不是"你全部资产快照"——后者要另调 GetInventory。
+    """
+    return int((balances or {}).get(kind, 0))
 
 
 def _to_bag_item(row) -> bag_pb2.BagItem:  # noqa: ANN001 —— models.EscrowedInstance
@@ -136,7 +147,7 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
         if code != commonpb.OK:
             return pb.GetInventoryResponse(code=code)
         try:
-            gold, items, capacity, instances = await self._uc.get_inventory_full(player_id)
+            balances, items, capacity, instances = await self._uc.get_inventory_full(player_id)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001
@@ -145,7 +156,7 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
             code=commonpb.OK,
             inventory=pb.Inventory(
                 player_id=player_id,
-                gold=gold,
+                currencies=cbiz.balances_to_proto(balances),
                 items=[
                     pb.ItemStack(item_config_id=it.item_config_id, count=it.count)
                     for it in items
@@ -168,14 +179,19 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
             ItemGrant(item_config_id=it.item_config_id, count=it.count) for it in request.items
         ]
         try:
-            gold = await self._uc.grant_items(
-                request.player_id, items, request.gold, request.idempotency_key
+            # balances_from_proto 是**唯一**的类型边界:币种未知 / 数量为 0 / 同币种重复
+            # 都在这里拒。重复币种必须拒而不是相加 —— "相加"和"取后者"都是猜,猜错就是发错钱。
+            currencies = cbiz.balances_from_proto(request.currencies)
+            balances = await self._uc.grant_items(
+                request.player_id, items, currencies, request.idempotency_key
             )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001
             return pb.GrantItemsResponse(code=_code_of(exc))
-        return pb.GrantItemsResponse(code=commonpb.OK, gold=gold)
+        return pb.GrantItemsResponse(
+            code=commonpb.OK, currencies=cbiz.balances_to_proto(balances)
+        )
 
     async def UseItem(self, request, context):  # noqa: N802
         player_id, code = self._caller_player_id(context, request.player_id)
@@ -232,14 +248,21 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
         if code != commonpb.OK:
             return pb.SellItemResponse(code=code)
         try:
-            remaining, gold = await self._uc.sell_item(
+            outcome = await self._uc.sell_item(
                 player_id, request.item_config_id, request.count, request.idempotency_key
             )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001
             return pb.SellItemResponse(code=_code_of(exc))
-        return pb.SellItemResponse(code=commonpb.OK, remaining=remaining, gold=gold)
+        return pb.SellItemResponse(
+            code=commonpb.OK,
+            remaining=outcome.remaining,
+            balance=cbiz.currency_amount_proto(
+                outcome.kind, _balance_of(outcome.balances, outcome.kind)
+            ),
+            earned=cbiz.currency_amount_proto(outcome.kind, outcome.earned),
+        )
 
     async def DiscardItem(self, request, context):  # noqa: N802
         player_id, code = self._caller_player_id(context, request.player_id)
@@ -317,7 +340,7 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
         if code != commonpb.OK:
             return pb.SellInstanceResponse(code=code)
         try:
-            gold = await self._uc.sell_instance(
+            outcome = await self._uc.sell_instance(
                 player_id,
                 request.instance_id,
                 request.item_config_id,
@@ -327,7 +350,78 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
             raise
         except BaseException as exc:  # noqa: BLE001
             return pb.SellInstanceResponse(code=_code_of(exc))
-        return pb.SellInstanceResponse(code=commonpb.OK, gold=gold)
+        return pb.SellInstanceResponse(
+            code=commonpb.OK,
+            balance=cbiz.currency_amount_proto(
+                outcome.kind, _balance_of(outcome.balances, outcome.kind)
+            ),
+            earned=cbiz.currency_amount_proto(outcome.kind, outcome.earned),
+        )
+
+    # ── NPC 商店(客户端接口)────────────────────────────────────────────
+
+    async def GetShop(self, request, context):  # noqa: N802
+        """读某个 NPC 商店的权威价目表。
+
+        ★ 刻意**不校验调用者身份**:价目表本来就是要在客户端上展示的公开信息,
+          加鉴权只会让 DS / 工具查价变麻烦。与 Go 侧 shop.go 的边界一致。
+        客户端拿它渲染商品列表与单价,于是展示口径与扣费口径同源 ——
+        旧的客户端本地商店从道具表读 SellPrice 当买入价,改表后两边会静默漂移(§17.3)。
+        """
+        try:
+            entries = await self._uc.get_shop(request.shop_id)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            return pb.GetShopResponse(code=_code_of(exc))
+        return pb.GetShopResponse(
+            code=commonpb.OK,
+            shop_id=request.shop_id,
+            entries=[
+                pb.ShopEntry(
+                    item_config_id=e.item_config_id,
+                    count_per_unit=e.count_per_unit,
+                    currency_kind=e.currency_kind,
+                    unit_price=e.unit_price,
+                    sort_order=e.sort_order,
+                )
+                for e in entries
+            ],
+        )
+
+    async def PurchaseShopItem(self, request, context):  # noqa: N802
+        """向 NPC 商店购买道具(服务端权威扣费 + 入包,原子且幂等)。
+
+        动玩家钱包 → 一律以 Envoy 注入的调用者身份为准,**不信任请求体 player_id**,
+        防止替别人花钱 / 给自己刷货。
+        """
+        player_id, code = self._caller_player_id(context, request.player_id)
+        if code != commonpb.OK:
+            return pb.PurchaseShopItemResponse(code=code)
+        try:
+            outcome = await self._uc.purchase_shop_item(
+                player_id,
+                request.shop_id,
+                request.item_config_id,
+                request.unit_count,
+                request.idempotency_key,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            return pb.PurchaseShopItemResponse(code=_code_of(exc))
+        return pb.PurchaseShopItemResponse(
+            code=commonpb.OK,
+            balance=cbiz.currency_amount_proto(
+                outcome.kind, _balance_of(outcome.balances, outcome.kind)
+            ),
+            cost=cbiz.currency_amount_proto(outcome.kind, outcome.cost),
+            granted_items=[
+                pb.ItemGrant(item_config_id=it.item_config_id, count=it.count)
+                for it in outcome.items
+            ],
+            granted_instances=[_to_proto_instance(i) for i in outcome.instances],
+        )
 
     # ── 拍卖托管 / 结算(系统接口)────────────────────────────────────────
 
@@ -342,6 +436,7 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
                 int(request.side),
                 request.item_config_id,
                 request.quantity,
+                int(request.currency_kind),
                 request.unit_price,
             )
         except asyncio.CancelledError:
@@ -361,6 +456,7 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
                 int(request.side),
                 request.item_config_id,
                 request.remaining_quantity,
+                int(request.currency_kind),
                 request.unit_price,
             )
         except asyncio.CancelledError:
@@ -382,6 +478,7 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
                 request.buy_order_id,
                 request.item_config_id,
                 request.quantity,
+                int(request.currency_kind),
                 request.unit_price,
             )
         except asyncio.CancelledError:
@@ -405,7 +502,8 @@ class InventoryService(pbgrpc.InventoryServiceServicer):
                 request.buyer_id,
                 _grants(request.seller_items),
                 _grants(request.buyer_items),
-                request.price,
+                int(request.price_amount.kind),
+                int(request.price_amount.amount),
             )
         except asyncio.CancelledError:
             raise

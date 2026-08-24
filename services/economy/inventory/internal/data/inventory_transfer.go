@@ -109,7 +109,7 @@ func (r *MySQLInventoryRepo) EscrowOutInstances(ctx context.Context, sourcePlaye
 	defer func() { _ = tx.Rollback() }()
 
 	fp := EscrowOutFingerprint(toPlayerID, instanceIDs)
-	already, _, _, lerr := claimLedger(ctx, tx, sourcePlayerID, escrowKey, "escrow_out", fp, detail)
+	already, _, lerr := claimLedger(ctx, tx, sourcePlayerID, escrowKey, "escrow_out", fp, detail)
 	if lerr != nil {
 		return nil, false, lerr
 	}
@@ -214,7 +214,7 @@ func (r *MySQLInventoryRepo) ClaimTransferInstances(ctx context.Context, toPlaye
 	defer func() { _ = tx.Rollback() }()
 
 	fp := TransferClaimFingerprint(items)
-	already, _, _, lerr := claimLedger(ctx, tx, toPlayerID, idempotencyKey, "transfer_claim", fp, detail)
+	already, _, lerr := claimLedger(ctx, tx, toPlayerID, idempotencyKey, "transfer_claim", fp, detail)
 	if lerr != nil {
 		return false, lerr
 	}

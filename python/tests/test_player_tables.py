@@ -12,6 +12,7 @@ import pytest
 
 from pandora.config.v1 import player_level_exp_pb2 as lvl_pb
 from pandora.config.v1 import skill_card_pb2 as card_pb
+from pandora.config.v1 import skill_card_effect_pb2 as ceff_pb
 from pandora.config.v1 import talent_effect_pb2 as teff_pb
 from pandora.config.v1 import talent_pb2 as talent_pb
 
@@ -258,6 +259,75 @@ def test_talent_effect_duplicate_rows_double_the_bonus() -> None:
     ]
     with pytest.raises(ConfigTableError, match="加成会翻倍"):
         pt._validate_talent_effects(rows)
+
+
+# ── 技能卡效果(培养等级 → 战斗属性)────────────────────────────────────────
+
+
+def test_skill_card_effect_attr_key_whitelist() -> None:
+    """attr_key 写错在 DS 上的表现是"这张卡升了完全没反应",既不报错也不崩。"""
+    with pytest.raises(ConfigTableError, match="不是战斗属性集里的属性"):
+        pt._validate_skill_card_effect_row(
+            ceff_pb.SkillCardEffectRow(id=1, card_id=1, attr_key="Atack", value_per_level=1)
+        )
+    pt._validate_skill_card_effect_row(
+        ceff_pb.SkillCardEffectRow(id=1, card_id=1, attr_key="Atk", value_per_level=1)
+    )
+    # MaxHp 必须在白名单里:生命类加成只能配它(配 Hp 会被 DS 侧按上限钳掉)。
+    pt._validate_skill_card_effect_row(
+        ceff_pb.SkillCardEffectRow(id=2, card_id=1, attr_key="MaxHp", value_per_level=25)
+    )
+
+
+def test_skill_card_effect_value_bounds() -> None:
+    with pytest.raises(ConfigTableError, match="没有任何作用"):
+        pt._validate_skill_card_effect_row(
+            ceff_pb.SkillCardEffectRow(id=1, card_id=1, attr_key="Atk", value_per_level=0)
+        )
+    with pytest.raises(ConfigTableError, match="疑似多打了零"):
+        pt._validate_skill_card_effect_row(
+            ceff_pb.SkillCardEffectRow(
+                id=1,
+                card_id=1,
+                attr_key="Atk",
+                value_per_level=pt.MAX_SKILL_CARD_EFFECT_VALUE_PER_LEVEL + 1,
+            )
+        )
+    # 负数是合法设计(加攻减速这类高风险卡),只挡绝对值超限。
+    pt._validate_skill_card_effect_row(
+        ceff_pb.SkillCardEffectRow(id=1, card_id=1, attr_key="MoveSpeedRate", value_per_level=-0.05)
+    )
+
+
+def test_skill_card_effect_duplicate_rows_double_the_bonus() -> None:
+    rows = [
+        ceff_pb.SkillCardEffectRow(id=1, card_id=8, attr_key="Atk", value_per_level=4),
+        ceff_pb.SkillCardEffectRow(id=2, card_id=8, attr_key="Atk", value_per_level=4),
+    ]
+    with pytest.raises(ConfigTableError, match="加成会翻倍"):
+        pt._validate_skill_card_effects(rows)
+    # 同一张卡配不同属性(传说卡的正常形态)必须放行。
+    pt._validate_skill_card_effects(
+        [
+            ceff_pb.SkillCardEffectRow(id=1, card_id=8, attr_key="Atk", value_per_level=4),
+            ceff_pb.SkillCardEffectRow(id=2, card_id=8, attr_key="MaxHp", value_per_level=30),
+        ]
+    )
+
+
+def test_combat_attr_keys_shared_by_both_effect_tables() -> None:
+    """两张效果表说的是同一个战斗属性集,只能有一份白名单 —— 各存一份必然漂移。
+
+    漂移的后果是其中一张表误拒合法键或放过拼错的键,而两种结果在 DS 上都表现为
+    "点了 / 升了没反应"且全程静默。
+    """
+    for key in ("Atk", "MaxHp", "CritDamage", "SkillDamageRate"):
+        pt._validate_talent_effect_row(
+            teff_pb.TalentEffectRow(id=1, talent_id=1, attr_key=key, value_per_level=1)
+        )
+        pt._validate_skill_card_effect_row(
+            ceff_pb.SkillCardEffectRow(id=1, card_id=1, attr_key=key, value_per_level=1)
+        )
 
 
 # ── 技能卡 ───────────────────────────────────────────────────────────────────

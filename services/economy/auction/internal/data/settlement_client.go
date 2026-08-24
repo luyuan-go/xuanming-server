@@ -51,7 +51,10 @@ func (g *GrpcInventoryLedger) Freeze(ctx context.Context, playerID, orderID uint
 		Side:         inventoryv1.EscrowSide(side),
 		ItemConfigId: itemConfigID,
 		Quantity:     quantity,
-		UnitPrice:    price,
+		UnitPrice:    uint64(price),
+		// 拍卖行当前只用金币计价。显式传而不是留 UNSPECIFIED:
+		// inventory 侧对未知币种一律 fail-closed,**不会**回退成金币(currency.proto)。
+		CurrencyKind: commonv1.CurrencyKind_CURRENCY_KIND_GOLD,
 	})
 	if err != nil {
 		return err
@@ -78,6 +81,10 @@ func (g *GrpcInventoryLedger) Ensure(
 	resp, err := g.cli.EnsureAuctionEscrow(ctx, &inventoryv1.EnsureAuctionEscrowRequest{
 		PlayerId: playerID, OrderId: orderID, Side: inventoryv1.EscrowSide(side),
 		ItemConfigId: itemConfigID, RemainingQuantity: uint64(remaining), UnitPrice: uint64(price),
+		// 与本文件其余三个构造点同口径:inventory 对未知币种一律 fail-closed,**不会**回退成金币。
+		// 漏填等于给 BUY 侧补冻钉死一个 ERR_INVALID_ARG —— 而这条路径只在
+		// "旧订单缺 escrow 需要补冻" 时才走,平时不触发,所以漏了也不会立刻暴露。
+		CurrencyKind: commonv1.CurrencyKind_CURRENCY_KIND_GOLD,
 	})
 	if err != nil {
 		return err
@@ -109,7 +116,8 @@ func (g *GrpcInventoryLedger) Settle(ctx context.Context, m *MatchRecord) error 
 		BuyOrderId:   m.BuyOrderID,
 		ItemConfigId: m.ItemConfigID,
 		Quantity:     m.Quantity,
-		UnitPrice:    m.Price,
+		UnitPrice:    uint64(m.Price),
+		CurrencyKind: commonv1.CurrencyKind_CURRENCY_KIND_GOLD,
 	})
 	if err != nil {
 		return err

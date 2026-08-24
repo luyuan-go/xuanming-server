@@ -13,6 +13,13 @@
       "level_asset_path": "/Game/Test/Level/SonglinTown.SonglinTown",
       "remark": "松林镇宝箱组",
       "enabled": true
+    },
+    {
+      "id": 140007,
+      "level_id": 14,
+      "level_asset_path": "/Game/ScifiArctic/Maps/ExampleLevel_Artic01.ExampleLevel_Artic01",
+      "remark": "Artic01宝箱组",
+      "enabled": true
     }
   ]
 }

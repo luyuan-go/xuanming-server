@@ -153,7 +153,7 @@ func (u *TradeUsecase) SetCellRouter(r *cellroute.Router) {
 //
 // items = 卖家交付给买家的道具(必填);buyerItems = 买家交付给卖家的道具(可空 = 纯金币购买);
 // price = 买家付卖家的金币(>=0)。道具一律用 item_config_id(uint32,对齐 inventory 可堆叠模型)。
-func (u *TradeUsecase) CreateOrder(ctx context.Context, sellerID, buyerID uint64, items, buyerItems []*tradev1.TradeItem, price int64) (uint64, error) {
+func (u *TradeUsecase) CreateOrder(ctx context.Context, sellerID, buyerID uint64, items, buyerItems []*tradev1.TradeItem, price uint64) (uint64, error) {
 	if sellerID == 0 || buyerID == 0 {
 		return 0, errcode.New(errcode.ErrInvalidArg, "seller / buyer required")
 	}
@@ -184,8 +184,13 @@ func (u *TradeUsecase) CreateOrder(ctx context.Context, sellerID, buyerID uint64
 	if err := validate(buyerItems); err != nil {
 		return 0, err
 	}
-	if price < 0 {
-		return 0, errcode.New(errcode.ErrInvalidArg, "price must be >= 0")
+	// price 现在是 uint64,原来的 `price < 0` 闸会**恒为 false**(编译器与 go vet 都不报),
+	// 等于闸门被静默拆掉。无符号世界里"防离谱价格"的正确形态是**上界**而不是下界:
+	// 老客户端 / 被篡改的请求发 price=-1,在 uint64 里解成 1.8e19,没有上界就会一路落库
+	// 再送进 SettlePlayerTrade。MaxTradePrice 与拍卖 MaxPrice 同量级。
+	if price > u.cfg.MaxTradePrice {
+		return 0, errcode.New(errcode.ErrInvalidArg,
+			"price out of range: %d (max %d)", price, u.cfg.MaxTradePrice)
 	}
 
 	now := nowMs()

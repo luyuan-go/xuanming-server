@@ -34,6 +34,47 @@ func (c inventoryCatalogFromStore) Lookup(itemConfigID uint32) (biz.ItemDefiniti
 	}, true
 }
 
+// ListShop 返回某商店的在售商品(热更后下一次读商店立即生效)。
+// 商店不存在 / 无在售商品 → ok=false,由 biz 翻成"商店不可用"。
+func (c inventoryCatalogFromStore) ListShop(shopID uint32) ([]biz.ShopEntry, bool) {
+	tables := c.store.Tables()
+	if tables == nil || tables.Shop == nil {
+		return nil, false
+	}
+	rows := tables.Shop.ShopEntriesOf(shopID)
+	if len(rows) == 0 {
+		return nil, false
+	}
+	out := make([]biz.ShopEntry, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, shopEntryOf(r))
+	}
+	return out, true
+}
+
+// LookupShopEntry 精确取某商店里某道具的档位(购买定价的唯一来源)。
+func (c inventoryCatalogFromStore) LookupShopEntry(shopID, itemConfigID uint32) (biz.ShopEntry, bool) {
+	tables := c.store.Tables()
+	if tables == nil || tables.Shop == nil {
+		return biz.ShopEntry{}, false
+	}
+	row, ok := tables.Shop.ShopEntryOf(shopID, itemConfigID)
+	if !ok {
+		return biz.ShopEntry{}, false
+	}
+	return shopEntryOf(row), true
+}
+
+func shopEntryOf(row *configpb.ShopRow) biz.ShopEntry {
+	return biz.ShopEntry{
+		ItemConfigID: row.GetItemConfigId(),
+		CountPerUnit: row.GetCountPerUnit(),
+		CurrencyKind: row.GetCurrencyKind(),
+		UnitPrice:    row.GetUnitPrice(),
+		SortOrder:    row.GetSortOrder(),
+	}
+}
+
 // IdentifyRule 每次从 Store 当前原子批次读取 item→pool→候选行，热更后下一次鉴定立即
 // 使用新规则；已经鉴定并落库的实例不会重 roll。
 func (c inventoryCatalogFromStore) IdentifyRule(itemConfigID uint32) (biz.IdentifyDefinition, bool) {
@@ -63,8 +104,28 @@ func (c inventoryCatalogFromStore) IdentifyRule(itemConfigID uint32) (biz.Identi
 // 不再依赖 YAML 默认池；任何装备缺池、池内语义漂移或未知玩法属性都会拒绝整批切换。
 func validateInventoryTables(_ conf.InventoryConf) func(*configtable.Tables) error {
 	return func(t *configtable.Tables) error {
-		if t == nil || t.Item == nil || t.RoleAttrMap == nil || t.EquipmentAffix == nil {
-			return fmt.Errorf("item / role_attr_map / equipment_affix tables required")
+		if t == nil || t.Item == nil || t.RoleAttrMap == nil || t.EquipmentAffix == nil ||
+			t.EquipmentAttr == nil {
+			return fmt.Errorf("item / role_attr_map / equipment_affix / equipment_attr tables required")
+		}
+
+		// 装备基础属性表(装备属性表.xlsx)与鉴定词条互补:词条是 per-instance 随机 roll、
+		// 走本服务发放;基础属性是 per-config 纯配置、由 DS 与客户端各自查表。服务端不消费
+		// 那 6 个数值,但装备域的表漂移门禁在本服务,所以引用完整性一并挡在这里
+		// (装备ID 必须是真实装备、部位/品质不得与道具表分叉)。
+		if err := configtable.ValidateEquipmentAttrCrossTables(t.EquipmentAttr, t.Item); err != nil {
+			return err
+		}
+
+		// NPC 商店定价门禁:买入价必须严格高于回收价,否则「买进立刻卖出」就是无限刷钱。
+		// 买和卖的权威都在本服务,所以这道闸也必须在本服务的整批门禁里 ——
+		// 放在购买期只会挡住个别商品,配错的表照样上线,而刷钱的正是那些"没报错"的档。
+		// Shop 表未加载(旧批次 / 未配商店)时跳过:商店打不开是可接受的降级,
+		// 但只要表在,就必须整批可信。
+		if t.Shop != nil {
+			if err := configtable.ValidateShopCrossTables(t.Shop, t.Item); err != nil {
+				return err
+			}
 		}
 
 		// 当前战斗属性映射只为这三类定义了权威单位。新增属性必须先实现 UE 应用/

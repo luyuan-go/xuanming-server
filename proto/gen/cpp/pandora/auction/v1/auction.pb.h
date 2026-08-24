@@ -748,14 +748,14 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED PlaceOrderRequest final : public ::
   void _internal_set_quantity(::int64_t value);
 
   public:
-  // int64 price = 4 [json_name = "price"];
+  // uint64 price = 4 [json_name = "price"];
   void clear_price() ;
-  [[nodiscard]] ::int64_t price() const;
-  void set_price(::int64_t value);
+  [[nodiscard]] ::uint64_t price() const;
+  void set_price(::uint64_t value);
 
   private:
-  ::int64_t _internal_price() const;
-  void _internal_set_price(::int64_t value);
+  ::uint64_t _internal_price() const;
+  void _internal_set_price(::uint64_t value);
 
   public:
   // @@protoc_insertion_point(class_scope:pandora.auction.v1.PlaceOrderRequest)
@@ -795,7 +795,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED PlaceOrderRequest final : public ::
     ::uint32_t market_id_;
     ::uint32_t item_config_id_;
     ::int64_t quantity_;
-    ::int64_t price_;
+    ::uint64_t price_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -2103,14 +2103,14 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED BidRequest final : public ::google:
   void _internal_set_quantity(::int64_t value);
 
   public:
-  // int64 price = 4 [json_name = "price"];
+  // uint64 price = 4 [json_name = "price"];
   void clear_price() ;
-  [[nodiscard]] ::int64_t price() const;
-  void set_price(::int64_t value);
+  [[nodiscard]] ::uint64_t price() const;
+  void set_price(::uint64_t value);
 
   private:
-  ::int64_t _internal_price() const;
-  void _internal_set_price(::int64_t value);
+  ::uint64_t _internal_price() const;
+  void _internal_set_price(::uint64_t value);
 
   public:
   // @@protoc_insertion_point(class_scope:pandora.auction.v1.BidRequest)
@@ -2150,7 +2150,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED BidRequest final : public ::google:
     ::uint32_t market_id_;
     ::uint32_t item_config_id_;
     ::int64_t quantity_;
-    ::int64_t price_;
+    ::uint64_t price_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -2398,14 +2398,14 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED AuctionOrder final : public ::googl
   void _internal_set_status(::pandora::auction::v1::AuctionOrderStatus value);
 
   public:
-  // int64 price = 8 [json_name = "price"];
+  // uint64 price = 8 [json_name = "price"];
   void clear_price() ;
-  [[nodiscard]] ::int64_t price() const;
-  void set_price(::int64_t value);
+  [[nodiscard]] ::uint64_t price() const;
+  void set_price(::uint64_t value);
 
   private:
-  ::int64_t _internal_price() const;
-  void _internal_set_price(::int64_t value);
+  ::uint64_t _internal_price() const;
+  void _internal_set_price(::uint64_t value);
 
   public:
   // int64 created_at_ms = 10 [json_name = "createdAtMs"];
@@ -2469,7 +2469,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED AuctionOrder final : public ::googl
     ::int64_t filled_quantity_;
     ::uint32_t item_config_id_;
     int status_;
-    ::int64_t price_;
+    ::uint64_t price_;
     ::int64_t created_at_ms_;
     ::int64_t updated_at_ms_;
     PROTOBUF_TSAN_DECLARE_MEMBER
@@ -2718,14 +2718,14 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED AuctionMatchEvent final : public ::
   void _internal_set_quantity(::int64_t value);
 
   public:
-  // int64 price = 9 [json_name = "price"];
+  // uint64 price = 9 [json_name = "price"];
   void clear_price() ;
-  [[nodiscard]] ::int64_t price() const;
-  void set_price(::int64_t value);
+  [[nodiscard]] ::uint64_t price() const;
+  void set_price(::uint64_t value);
 
   private:
-  ::int64_t _internal_price() const;
-  void _internal_set_price(::int64_t value);
+  ::uint64_t _internal_price() const;
+  void _internal_set_price(::uint64_t value);
 
   public:
   // int64 matched_at_ms = 10 [json_name = "matchedAtMs"];
@@ -2779,7 +2779,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED AuctionMatchEvent final : public ::
     ::uint64_t seller_id_;
     ::uint64_t buyer_id_;
     ::int64_t quantity_;
-    ::int64_t price_;
+    ::uint64_t price_;
     ::int64_t matched_at_ms_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
@@ -3443,26 +3443,26 @@ inline void AuctionOrder::_internal_set_filled_quantity(::int64_t value) {
   _impl_.filled_quantity_ = value;
 }
 
-// int64 price = 8 [json_name = "price"];
+// uint64 price = 8 [json_name = "price"];
 inline void AuctionOrder::clear_price() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.price_ = ::int64_t{0};
+  _impl_.price_ = ::uint64_t{0u};
   ClearHasBit(_impl_._has_bits_[0], 0x00000100U);
 }
-inline ::int64_t AuctionOrder::price() const {
+inline ::uint64_t AuctionOrder::price() const {
   // @@protoc_insertion_point(field_get:pandora.auction.v1.AuctionOrder.price)
   return _internal_price();
 }
-inline void AuctionOrder::set_price(::int64_t value) {
+inline void AuctionOrder::set_price(::uint64_t value) {
   _internal_set_price(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000100U);
   // @@protoc_insertion_point(field_set:pandora.auction.v1.AuctionOrder.price)
 }
-inline ::int64_t AuctionOrder::_internal_price() const {
+inline ::uint64_t AuctionOrder::_internal_price() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.price_;
 }
-inline void AuctionOrder::_internal_set_price(::int64_t value) {
+inline void AuctionOrder::_internal_set_price(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.price_ = value;
 }
@@ -3735,26 +3735,26 @@ inline void AuctionMatchEvent::_internal_set_quantity(::int64_t value) {
   _impl_.quantity_ = value;
 }
 
-// int64 price = 9 [json_name = "price"];
+// uint64 price = 9 [json_name = "price"];
 inline void AuctionMatchEvent::clear_price() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.price_ = ::int64_t{0};
+  _impl_.price_ = ::uint64_t{0u};
   ClearHasBit(_impl_._has_bits_[0], 0x00000100U);
 }
-inline ::int64_t AuctionMatchEvent::price() const {
+inline ::uint64_t AuctionMatchEvent::price() const {
   // @@protoc_insertion_point(field_get:pandora.auction.v1.AuctionMatchEvent.price)
   return _internal_price();
 }
-inline void AuctionMatchEvent::set_price(::int64_t value) {
+inline void AuctionMatchEvent::set_price(::uint64_t value) {
   _internal_set_price(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000100U);
   // @@protoc_insertion_point(field_set:pandora.auction.v1.AuctionMatchEvent.price)
 }
-inline ::int64_t AuctionMatchEvent::_internal_price() const {
+inline ::uint64_t AuctionMatchEvent::_internal_price() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.price_;
 }
-inline void AuctionMatchEvent::_internal_set_price(::int64_t value) {
+inline void AuctionMatchEvent::_internal_set_price(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.price_ = value;
 }
@@ -3859,26 +3859,26 @@ inline void PlaceOrderRequest::_internal_set_quantity(::int64_t value) {
   _impl_.quantity_ = value;
 }
 
-// int64 price = 4 [json_name = "price"];
+// uint64 price = 4 [json_name = "price"];
 inline void PlaceOrderRequest::clear_price() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.price_ = ::int64_t{0};
+  _impl_.price_ = ::uint64_t{0u};
   ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
 }
-inline ::int64_t PlaceOrderRequest::price() const {
+inline ::uint64_t PlaceOrderRequest::price() const {
   // @@protoc_insertion_point(field_get:pandora.auction.v1.PlaceOrderRequest.price)
   return _internal_price();
 }
-inline void PlaceOrderRequest::set_price(::int64_t value) {
+inline void PlaceOrderRequest::set_price(::uint64_t value) {
   _internal_set_price(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000010U);
   // @@protoc_insertion_point(field_set:pandora.auction.v1.PlaceOrderRequest.price)
 }
-inline ::int64_t PlaceOrderRequest::_internal_price() const {
+inline ::uint64_t PlaceOrderRequest::_internal_price() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.price_;
 }
-inline void PlaceOrderRequest::_internal_set_price(::int64_t value) {
+inline void PlaceOrderRequest::_internal_set_price(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.price_ = value;
 }
@@ -4123,26 +4123,26 @@ inline void BidRequest::_internal_set_quantity(::int64_t value) {
   _impl_.quantity_ = value;
 }
 
-// int64 price = 4 [json_name = "price"];
+// uint64 price = 4 [json_name = "price"];
 inline void BidRequest::clear_price() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.price_ = ::int64_t{0};
+  _impl_.price_ = ::uint64_t{0u};
   ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
 }
-inline ::int64_t BidRequest::price() const {
+inline ::uint64_t BidRequest::price() const {
   // @@protoc_insertion_point(field_get:pandora.auction.v1.BidRequest.price)
   return _internal_price();
 }
-inline void BidRequest::set_price(::int64_t value) {
+inline void BidRequest::set_price(::uint64_t value) {
   _internal_set_price(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000010U);
   // @@protoc_insertion_point(field_set:pandora.auction.v1.BidRequest.price)
 }
-inline ::int64_t BidRequest::_internal_price() const {
+inline ::uint64_t BidRequest::_internal_price() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.price_;
 }
-inline void BidRequest::_internal_set_price(::int64_t value) {
+inline void BidRequest::_internal_set_price(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.price_ = value;
 }

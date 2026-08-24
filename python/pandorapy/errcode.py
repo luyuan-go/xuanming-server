@@ -207,6 +207,9 @@ ErrInventoryCapacityFull: Final[int] = 7016
 ErrInventorySlotOccupied: Final[int] = 7017
 # 绑定实例不可托管转移(邮件 transfer 扣出拒;bound=不可交易)
 ErrInventoryInstanceBound: Final[int] = 7018
+# ErrInventoryCurrencyOverflow 货币入账会越过单币种余额硬上限(MaxCurrencyAmount)。
+ErrInventoryNotPurchasable: Final[int] = 7019
+ErrInventoryCurrencyOverflow: Final[int] = 7020
 ErrDialogueNotFound: Final[int] = 8001
 ErrDialogueOptionInvalid: Final[int] = 8002
 ErrChatChannelInvalid: Final[int] = 9001
@@ -436,6 +439,8 @@ ALL_CODES: Final[dict[str, int]] = {
     "ErrInventoryCapacityFull": 7016,
     "ErrInventorySlotOccupied": 7017,
     "ErrInventoryInstanceBound": 7018,
+    "ErrInventoryNotPurchasable": 7019,
+    "ErrInventoryCurrencyOverflow": 7020,
     "ErrDialogueNotFound": 8001,
     "ErrDialogueOptionInvalid": 8002,
     "ErrChatChannelInvalid": 9001,

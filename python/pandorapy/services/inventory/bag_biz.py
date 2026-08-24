@@ -19,6 +19,7 @@ from pandora.bag.v1 import bag_pb2
 
 from pandorapy import errcode
 from pandorapy.services.inventory import bag_apply as bapply
+from pandorapy.services.inventory import currency as ccy
 from pandorapy.services.inventory import conf as bconf
 
 # checkpoint 是被攻破 DS 可写的 MEDIUMBLOB;业务上随身组最多三个段,空间恢复的绝对
@@ -76,7 +77,7 @@ class CapacityCharger(Protocol):
     """容量购买扣费抽象(§5.3 两步 saga 第①步;trade 库)。同 (bag_type, tier) 重试幂等零扣费。"""
 
     async def charge_bag_capacity(
-        self, player_id: int, bag_type: int, tier: int, slots: int, price_gold: int
+        self, player_id: int, bag_type: int, tier: int, slots: int, kind: int, price: int
     ) -> tuple[bool, int]: ...
 
 
@@ -90,13 +91,16 @@ class EffectiveCapacityView:
 
 @dataclass(frozen=True, slots=True)
 class CapacityPurchaseResult:
-    """一次购买的结果(幂等重放返回当前状态,gold_cost=0)。"""
+    """一次购买的结果(幂等重放返回当前状态,cost=0)。"""
 
     purchases: int
     extra: int
     effective_capacity: int
-    gold_cost: int
-    gold_remaining: int
+    # currency_kind 本次扣费币种(格容购买当前恒为金币;结构上按币种参数化,
+    # 将来改成钻石扩容只需改配置,不用改协议与代码)。
+    currency_kind: int
+    cost: int
+    balance: int
 
 
 class BagUsecase:
@@ -405,8 +409,11 @@ class BagUsecase:
                 extra, t.slots, rule.max_extra, player_id, bag_type,
             )
 
-        already, gold_remaining = await self._charger.charge_bag_capacity(
-            player_id, bag_type, tier, t.slots, t.price_gold
+        # 格容购买当前恒用金币。显式传而不是留 UNSPECIFIED:
+        # 扣费侧对未知币种一律 fail-closed,**不会**回退成金币(currency.proto)。
+        charge_kind = ccy.CURRENCY_GOLD
+        already, remaining_balance = await self._charger.charge_bag_capacity(
+            player_id, bag_type, tier, t.slots, charge_kind, t.price_gold
         )
         # 已扣费未落位(配置中途收缩等):错误如实上抛,凭 ledger 行 + 同 tier 重试收敛/排障。
         new_extra, new_purchases, _applied = await self._repo.apply_capacity_purchase(
@@ -418,8 +425,9 @@ class BagUsecase:
             purchases=new_purchases,
             extra=new_extra,
             effective_capacity=min(base + new_extra, bapply.UINT32_MAX),
-            gold_cost=0 if already else t.price_gold,
-            gold_remaining=gold_remaining,
+            currency_kind=charge_kind,
+            cost=0 if already else t.price_gold,
+            balance=remaining_balance,
         )
 
     # ── 保留期清理(§9.24)─────────────────────────────────────────────────

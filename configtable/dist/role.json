@@ -386,6 +386,34 @@
       "patrol_distance": 1000,
       "search_distance": 1000,
       "nameplate_offset_z": 50
+    },
+    {
+      "id": 1014,
+      "name": "悟空",
+      "resource_path": "/Game/Test/Role/Hero/Wukong/CBP_Hero_Wukong.CBP_Hero_Wukong_C",
+      "behavior_tree_path": "/Game/Pkg/AI/BT/Player/BT_Player.BT_Player",
+      "entity_type": 1,
+      "skill_ids": "101401,101402,101403,101404,101411,101421,101422,101423,101424,101431",
+      "guard_distance": 1000,
+      "call_distance": 2000,
+      "fight_exit_distance": 3000,
+      "patrol_distance": 1000,
+      "search_distance": 1000,
+      "nameplate_offset_z": 20
+    },
+    {
+      "id": 6001,
+      "name": "悟空分身",
+      "resource_path": "/Game/Test/Role/Monster/Minions/Wukong_Summon/CBP_Monster_Wukong_Summon.CBP_Monster_Wukong_Summon_C",
+      "behavior_tree_path": "/Game/Test/Role/Monster/Minions/Wukong_Summon/BT/BT_Wukong_Summon.BT_Wukong_Summon",
+      "entity_type": 2,
+      "sub_type": 1,
+      "skill_ids": "101401,101402,101403,101404",
+      "guard_distance": 5000,
+      "call_distance": 5000,
+      "fight_exit_distance": 5000,
+      "search_distance": 5000,
+      "nameplate_offset_z": 20
     }
   ]
 }

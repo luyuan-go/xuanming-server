@@ -74,6 +74,16 @@ class InventoryServiceStub(object):
                 request_serializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.SellInstanceRequest.SerializeToString,
                 response_deserializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.SellInstanceResponse.FromString,
                 _registered_method=True)
+        self.GetShop = channel.unary_unary(
+                '/pandora.inventory.v1.InventoryService/GetShop',
+                request_serializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.GetShopRequest.SerializeToString,
+                response_deserializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.GetShopResponse.FromString,
+                _registered_method=True)
+        self.PurchaseShopItem = channel.unary_unary(
+                '/pandora.inventory.v1.InventoryService/PurchaseShopItem',
+                request_serializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.PurchaseShopItemRequest.SerializeToString,
+                response_deserializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.PurchaseShopItemResponse.FromString,
+                _registered_method=True)
         self.FreezeForOrder = channel.unary_unary(
                 '/pandora.inventory.v1.InventoryService/FreezeForOrder',
                 request_serializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.FreezeForOrderRequest.SerializeToString,
@@ -172,7 +182,10 @@ class InventoryServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def SellItem(self, request, context):
-        """SellItem 出售道具换金币(原子扣道具 + 加金币)。
+        """SellItem 出售可堆叠道具换货币(原子扣道具 + 加货币)。
+        单价来自道具表 sell_price;结算币种取服务端配置 `currency.sell_kind`(默认金币)。
+        刻意**不**给道具表加"出售币种"列:当前没有"卖某道具得钻石"的确认需求,
+        加列要动策划源表且属预设性复杂化(§15.3);真有需求时再加列,接口不用改。
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -227,8 +240,42 @@ class InventoryServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def SellInstance(self, request, context):
-        """SellInstance 出售唯一装备实例换金币(客户端 RPC,以调用者身份为准)。
-        绑定实例拒绝；删除实例与金币入账、ledger 幂等流水在同一事务。
+        """SellInstance 出售唯一装备实例换货币(客户端 RPC,以调用者身份为准)。
+        绑定实例拒绝；删除实例与货币入账、ledger 幂等流水在同一事务。
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetShop(self, request, context):
+        """── NPC 商店(服务端权威买卖,2026-08-22)──
+
+        背景:主城 NPC 商店此前完全是客户端本地模拟(UE `AMyEntityPlayerController::BuyShopItem`
+        用本地 `SimulatedGold` 扣钱、`UMyBagComponent::AddItem` 直接入包),既不落库也不可信,
+        与不变量 §9.6「派生数值一律服务端计算」冲突。本组 RPC 把商店搬到服务端权威。
+
+        价目表来自配置表 `商店/d_商店.xlsx` → `pandora.config.v1.ShopTableData`,
+        与关卡 / 道具表同一条热更流水线(§9.15);客户端**不得**上报价格,只报"买哪个、买几份"。
+
+        GetShop 读某个商店的权威价目表(客户端 RPC;只读,不鉴权到具体玩家资产)。
+        客户端用它渲染商品列表与单价——展示口径与扣费口径因此同源,不会漂移(§17.3)。
+        商店不存在 / 未配置 → ERR_INVALID_ARG,客户端据此隐藏商店页签。
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PurchaseShopItem(self, request, context):
+        """PurchaseShopItem 向 NPC 商店购买道具(客户端 RPC,以调用者身份为准)。
+
+        服务端权威链:读商店表定价 → 校验该商店确实在售该道具 → 溢出安全算总价 →
+        同一 MySQL 本地事务里【扣货币 + 入包(堆叠计数或生成装备实例) + 写 ledger 幂等流水】。
+        客户端传来的任何价格都不被信任;count 只是"买几份",单价与每份数量以表为准。
+
+        幂等键 = idempotency_key(客户端生成,绑定 shop_id+item_config_id+count 指纹):
+        响应丢失重试不会重复扣费、不会重复入包(§9.7)。
+        余额不足 → ERR_INVENTORY_INSUFFICIENT;不在售 → ERR_INVENTORY_NOT_PURCHASABLE;
+        装备实例背包满 → ERR_INVENTORY_CAPACITY_FULL(此时整笔回滚,不扣钱)。
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -434,6 +481,16 @@ def add_InventoryServiceServicer_to_server(servicer, server):
                     servicer.SellInstance,
                     request_deserializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.SellInstanceRequest.FromString,
                     response_serializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.SellInstanceResponse.SerializeToString,
+            ),
+            'GetShop': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetShop,
+                    request_deserializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.GetShopRequest.FromString,
+                    response_serializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.GetShopResponse.SerializeToString,
+            ),
+            'PurchaseShopItem': grpc.unary_unary_rpc_method_handler(
+                    servicer.PurchaseShopItem,
+                    request_deserializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.PurchaseShopItemRequest.FromString,
+                    response_serializer=pandora_dot_inventory_dot_v1_dot_inventory__pb2.PurchaseShopItemResponse.SerializeToString,
             ),
             'FreezeForOrder': grpc.unary_unary_rpc_method_handler(
                     servicer.FreezeForOrder,
@@ -815,6 +872,60 @@ class InventoryService(object):
             '/pandora.inventory.v1.InventoryService/SellInstance',
             pandora_dot_inventory_dot_v1_dot_inventory__pb2.SellInstanceRequest.SerializeToString,
             pandora_dot_inventory_dot_v1_dot_inventory__pb2.SellInstanceResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetShop(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/pandora.inventory.v1.InventoryService/GetShop',
+            pandora_dot_inventory_dot_v1_dot_inventory__pb2.GetShopRequest.SerializeToString,
+            pandora_dot_inventory_dot_v1_dot_inventory__pb2.GetShopResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PurchaseShopItem(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/pandora.inventory.v1.InventoryService/PurchaseShopItem',
+            pandora_dot_inventory_dot_v1_dot_inventory__pb2.PurchaseShopItemRequest.SerializeToString,
+            pandora_dot_inventory_dot_v1_dot_inventory__pb2.PurchaseShopItemResponse.FromString,
             options,
             channel_credentials,
             insecure,

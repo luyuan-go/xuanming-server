@@ -312,15 +312,34 @@ func (r *MySQLInventoryRepo) GrantInstances(ctx context.Context, playerID uint64
 	}
 
 	// 首次:容量校验 + 分配空闲格 + 插入。
+	out, gerr := grantInstancesInTxMixed(ctx, tx, playerID, instanceIDs, itemConfigIDs, capacity)
+	if gerr != nil {
+		return nil, false, gerr
+	}
+	if cerr := tx.Commit(); cerr != nil {
+		return nil, false, errcode.New(errcode.ErrInternal, "commit grant_inst player=%d: %v", playerID, cerr)
+	}
+	return out, false, nil
+}
+
+// grantInstancesInTxMixed 在**调用方已开好的事务**里锁玩家实例行、校验容量、逐件分配最低空闲格并插入。
+//
+// 抽出来是为了让"购买装备"能把扣钱与发货放进同一个事务(见 shop_purchase.go 顶部说明):
+// 若购买复用外层的 GrantInstances,扣钱和发货就会落在两个事务里,中间崩溃 = 钱扣了货没到。
+// 本函数**不提交也不回滚**,事务生命周期完全归调用方。
+func grantInstancesInTxMixed(ctx context.Context, tx *sql.Tx, playerID uint64, instanceIDs []uint64, itemConfigIDs []uint32, capacity int32) ([]ItemInstance, error) {
+	if len(instanceIDs) != len(itemConfigIDs) {
+		return nil, errcode.New(errcode.ErrInvalidArg, "instanceIDs/itemConfigIDs length mismatch")
+	}
 	occupied, total, lockErr := lockPlayerInstances(ctx, tx, playerID)
 	if lockErr != nil {
-		return nil, false, lockErr
+		return nil, lockErr
 	}
 	if capacity <= 0 {
-		return nil, false, errcode.New(errcode.ErrInventoryCapacityFull, "instance inventory disabled (capacity<=0) player=%d", playerID)
+		return nil, errcode.New(errcode.ErrInventoryCapacityFull, "instance inventory disabled (capacity<=0) player=%d", playerID)
 	}
 	if total+len(instanceIDs) > int(capacity) {
-		return nil, false, errcode.New(errcode.ErrInventoryCapacityFull,
+		return nil, errcode.New(errcode.ErrInventoryCapacityFull,
 			"capacity full player=%d have=%d grant=%d cap=%d", playerID, total, len(instanceIDs), capacity)
 	}
 
@@ -329,18 +348,24 @@ func (r *MySQLInventoryRepo) GrantInstances(ctx context.Context, playerID uint64
 	for i, instID := range instanceIDs {
 		slot, ok := lowestFreeSlot(occupied, capacity)
 		if !ok {
-			return nil, false, errcode.New(errcode.ErrInventoryCapacityFull, "no free slot player=%d cap=%d", playerID, capacity)
+			return nil, errcode.New(errcode.ErrInventoryCapacityFull, "no free slot player=%d cap=%d", playerID, capacity)
 		}
 		occupied[slot] = struct{}{}
 		if _, ierr := tx.ExecContext(ctx, insInst, instID, playerID, itemConfigIDs[i], slot); ierr != nil {
-			return nil, false, errcode.New(errcode.ErrInternal, "insert instance player=%d id=%d: %v", playerID, instID, ierr)
+			return nil, errcode.New(errcode.ErrInternal, "insert instance player=%d id=%d: %v", playerID, instID, ierr)
 		}
 		out = append(out, ItemInstance{InstanceID: instID, ItemConfigID: itemConfigIDs[i], SlotIndex: slot})
 	}
-	if cerr := tx.Commit(); cerr != nil {
-		return nil, false, errcode.New(errcode.ErrInternal, "commit grant_inst player=%d: %v", playerID, cerr)
+	return out, nil
+}
+
+// grantInstancesInTx 是"同一配置发 N 件"的便捷包装(商店购买用)。
+func grantInstancesInTx(ctx context.Context, tx *sql.Tx, playerID uint64, instanceIDs []uint64, itemConfigID uint32, capacity int32) ([]ItemInstance, error) {
+	configIDs := make([]uint32, len(instanceIDs))
+	for i := range configIDs {
+		configIDs[i] = itemConfigID
 	}
-	return out, false, nil
+	return grantInstancesInTxMixed(ctx, tx, playerID, instanceIDs, configIDs, capacity)
 }
 
 // selectInstancesByIDsTx 在事务里按 id 列表读实例(幂等回放用;按 instance_id 升序)。
@@ -500,57 +525,64 @@ func (r *MySQLInventoryRepo) DiscardInstance(ctx context.Context, playerID, inst
 	return nil
 }
 
-func (r *MySQLInventoryRepo) SellInstance(ctx context.Context, playerID, instanceID uint64, itemConfigID uint32, gold int64, idempotencyKey, detail string) (int64, bool, error) {
+func (r *MySQLInventoryRepo) SellInstance(ctx context.Context, playerID, instanceID uint64, itemConfigID uint32, kind CurrencyKind, amount uint64, idempotencyKey, detail string) (SaleOutcome, bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, false, errcode.New(errcode.ErrInternal, "begin sell instance tx: %v", err)
+		return SaleOutcome{}, false, errcode.New(errcode.ErrInternal, "begin sell instance tx: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	already, _, snapGold, lerr := claimSaleLedger(ctx, tx, playerID, idempotencyKey,
+	already, snap, lerr := claimSaleLedger(ctx, tx, playerID, idempotencyKey,
 		SellInstanceFingerprint(instanceID, itemConfigID), detail, saleLedgerIntent{
 			op: "sell_inst", itemConfigID: itemConfigID, instanceID: instanceID,
 		})
 	if lerr != nil {
-		return 0, false, lerr
+		return SaleOutcome{}, false, lerr
 	}
 	if already {
-		return snapGold, true, nil
+		// 同 SellItem:用 Sole 回放首次执行的币种与金额,不受出售币种配置变更影响。
+		earnedKind, earned, ok := snap.Delta.Sole()
+		if !ok {
+			earnedKind, earned = kind, 0
+		}
+		return SaleOutcome{Balances: snap.Balances, Earned: earned, Kind: earnedKind}, true, nil
 	}
-	if gold <= 0 {
-		return 0, false, errcode.New(errcode.ErrInventoryNotSellable,
+	// amount == 0 = 不可出售。uint64 下 `== 0` 已是完整校验(见 SellItem 同处注释)。
+	if amount == 0 {
+		return SaleOutcome{}, false, errcode.New(errcode.ErrInventoryNotSellable,
 			"instance item not sellable player=%d instance=%d item=%d", playerID, instanceID, itemConfigID)
 	}
 	inst, serr := selectInstanceForUpdate(ctx, tx, playerID, instanceID)
 	if serr != nil {
-		return 0, false, serr
+		return SaleOutcome{}, false, serr
 	}
 	if inst.Bound {
-		return 0, false, errcode.New(errcode.ErrInventoryInstanceBound,
+		return SaleOutcome{}, false, errcode.New(errcode.ErrInventoryInstanceBound,
 			"bound instance cannot be sold player=%d id=%d", playerID, instanceID)
 	}
 	if inst.ItemConfigID != itemConfigID {
-		return 0, false, errcode.New(errcode.ErrInvalidArg,
+		return SaleOutcome{}, false, errcode.New(errcode.ErrInvalidArg,
 			"instance config mismatch player=%d id=%d got=%d want=%d",
 			playerID, instanceID, inst.ItemConfigID, itemConfigID)
 	}
 	if _, derr := tx.ExecContext(ctx,
 		`DELETE FROM player_item_instance WHERE instance_id = ? AND player_id = ?`,
 		instanceID, playerID); derr != nil {
-		return 0, false, errcode.New(errcode.ErrInternal, "sell instance delete player=%d id=%d: %v", playerID, instanceID, derr)
+		return SaleOutcome{}, false, errcode.New(errcode.ErrInternal, "sell instance delete player=%d id=%d: %v", playerID, instanceID, derr)
 	}
-	if gerr := addGoldTx(ctx, tx, playerID, gold); gerr != nil {
-		return 0, false, gerr
+	if _, gerr := addCurrencyTx(ctx, tx, playerID, kind, amount); gerr != nil {
+		return SaleOutcome{}, false, gerr
 	}
-	newGold, rerr := readGoldTx(ctx, tx, playerID)
+	newBalances, rerr := readBalancesTx(ctx, tx, playerID)
 	if rerr != nil {
-		return 0, false, rerr
+		return SaleOutcome{}, false, rerr
 	}
-	if uerr := updateLedgerResult(ctx, tx, playerID, idempotencyKey, 0, newGold); uerr != nil {
-		return 0, false, uerr
+	delta := Balances{kind: amount}
+	if uerr := updateLedgerResult(ctx, tx, playerID, idempotencyKey, 0, newBalances, delta); uerr != nil {
+		return SaleOutcome{}, false, uerr
 	}
 	if cerr := tx.Commit(); cerr != nil {
-		return 0, false, errcode.New(errcode.ErrInternal, "commit sell instance player=%d id=%d: %v", playerID, instanceID, cerr)
+		return SaleOutcome{}, false, errcode.New(errcode.ErrInternal, "commit sell instance player=%d id=%d: %v", playerID, instanceID, cerr)
 	}
-	return newGold, false, nil
+	return SaleOutcome{Balances: newBalances, Earned: amount, Kind: kind}, false, nil
 }

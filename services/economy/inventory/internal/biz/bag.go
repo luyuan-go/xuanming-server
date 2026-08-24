@@ -72,7 +72,7 @@ type DSCallerIdentity struct {
 // CapacityCharger 容量购买扣费抽象(§5.3 两步 saga 第①步;trade 库,
 // MySQLInventoryRepo 实现)。同 (bagType, tier) 重试幂等零扣费。
 type CapacityCharger interface {
-	ChargeBagCapacity(ctx context.Context, playerID uint64, bagType, tier, slots uint32, priceGold int64) (already bool, goldRemaining int64, err error)
+	ChargeBagCapacity(ctx context.Context, playerID uint64, bagType, tier, slots uint32, kind data.CurrencyKind, price uint64) (already bool, remainingBalance uint64, err error)
 }
 
 // BagUsecase 背包域用例。
@@ -457,13 +457,16 @@ func (u *BagUsecase) CarryEffectiveCapacities(ctx context.Context, playerID uint
 	return out, nil
 }
 
-// CapacityPurchaseResult 一次购买的结果(幂等重放返回当前状态,GoldCost=0)。
+// CapacityPurchaseResult 一次购买的结果(幂等重放返回当前状态,Cost=0)。
 type CapacityPurchaseResult struct {
 	Purchases         uint32
 	Extra             uint32
 	EffectiveCapacity uint32
-	GoldCost          int64
-	GoldRemaining     int64
+	// CurrencyKind 本次扣费币种(格容购买当前恒为金币;结构上按币种参数化,
+	// 将来改成钻石扩容只需改配置,不用改协议与代码)。
+	CurrencyKind data.CurrencyKind
+	Cost         uint64
+	Balance      uint64
 }
 
 // PurchaseCapacity 购买容量扩容(§5.3):定档 → 扣费(幂等)→ 落位(档数 CAS)。
@@ -500,7 +503,9 @@ func (u *BagUsecase) PurchaseCapacity(ctx context.Context, playerID, ownerEpoch 
 			"extra %d+%d exceeds max_extra %d player=%d bag=%d", extra, t.Slots, rule.MaxExtra, playerID, bagType)
 	}
 
-	already, goldRemaining, cerr := u.charger.ChargeBagCapacity(ctx, playerID, bagType, tier, t.Slots, t.PriceGold)
+	chargeKind := data.CurrencyGold
+	charged := uint64(t.PriceGold)
+	already, remainingBalance, cerr := u.charger.ChargeBagCapacity(ctx, playerID, bagType, tier, t.Slots, chargeKind, charged)
 	if cerr != nil {
 		return zero, cerr
 	}
@@ -519,10 +524,11 @@ func (u *BagUsecase) PurchaseCapacity(ctx context.Context, playerID, ownerEpoch 
 		Purchases:         newPurchases,
 		Extra:             newExtra,
 		EffectiveCapacity: uint32(eff),
-		GoldRemaining:     goldRemaining,
+		CurrencyKind:      chargeKind,
+		Balance:           remainingBalance,
 	}
 	if !already {
-		res.GoldCost = t.PriceGold
+		res.Cost = charged
 	}
 	return res, nil
 }

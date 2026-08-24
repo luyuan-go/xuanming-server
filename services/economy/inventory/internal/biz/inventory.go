@@ -97,6 +97,10 @@ type InventoryUsecase struct {
 
 	// catalog 是道具规则的唯一权威(生产 = configtable item 表适配器)；未注入即 fail-closed。
 	catalog ItemCatalog
+
+	// shops 是 NPC 商店定价的唯一权威(生产 = configtable shop 表适配器)。
+	// 未注入 → GetShop / PurchaseShopItem 一律拒:宁可商店打不开,也不能用兜底价格扣钱。
+	shops ShopCatalog
 }
 
 // NewInventoryUsecase 构造。
@@ -148,10 +152,10 @@ func (u *InventoryUsecase) SetCellRouter(r *cellroute.Router) {
 	u.router = r
 }
 
-// GetInventory 读玩家背包(货币 + 道具堆叠)。
-func (u *InventoryUsecase) GetInventory(ctx context.Context, playerID uint64) (int64, []data.ItemStack, error) {
+// GetInventory 读玩家背包(全部币种余额 + 道具堆叠)。
+func (u *InventoryUsecase) GetInventory(ctx context.Context, playerID uint64) (data.Balances, []data.ItemStack, error) {
 	if playerID == 0 {
-		return 0, nil, errcode.New(errcode.ErrInvalidArg, "player_id required")
+		return nil, nil, errcode.New(errcode.ErrInvalidArg, "player_id required")
 	}
 	return u.repo.GetInventory(ctx, playerID)
 }
@@ -160,22 +164,22 @@ func (u *InventoryUsecase) GetInventory(ctx context.Context, playerID uint64) (i
 // capacity 来自服务配置(所有玩家同一基础容量;<=0 表示未启用实例背包)。
 // 未启用实例背包时不读 player_item_instance 表(既有库可能尚未迁移出该表,
 // 避免 GetInventory 全量报内部错;启用时 main 启动期已做 schema 检查)。
-func (u *InventoryUsecase) GetInventoryFull(ctx context.Context, playerID uint64) (int64, []data.ItemStack, int32, []data.ItemInstance, error) {
+func (u *InventoryUsecase) GetInventoryFull(ctx context.Context, playerID uint64) (data.Balances, []data.ItemStack, int32, []data.ItemInstance, error) {
 	if playerID == 0 {
-		return 0, nil, 0, nil, errcode.New(errcode.ErrInvalidArg, "player_id required")
+		return nil, nil, 0, nil, errcode.New(errcode.ErrInvalidArg, "player_id required")
 	}
-	gold, items, err := u.repo.GetInventory(ctx, playerID)
+	balances, items, err := u.repo.GetInventory(ctx, playerID)
 	if err != nil {
-		return 0, nil, 0, nil, err
+		return nil, nil, 0, nil, err
 	}
 	if u.cfg.Capacity <= 0 {
-		return gold, items, 0, nil, nil
+		return balances, items, 0, nil, nil
 	}
 	instances, ierr := u.repo.ListInstances(ctx, playerID)
 	if ierr != nil {
-		return 0, nil, 0, nil, ierr
+		return nil, nil, 0, nil, ierr
 	}
-	return gold, items, u.cfg.Capacity, instances, nil
+	return balances, items, u.cfg.Capacity, instances, nil
 }
 
 // GrantInstances 幂等发放装备实例(系统驱动:掉落 / 活动 / 购买到账,W5 ④)。
@@ -406,47 +410,63 @@ func (u *InventoryUsecase) CheckInstancesOwned(ctx context.Context, playerID uin
 	return u.repo.CheckInstancesOwned(ctx, playerID, queries)
 }
 
-// GrantItems 幂等发放道具 + 货币(系统驱动,idempotency_key 防重复入账)。
-func (u *InventoryUsecase) GrantItems(ctx context.Context, playerID uint64, items []data.ItemGrant, gold int64, idempotencyKey string) (int64, error) {
+// GrantItems 幂等发放道具 + 多币种货币(系统驱动,idempotency_key 防重复入账)。
+//
+// currencies 的校验刻意逐条做,而不是"总额不为负"一刀切:
+// 旧实现写的是 `if gold < 0`,把 gold 改成无符号后该判断会**恒为 false**(编译器不报错,
+// go vet 默认也不报),等于闸门被静默拆掉。无符号世界里"防负数"的正确形态是
+// 在**类型边界**校验(service 层从 proto 转进来时判),内层改判"是否为 0 / 是否重复 / 是否超单笔上限"。
+func (u *InventoryUsecase) GrantItems(ctx context.Context, playerID uint64, items []data.ItemGrant, currencies data.Balances, idempotencyKey string) (data.Balances, error) {
 	if playerID == 0 {
-		return 0, errcode.New(errcode.ErrInvalidArg, "player_id required")
+		return nil, errcode.New(errcode.ErrInvalidArg, "player_id required")
 	}
 	if idempotencyKey == "" {
-		return 0, errcode.New(errcode.ErrInvalidArg, "idempotency_key required")
+		return nil, errcode.New(errcode.ErrInvalidArg, "idempotency_key required")
 	}
-	if len(items) == 0 && gold == 0 {
-		return 0, errcode.New(errcode.ErrInvalidArg, "nothing to grant")
+	if len(items) == 0 && len(currencies) == 0 {
+		return nil, errcode.New(errcode.ErrInvalidArg, "nothing to grant")
 	}
-	if gold < 0 {
-		return 0, errcode.New(errcode.ErrInvalidArg, "gold must not be negative")
+	for kind, amount := range currencies {
+		if verr := data.ValidateCurrencyKind(kind); verr != nil {
+			return nil, verr
+		}
+		if amount == 0 {
+			return nil, errcode.New(errcode.ErrInvalidArg, "grant amount must be positive: kind=%d", int32(kind))
+		}
+		if amount > u.maxCurrencyPerGrant() {
+			// 单笔发放上限(§9.6 五要件④ 额度):防止上游算错把天文数字灌进经济体。
+			return nil, errcode.New(errcode.ErrInvalidArg,
+				"grant amount exceeds per-call limit: kind=%d amount=%d limit=%d",
+				int32(kind), amount, u.maxCurrencyPerGrant())
+		}
 	}
 	for _, it := range items {
 		if it.ItemConfigID == 0 {
-			return 0, errcode.New(errcode.ErrInvalidArg, "item_config_id required")
+			return nil, errcode.New(errcode.ErrInvalidArg, "item_config_id required")
 		}
 		if it.Count <= 0 {
-			return 0, errcode.New(errcode.ErrInvalidArg, "count must be positive: item=%d", it.ItemConfigID)
+			return nil, errcode.New(errcode.ErrInvalidArg, "count must be positive: item=%d", it.ItemConfigID)
 		}
 		if u.catalog != nil {
 			def, ok := u.itemDefinition(it.ItemConfigID)
 			if !ok {
-				return 0, errcode.New(errcode.ErrInvalidArg, "unknown item_config_id: %d", it.ItemConfigID)
+				return nil, errcode.New(errcode.ErrInvalidArg, "unknown item_config_id: %d", it.ItemConfigID)
 			}
 			if def.Equipment {
-				return 0, errcode.New(errcode.ErrInvalidArg, "equipment item %d must use GrantInstances", it.ItemConfigID)
+				return nil, errcode.New(errcode.ErrInvalidArg, "equipment item %d must use GrantInstances", it.ItemConfigID)
 			}
 		}
 	}
-	detail := fmt.Sprintf("grant items=%d gold=%d", len(items), gold)
-	newGold, already, err := u.repo.GrantItems(ctx, playerID, items, gold, idempotencyKey, detail)
+	detail := fmt.Sprintf("grant items=%d gold=%d", len(items), currencies.Get(data.CurrencyGold))
+	newBalances, already, err := u.repo.GrantItems(ctx, playerID, items, currencies, idempotencyKey, detail)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if already {
 		plog.With(ctx).Infow("msg", "grant_items_idempotent_hit",
-			"player_id", playerID, "idempotency_key", idempotencyKey, "gold", newGold)
+			"player_id", playerID, "idempotency_key", idempotencyKey, "gold", newBalances.Get(data.CurrencyGold))
 	}
-	return newGold, nil
+	return newBalances, nil
 }
 
 // UseItem 大厅态使用消耗品(不可大厅使用 → ErrInventoryItemNotUsable;数量不足 → ErrInventoryInsufficient)。
@@ -577,71 +597,82 @@ func (u *InventoryUsecase) DiscardItem(ctx context.Context, playerID uint64, ite
 
 // SellInstance 原子出售唯一装备实例。售价由该实例的真实 item_config_id 查同源表，
 // repo 在事务里重新锁实例并拒绝 bound，删除与金币入账/ledger 同成同败。
-func (u *InventoryUsecase) SellInstance(ctx context.Context, playerID, instanceID uint64, itemConfigID uint32, idempotencyKey string) (int64, error) {
+func (u *InventoryUsecase) SellInstance(ctx context.Context, playerID, instanceID uint64, itemConfigID uint32, idempotencyKey string) (data.SaleOutcome, error) {
 	if playerID == 0 || instanceID == 0 || itemConfigID == 0 {
-		return 0, errcode.New(errcode.ErrInvalidArg, "player_id, instance_id and item_config_id required")
+		return data.SaleOutcome{}, errcode.New(errcode.ErrInvalidArg, "player_id, instance_id and item_config_id required")
 	}
 	if idempotencyKey == "" {
-		return 0, errcode.New(errcode.ErrInvalidArg, "idempotency_key required")
+		return data.SaleOutcome{}, errcode.New(errcode.ErrInvalidArg, "idempotency_key required")
 	}
+	kind := u.sellCurrencyKind()
 	def, ok := u.itemDefinition(itemConfigID)
-	gold := int64(0)
+	amount := uint64(0)
 	if ok && (u.catalog == nil || def.Equipment) && def.SellUnitPrice > 0 {
-		gold = def.SellUnitPrice
+		amount = uint64(def.SellUnitPrice)
 	}
 	// 即使热更后配置已删/禁售也要进入 repo：同 key 的首次成功结果必须从 ledger
-	// 回放。gold=0 的首次请求由 repo 在 claim 后回滚为 NotSellable，不会建脏流水。
-	detail := fmt.Sprintf("sell instance=%d item=%d gold=%d", instanceID, itemConfigID, gold)
-	newGold, already, err := u.repo.SellInstance(ctx, playerID, instanceID, itemConfigID, gold, idempotencyKey, detail)
+	// 回放。amount=0 的首次请求由 repo 在 claim 后回滚为 NotSellable，不会建脏流水。
+	//
+	// detail 格式保持与多币种改造前逐字节一致(`gold=%d`):升级前写下的流水行靠
+	// legacySaleLedgerMatches 解析这个格式来判定"是否同一次出售",格式一变,
+	// 老玩家用老 key 重试就会被误判成 ErrInventoryIdempotencyConflict。
+	detail := fmt.Sprintf("sell instance=%d item=%d gold=%d", instanceID, itemConfigID, amount)
+	outcome, already, err := u.repo.SellInstance(ctx, playerID, instanceID, itemConfigID, kind, amount, idempotencyKey, detail)
 	if err != nil {
-		return 0, err
+		return data.SaleOutcome{}, err
 	}
 	if already {
 		plog.With(ctx).Infow("msg", "sell_instance_idempotent_hit",
 			"player_id", playerID, "instance_id", instanceID,
-			"idempotency_key", idempotencyKey, "gold", newGold)
+			"idempotency_key", idempotencyKey, "earned", outcome.Earned,
+			"balances", describeCurrencies(outcome.Balances))
 	}
-	return newGold, nil
+	return outcome, nil
 }
 
-// SellItem 出售道具换金币(不可出售 → ErrInventoryNotSellable;数量不足 → ErrInventoryInsufficient)。
-func (u *InventoryUsecase) SellItem(ctx context.Context, playerID uint64, itemConfigID uint32, count int64, idempotencyKey string) (int64, int64, error) {
+// SellItem 出售可堆叠道具换货币(不可出售 → ErrInventoryNotSellable;数量不足 → ErrInventoryInsufficient)。
+func (u *InventoryUsecase) SellItem(ctx context.Context, playerID uint64, itemConfigID uint32, count int64, idempotencyKey string) (data.SaleOutcome, error) {
 	if playerID == 0 {
-		return 0, 0, errcode.New(errcode.ErrInvalidArg, "player_id required")
+		return data.SaleOutcome{}, errcode.New(errcode.ErrInvalidArg, "player_id required")
 	}
 	if itemConfigID == 0 {
-		return 0, 0, errcode.New(errcode.ErrInvalidArg, "item_config_id required")
+		return data.SaleOutcome{}, errcode.New(errcode.ErrInvalidArg, "item_config_id required")
 	}
 	if count <= 0 {
-		return 0, 0, errcode.New(errcode.ErrInvalidArg, "count must be positive")
+		return data.SaleOutcome{}, errcode.New(errcode.ErrInvalidArg, "count must be positive")
 	}
 	if idempotencyKey == "" {
-		return 0, 0, errcode.New(errcode.ErrInvalidArg, "idempotency_key required")
+		return data.SaleOutcome{}, errcode.New(errcode.ErrInvalidArg, "idempotency_key required")
 	}
+	kind := u.sellCurrencyKind()
 	def, ok := u.itemDefinition(itemConfigID)
-	gold := int64(0)
+	amount := uint64(0)
 	overflow := false
 	if ok && !def.Equipment && def.SellUnitPrice > 0 {
-		gold, ok = safeMulInt64(def.SellUnitPrice, count)
-		overflow = !ok || gold <= 0
+		amount, ok = data.SafeMulCurrency(uint64(def.SellUnitPrice), uint64(count))
+		overflow = !ok || amount == 0
 		if overflow {
-			gold = 0
+			amount = 0
 		}
 	}
-	detail := fmt.Sprintf("sell item=%d count=%d gold=%d", itemConfigID, count, gold)
-	remaining, newGold, already, err := u.repo.SellItem(ctx, playerID, itemConfigID, count, gold, idempotencyKey, detail)
+	// detail 格式保持与多币种改造前逐字节一致,理由见 SellInstance。
+	detail := fmt.Sprintf("sell item=%d count=%d gold=%d", itemConfigID, count, amount)
+	outcome, already, err := u.repo.SellItem(ctx, playerID, itemConfigID, count, kind, amount, idempotencyKey, detail)
 	if err != nil {
 		if overflow && errcode.As(err) == errcode.ErrInventoryNotSellable {
-			return 0, 0, errcode.New(errcode.ErrInvalidArg,
+			// 溢出与"本来就不可出售"在 repo 里都表现为 amount==0;这里用调用侧记下的
+			// overflow 标志把它翻回更准确的错误码,免得策划以为是自己没配售价。
+			return data.SaleOutcome{}, errcode.New(errcode.ErrInvalidArg,
 				"sell amount overflow item=%d price=%d count=%d", itemConfigID, def.SellUnitPrice, count)
 		}
-		return 0, 0, err
+		return data.SaleOutcome{}, err
 	}
 	if already {
 		plog.With(ctx).Infow("msg", "sell_item_idempotent_hit",
-			"player_id", playerID, "idempotency_key", idempotencyKey, "item", itemConfigID, "remaining", remaining, "gold", newGold)
+			"player_id", playerID, "idempotency_key", idempotencyKey, "item", itemConfigID,
+			"remaining", outcome.Remaining, "earned", outcome.Earned)
 	}
-	return remaining, newGold, nil
+	return outcome, nil
 }
 
 // SettleAuctionMatch 原子结算一笔拍卖成交(系统驱动,幂等键基于 match_id)。
@@ -652,7 +683,7 @@ func (u *InventoryUsecase) SellItem(ctx context.Context, playerID uint64, itemCo
 //
 // 资产已在 FreezeForOrder 冻结进 escrow,成交不会因余额不足失败。
 // 幂等键 = "auction:settle:<match_id>",同一成交重复结算只生效一次(不变量 §9.2 / §9.7)。
-func (u *InventoryUsecase) SettleAuctionMatch(ctx context.Context, matchID, sellerID, buyerID, sellOrderID, buyOrderID uint64, itemConfigID uint32, quantity, unitPrice int64) error {
+func (u *InventoryUsecase) SettleAuctionMatch(ctx context.Context, matchID, sellerID, buyerID, sellOrderID, buyOrderID uint64, itemConfigID uint32, quantity int64, kind data.CurrencyKind, unitPrice uint64) error {
 	if matchID == 0 {
 		return errcode.New(errcode.ErrInvalidArg, "match_id required")
 	}
@@ -672,16 +703,20 @@ func (u *InventoryUsecase) SettleAuctionMatch(ctx context.Context, matchID, sell
 	if quantity <= 0 {
 		return errcode.New(errcode.ErrInvalidArg, "quantity must be positive")
 	}
-	if unitPrice <= 0 {
+	// unitPrice 是 uint64:`== 0` 已是完整的"必须为正"校验(负数在类型层不可能)。
+	if unitPrice == 0 {
 		return errcode.New(errcode.ErrInvalidArg, "unit_price must be positive")
 	}
-	totalGold, ok := safeMulInt64(unitPrice, quantity)
-	if !ok || totalGold <= 0 {
+	if verr := data.ValidateCurrencyKind(kind); verr != nil {
+		return verr
+	}
+	totalGold, ok := data.SafeMulCurrency(unitPrice, uint64(quantity))
+	if !ok || totalGold == 0 {
 		return errcode.New(errcode.ErrInvalidArg, "settle amount overflow match=%d price=%d qty=%d", matchID, unitPrice, quantity)
 	}
 	idempotencyKey := fmt.Sprintf("auction:settle:%d", matchID)
 	detail := fmt.Sprintf("auction settle match=%d item=%d qty=%d gold=%d", matchID, itemConfigID, quantity, totalGold)
-	already, err := u.repo.SettleAuctionMatch(ctx, matchID, sellerID, buyerID, sellOrderID, buyOrderID, itemConfigID, quantity, totalGold, idempotencyKey, detail)
+	already, err := u.repo.SettleAuctionMatch(ctx, matchID, sellerID, buyerID, sellOrderID, buyOrderID, itemConfigID, quantity, kind, totalGold, idempotencyKey, detail)
 	if err != nil {
 		return err
 	}
@@ -703,7 +738,7 @@ func (u *InventoryUsecase) SettleAuctionMatch(ctx context.Context, matchID, sell
 //
 // 与拍卖不同,P2P 无预冻结,任一方资产不足 → ErrInventoryInsufficient,整笔回滚(成交失败)。
 // 幂等键 = "trade:settle:<order_id>",同一订单重复结算只生效一次(不变量 §9.7)。
-func (u *InventoryUsecase) SettlePlayerTrade(ctx context.Context, orderID, sellerID, buyerID uint64, sellerItems, buyerItems []data.ItemGrant, price int64) error {
+func (u *InventoryUsecase) SettlePlayerTrade(ctx context.Context, orderID, sellerID, buyerID uint64, sellerItems, buyerItems []data.ItemGrant, kind data.CurrencyKind, price uint64) error {
 	if orderID == 0 {
 		return errcode.New(errcode.ErrInvalidArg, "order_id required")
 	}
@@ -714,8 +749,11 @@ func (u *InventoryUsecase) SettlePlayerTrade(ctx context.Context, orderID, selle
 		// 自交易净额为零且会让同一玩家同 key 写两条流水冲突;视为非法。
 		return errcode.New(errcode.ErrInvalidArg, "seller and buyer must differ: %d", sellerID)
 	}
-	if price < 0 {
-		return errcode.New(errcode.ErrInvalidArg, "price must not be negative")
+	// price 是 uint64,不可能为负;真正要校验的是"有钱就必须说清楚是哪种钱"。
+	if price > 0 {
+		if verr := data.ValidateCurrencyKind(kind); verr != nil {
+			return verr
+		}
 	}
 	if len(sellerItems) == 0 && len(buyerItems) == 0 && price == 0 {
 		return errcode.New(errcode.ErrInvalidArg, "nothing to settle")
@@ -740,7 +778,7 @@ func (u *InventoryUsecase) SettlePlayerTrade(ctx context.Context, orderID, selle
 	idempotencyKey := fmt.Sprintf("trade:settle:%d", orderID)
 	detail := fmt.Sprintf("trade settle order=%d seller_items=%d buyer_items=%d price=%d",
 		orderID, len(sellerItems), len(buyerItems), price)
-	already, err := u.repo.SettlePlayerTrade(ctx, orderID, sellerID, buyerID, sellerItems, buyerItems, price, idempotencyKey, detail)
+	already, err := u.repo.SettlePlayerTrade(ctx, orderID, sellerID, buyerID, sellerItems, buyerItems, kind, price, idempotencyKey, detail)
 	if err != nil {
 		return err
 	}
@@ -755,7 +793,7 @@ func (u *InventoryUsecase) SettlePlayerTrade(ctx context.Context, orderID, selle
 //
 // SELL:冻结 quantity 个 itemConfigID(卖家下架道具);BUY:冻结 quantity*unitPrice 金币(买家锁价)。
 // 资产移入 escrow,挂单期间不可被别处消耗;道具 / 金币不足 → ErrInventoryInsufficient。
-func (u *InventoryUsecase) FreezeForOrder(ctx context.Context, playerID, orderID uint64, side EscrowSide, itemConfigID uint32, quantity, unitPrice int64) error {
+func (u *InventoryUsecase) FreezeForOrder(ctx context.Context, playerID, orderID uint64, side EscrowSide, itemConfigID uint32, quantity int64, currencyKind data.CurrencyKind, unitPrice uint64) error {
 	if playerID == 0 || orderID == 0 {
 		return errcode.New(errcode.ErrInvalidArg, "player_id / order_id required")
 	}
@@ -765,27 +803,31 @@ func (u *InventoryUsecase) FreezeForOrder(ctx context.Context, playerID, orderID
 	if quantity <= 0 {
 		return errcode.New(errcode.ErrInvalidArg, "quantity must be positive")
 	}
-	if unitPrice <= 0 {
+	// unitPrice 是 uint64:`== 0` 已是完整校验(负数在类型层不可能)。
+	if unitPrice == 0 {
 		return errcode.New(errcode.ErrInvalidArg, "unit_price must be positive")
 	}
 	var (
-		kind       data.EscrowKind
-		frozenGold int64
+		kind         data.EscrowKind
+		frozenAmount uint64
 	)
 	switch side {
 	case EscrowSideSell:
 		kind = data.EscrowKindItem
 	case EscrowSideBuy:
-		kind = data.EscrowKindGold
-		g, ok := safeMulInt64(unitPrice, quantity)
-		if !ok || g <= 0 {
+		kind = data.EscrowKindCurrency
+		if verr := data.ValidateCurrencyKind(currencyKind); verr != nil {
+			return verr
+		}
+		g, ok := data.SafeMulCurrency(unitPrice, uint64(quantity))
+		if !ok || g == 0 {
 			return errcode.New(errcode.ErrInvalidArg, "freeze amount overflow order=%d price=%d qty=%d", orderID, unitPrice, quantity)
 		}
-		frozenGold = g
+		frozenAmount = g
 	default:
 		return errcode.New(errcode.ErrInvalidArg, "unknown escrow side %d", side)
 	}
-	already, err := u.repo.FreezeForOrder(ctx, playerID, orderID, kind, itemConfigID, quantity, frozenGold)
+	already, err := u.repo.FreezeForOrder(ctx, playerID, orderID, kind, itemConfigID, quantity, currencyKind, frozenAmount)
 	if err != nil {
 		return err
 	}
@@ -803,7 +845,9 @@ func (u *InventoryUsecase) EnsureAuctionEscrow(
 	playerID, orderID uint64,
 	side EscrowSide,
 	itemConfigID uint32,
-	remainingQuantity, unitPrice uint64,
+	remainingQuantity uint64,
+	currencyKind data.CurrencyKind,
+	unitPrice uint64,
 ) error {
 	if playerID == 0 || orderID == 0 {
 		return errcode.New(errcode.ErrInvalidArg, "player_id / order_id required")
@@ -814,11 +858,15 @@ func (u *InventoryUsecase) EnsureAuctionEscrow(
 	if remainingQuantity == 0 || unitPrice == 0 {
 		return errcode.New(errcode.ErrInvalidArg, "remaining_quantity / unit_price must be positive")
 	}
+	// 数量仍走有符号 int64(见 CLAUDE.md §5.12 例外:quantity 一族参与 Remaining() 减法,
+	// 不随货币一起改无符号),所以这里只钳数量,**不再钳价格** ——
+	// 价格从入口到落库全程 uint64,没有任何一处强转回 int64,自然也不需要"防强转变负"的闸。
+	// 旧实现同时钳了两者;若只删闸不删强转,超过 MaxInt64 的价格会被转成负数,
+	// 一路穿到扣款处让 `have < n` 恒 false,把扣钱变成加钱(测绘报告 R5)。
 	const maxInt64AsUint64 = uint64(^uint64(0) >> 1)
-	if remainingQuantity > maxInt64AsUint64 || unitPrice > maxInt64AsUint64 {
+	if remainingQuantity > maxInt64AsUint64 {
 		return errcode.New(errcode.ErrInvalidArg,
-			"ensure escrow amount exceeds int64 order=%d remaining=%d price=%d",
-			orderID, remainingQuantity, unitPrice)
+			"ensure escrow quantity exceeds int64 order=%d remaining=%d", orderID, remainingQuantity)
 	}
 
 	var kind data.EscrowKind
@@ -826,8 +874,11 @@ func (u *InventoryUsecase) EnsureAuctionEscrow(
 	case EscrowSideSell:
 		kind = data.EscrowKindItem
 	case EscrowSideBuy:
-		kind = data.EscrowKindGold
-		if _, ok := safeMulInt64(int64(unitPrice), int64(remainingQuantity)); !ok {
+		kind = data.EscrowKindCurrency
+		if verr := data.ValidateCurrencyKind(currencyKind); verr != nil {
+			return verr
+		}
+		if _, ok := data.SafeMulCurrency(unitPrice, remainingQuantity); !ok {
 			return errcode.New(errcode.ErrInvalidArg,
 				"ensure escrow amount overflow order=%d price=%d remaining=%d",
 				orderID, unitPrice, remainingQuantity)
@@ -837,7 +888,7 @@ func (u *InventoryUsecase) EnsureAuctionEscrow(
 	}
 
 	already, err := u.repo.EnsureAuctionEscrow(ctx, playerID, orderID, kind, itemConfigID,
-		int64(remainingQuantity), int64(unitPrice))
+		int64(remainingQuantity), currencyKind, unitPrice)
 	if err != nil {
 		return err
 	}

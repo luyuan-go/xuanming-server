@@ -923,7 +923,9 @@ func toProtoOrder(r *data.OrderRecord) *auctionv1.AuctionOrder {
 		ItemConfigId:   r.ItemConfigID,
 		Quantity:       r.Quantity,
 		FilledQuantity: r.FilledQuantity,
-		Price:          r.Price,
+		// 内部 Price 是 int64(撮合簿需要取负编码,见 service/auction.go priceToInternal);
+		// 下行协议按 §5.12 用 uint64。入口已保证 > 0 且 <= MaxPrice,转换安全。
+		Price:          uint64(r.Price),
 		Status:         auctionv1.AuctionOrderStatus(r.Status),
 		CreatedAtMs:    r.CreatedAtMs,
 		UpdatedAtMs:    r.UpdatedAtMs,
@@ -948,7 +950,7 @@ func toProtoMatch(m *data.MatchRecord) *auctionv1.AuctionMatchEvent {
 		BuyerId:      m.BuyerID,
 		ItemConfigId: m.ItemConfigID,
 		Quantity:     m.Quantity,
-		Price:        m.Price,
+		Price:        uint64(m.Price),
 		MatchedAtMs:  m.MatchedAtMs,
 	}
 }

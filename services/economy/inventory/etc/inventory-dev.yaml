@@ -1,7 +1,7 @@
 # Pandora inventory 服务开发期配置(W5 ③,2026-06-18)。
 #
 # - gRPC :20015 / HTTP :21015(仅 /metrics)
-# - MySQL 强依赖(pandora_trade 库:player_currency + player_items + inventory_ledger,
+# - MySQL 强依赖(pandora_trade 库:player_wallet + player_items + inventory_ledger,
 #   发放 / 使用 / 出售幂等 inventory_ledger uk,不变量 §9.7)
 # - dev: enable_reflection=true 便于 grpcurl 联调
 

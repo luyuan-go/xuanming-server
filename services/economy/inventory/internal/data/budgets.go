@@ -25,8 +25,10 @@ const (
 func TradeBudgets() []dbguard.TableBudget {
 	return []dbguard.TableBudget{
 		{
-			Table: "player_currency", MaxRows: planPlayers * 3, MaxAvgRowBytes: 128,
-			Note: "每玩家一行;超限说明玩家量级超出容量规划",
+			// 多币种钱包:一玩家一币种一行(CurrencyKind 当前 3 种),故按 planPlayers×3 计,
+			// 再乘既有的 3 倍余量口径(与 player_items 的 planPlayers*200*3 同形)。
+			Table: "player_wallet", MaxRows: planPlayers * 3 * 3, MaxAvgRowBytes: 128,
+			Note: "每玩家每币种一行;超限说明玩家量级超出容量规划或币种枚举失控",
 		},
 		{
 			Table: "player_items", MaxRows: planPlayers * 200 * 3, MaxAvgRowBytes: 128,

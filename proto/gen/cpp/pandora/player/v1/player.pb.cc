@@ -12500,7 +12500,10 @@ const char descriptor_table_protodef_pandora_2fplayer_2fv1_2fplayer_2eproto[] AB
     "ra.player.v1.GetRewardClaimsResponse\022b\n\r"
     "AddExperience\022\'.pandora.player.v1.AddExp"
     "erienceRequest\032(.pandora.player.v1.AddEx"
-    "perienceResponseb\006proto3"
+    "perienceResponse2\202\001\n\025PlayerInternalServi"
+    "ce\022i\n\022ResolvePlayerNames\022(.pandora.playe"
+    "r.v1.GetPlayerNamesRequest\032).pandora.pla"
+    "yer.v1.GetPlayerNamesResponseb\006proto3"
 };
 static const ::_pbi::DescriptorTable* PROTOBUF_NONNULL const
     descriptor_table_pandora_2fplayer_2fv1_2fplayer_2eproto_deps[2] = {
@@ -12511,7 +12514,7 @@ static ::absl::once_flag descriptor_table_pandora_2fplayer_2fv1_2fplayer_2eproto
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_pandora_2fplayer_2fv1_2fplayer_2eproto = {
     false,
     false,
-    11744,
+    11877,
     descriptor_table_protodef_pandora_2fplayer_2fv1_2fplayer_2eproto,
     "pandora/player/v1/player.proto",
     &descriptor_table_pandora_2fplayer_2fv1_2fplayer_2eproto_once,

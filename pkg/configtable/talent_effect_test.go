@@ -18,7 +18,7 @@ func newTalentEffectTableForTest(t *testing.T, rows ...*configpb.TalentEffectRow
 
 // TestTalentEffectAttrKeyWhitelist 钉住"拼错属性键必须在加载期被拒"。
 // 拼错的键在 DS 上表现为天赋点了没反应,既不报错也不崩,只能靠加载期白名单挡。
-// ⚠️ UMyEntityAttrSet 增删属性时,本用例的合法键与 allowedTalentAttrKeys 须一起改。
+// ⚠️ UMyEntityAttrSet 增删属性时,本用例的合法键与 combatAttrKeys 须一起改。
 func TestTalentEffectAttrKeyWhitelist(t *testing.T) {
 	_, err := newTalentEffectTable(&configpb.TalentEffectTableData{Rows: []*configpb.TalentEffectRow{
 		// "Attack" 不是 GAS 属性名(正确写法是 Atk)。
@@ -32,7 +32,7 @@ func TestTalentEffectAttrKeyWhitelist(t *testing.T) {
 	}
 
 	// 白名单内的键全部要能过,避免白名单写漏把合法配置挡在门外。
-	for key := range allowedTalentAttrKeys {
+	for key := range combatAttrKeys {
 		if _, err := newTalentEffectTable(&configpb.TalentEffectTableData{Rows: []*configpb.TalentEffectRow{
 			{Id: 1, TalentId: 1, AttrKey: key, ValuePerLevel: 1},
 		}}); err != nil {

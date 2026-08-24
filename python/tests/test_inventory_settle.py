@@ -3,7 +3,8 @@
 重点:
   1. ★ 幂等键格式是跨服务契约 —— 变一个字符 = 迁移期重复入账
   2. ★ 自成交必须拒(同一玩家同幂等键写两条流水 → 唯一键冲突)
-  3. ★ int64 溢出守卫(Python 的 int 不会溢出,必须显式检查)
+  3. ★ 溢出守卫(Python 的 int 不会溢出,必须显式检查;上界是
+     currency.MAX_CURRENCY_AMOUNT=2^62,不是 int64 上限)
   4. 空交易拒绝
 """
 
@@ -12,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from pandorapy import errcode
+from pandorapy.services.inventory import currency as ccy
 from pandorapy.services.inventory import settle
 
 
@@ -19,7 +21,8 @@ def _auction(**kw):
     base = dict(
         match_id=555, seller_id=1001, buyer_id=2002,
         sell_order_id=11, buy_order_id=22,
-        item_config_id=5001, quantity=3, unit_price=100,
+        item_config_id=5001, quantity=3,
+        kind=ccy.CURRENCY_GOLD, unit_price=100,
     )
     base.update(kw)
     return settle.validate_auction_settle(**base)
@@ -28,7 +31,8 @@ def _auction(**kw):
 def _trade(**kw):
     base = dict(
         order_id=777, seller_id=1001, buyer_id=2002,
-        seller_items=[settle.ItemGrant(5001, 1)], buyer_items=[], price=100,
+        seller_items=[settle.ItemGrant(5001, 1)], buyer_items=[],
+        kind=ccy.CURRENCY_GOLD, price=100,
     )
     base.update(kw)
     return settle.validate_player_trade_settle(**base)
@@ -100,21 +104,7 @@ def test_player_trade_self_trade_rejected() -> None:
         _trade(seller_id=1001, buyer_id=1001)
 
 
-# ── ★ 3. int64 溢出守卫 ────────────────────────────────────────────────────
-
-
-def test_safe_mul_detects_overflow() -> None:
-    """★ Python 的 int **不会**溢出,所以必须显式检查上下界。
-
-    不检查的话 Python 版会算出一个 Go 版根本表示不了的金额,
-    写进 BIGINT 列时严格模式报错、非严格模式**静默截断**。
-    """
-    assert settle.safe_mul_int64(2, 3) == (6, True)
-    assert settle.safe_mul_int64(2**31, 2**31) == (2**62, True)
-    _, ok = settle.safe_mul_int64(2**32, 2**32)
-    assert not ok, "2^64 没被判为溢出"
-    _, ok = settle.safe_mul_int64(2**62, -4)
-    assert not ok, "负向溢出没被判出"
+# ── ★ 3. 溢出守卫(乘法本体在 test_inventory_currency.py)─────────────────
 
 
 def test_settle_amount_overflow_rejected() -> None:
@@ -124,9 +114,14 @@ def test_settle_amount_overflow_rejected() -> None:
 
 
 def test_near_limit_amount_allowed() -> None:
-    """不溢出的极端组合应当放行(守卫不能过严)。"""
+    """不溢出的极端组合应当放行(守卫不能过严)。
+
+    上界是 currency.MAX_CURRENCY_AMOUNT = 2^62(与 Go 的 MaxCurrencyAmount 同值),
+    **不是** int64 上限:货币改无符号后,加法的天花板由业务上限而不是类型宽度决定。
+    """
     total = _auction(quantity=2, unit_price=(2**61))
     assert total == 2**62
+    assert total == ccy.MAX_CURRENCY_AMOUNT
 
 
 def test_returned_total_is_product() -> None:
@@ -145,6 +140,11 @@ def test_empty_trade_rejected() -> None:
 def test_pure_gold_trade_allowed() -> None:
     """纯金币交易(无道具)合法。"""
     _trade(seller_items=[], buyer_items=[], price=100)
+
+
+def test_pure_diamond_trade_allowed() -> None:
+    """非金币币种同样合法 —— 结算路径按 kind 参数化,不是"只有金币能交易"。"""
+    _trade(seller_items=[], buyer_items=[], kind=ccy.CURRENCY_DIAMOND, price=100)
 
 
 def test_pure_item_trade_allowed() -> None:
@@ -182,8 +182,43 @@ def test_trade_required_fields(field: str, value: int) -> None:
 
 
 def test_trade_negative_price_rejected() -> None:
+    """★ 协议改 uint64 后,Go 侧那句 `price < 0` 已恒为 false —— 闸门被静默拆掉。
+
+    Python 的 int 没有无符号保护,所以这条闸必须**真的留着**:
+    负价格会把"买家付钱"变成"买家收钱"。
+    """
     with pytest.raises(errcode.PandoraError, match="must not be negative"):
         _trade(price=-1)
+
+
+def test_trade_positive_price_requires_known_currency() -> None:
+    """★ `price < 0` 退化后,真正该补上的是"有钱就必须说清楚是哪种钱"。
+
+    UNSPECIFIED 一律 fail-closed,**不得回退成金币**(currency.proto):
+    静默回退会让配错的订单按金币结算,是不可观测的经济事故。
+    """
+    with pytest.raises(errcode.PandoraError, match="unsupported currency kind"):
+        _trade(kind=ccy.CURRENCY_KIND_UNSPECIFIED, price=100)
+
+
+def test_trade_zero_price_skips_currency_check() -> None:
+    """纯物物交换(price=0)不校验币种:一分钱没动,币种没有语义。
+
+    这条与上一条是一对:把币种校验无条件前置会让存量的纯物物交换订单
+    在升级瞬间全部报 ERR_INVALID_ARG。
+    """
+    _trade(
+        kind=ccy.CURRENCY_KIND_UNSPECIFIED,
+        seller_items=[settle.ItemGrant(5001, 1)],
+        buyer_items=[],
+        price=0,
+    )
+
+
+def test_auction_requires_known_currency() -> None:
+    """拍卖结算同样 fail-closed:币种未知即拒,不猜。"""
+    with pytest.raises(errcode.PandoraError, match="unsupported currency kind"):
+        _auction(kind=ccy.CURRENCY_KIND_UNSPECIFIED)
 
 
 @pytest.mark.parametrize("bad", [settle.ItemGrant(0, 1), settle.ItemGrant(5001, 0),

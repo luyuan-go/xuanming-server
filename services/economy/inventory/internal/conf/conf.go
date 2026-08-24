@@ -255,6 +255,31 @@ type InventoryConf struct {
 	// Deprecated:仅兼容未装配配置表 Catalog 的测试。
 	DefaultIdentifyRule *IdentifyRule `yaml:"default_identify_rule,omitempty" json:"default_identify_rule,omitempty"`
 
+	// ── 货币(多币种,2026-08-22)──
+
+	// SellCurrencyKind 是**出售道具**统一的结算币种(pandora.common.v1.CurrencyKind)。
+	// 留空 / 0 → 金币(1)。
+	//
+	// 为什么是服务端配置而不是道具表一列:当前没有"卖某道具得钻石"的确认需求,
+	// 给策划源表加列要动 xlsx 版式 + 客户端 DataTable + 生成物四处,属预设性复杂化(§15.3)。
+	// 真出现需求时加表列即可,RPC 契约不用改(响应里已带 CurrencyAmount.kind)。
+	SellCurrencyKind int32 `yaml:"sell_currency_kind,omitempty" json:"sell_currency_kind,omitempty"`
+
+	// MaxCurrencyPerGrant 是**单次发放**某一币种的数量上限(§9.6 五要件④ 额度)。
+	// 留空 / 0 → 默认 1e12。
+	//
+	// 它拦的不是玩家(玩家无法直接调 GrantItems),而是**上游算错**:战后结算、活动、
+	// 补偿脚本一旦把倍率或单位算错,没有这道闸就会把天文数字灌进经济体,而且事后无法区分
+	// "正常大额"与"算错"。超限返回 ErrInvalidArg 并留日志,比事后查账便宜得多。
+	MaxCurrencyPerGrant uint64 `yaml:"max_currency_per_grant,omitempty" json:"max_currency_per_grant,omitempty"`
+
+	// ── NPC 商店(服务端权威购买,2026-08-22)──
+
+	// MaxShopUnitsPerPurchase 是单次商店购买的最高份数(留空 / 0 → 默认 999)。
+	// 份数是价格乘数,不设上限时一次请求就能顶到溢出闸;有上限则错误码更精确
+	// (ERR_INVENTORY_NOT_PURCHASABLE 而不是含糊的参数溢出)。
+	MaxShopUnitsPerPurchase uint32 `yaml:"max_shop_units_per_purchase,omitempty" json:"max_shop_units_per_purchase,omitempty"`
+
 	// ── 保留期清理(CLAUDE.md §9 不变量 24:只增表必须有界)──
 
 	// SweepInterval 保留期清理轮询间隔(默认 5m)。多副本各自跑,DELETE 幂等无需锁

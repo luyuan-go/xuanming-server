@@ -91,6 +91,10 @@ type BattleConf struct {
 	// 超限部分被截断丢弃并记 Warn(battle_drop_truncated),不影响结算落库。
 	MaxDropPerPlayer int `yaml:"max_drop_per_player,omitempty" json:"max_drop_per_player,omitempty"`
 
+	// MaxGoldPerPlayer 单场结算里单个玩家最多发放的金币(DS 不可信,同 MaxDropPerPlayer 口径)。
+	// 默认 100 万(见 MaxBattleGoldPerPlayer);超限截断 + Warn(battle_gold_truncated),不影响落库。
+	MaxGoldPerPlayer uint64 `yaml:"max_gold_per_player,omitempty" json:"max_gold_per_player,omitempty"`
+
 	// DropPublishInterval 战斗掉落出箱发布轮询间隔(默认 2s)。
 	DropPublishInterval config.Duration `yaml:"drop_publish_interval,omitempty" json:"drop_publish_interval,omitempty"`
 
@@ -308,6 +312,22 @@ func (b *BattleConf) MaxDropsPerPlayer() int {
 		n = maxDropPerPlayerHardCap
 	}
 	return n
+}
+
+// MaxBattleGoldPerPlayer 返回单场单玩家可发放的金币上限(未配置 → 默认 100 万)。
+//
+// 为什么必须有这道闸(§9.6 数值不信 DS):`PlayerStats.gold` 是 DS 上报的**数值**,
+// 一个出 bug 或被攻破的 DS 可以填任意大的数;它直接进玩家钱包就是不可逆的经济事故。
+// 超限**截断而不是拒整场**:战绩落库失败会连带段位、任务、掉落一起丢,代价远大于少发点钱;
+// 截断同时打 Warn,异常照样可发现。
+//
+// 与 MaxDropsPerPlayer 同样放访问器而非 Defaults:任何构造路径(含测试直建 BattleConf)
+// 都必须带上限,不能靠"记得在某处初始化"。
+func (b *BattleConf) MaxBattleGoldPerPlayer() uint64 {
+	if b.MaxGoldPerPlayer > 0 {
+		return b.MaxGoldPerPlayer
+	}
+	return 1_000_000
 }
 
 // ── 实时进度通道访问器(任何构造路径都有安全默认,风格同 MaxDropsPerPlayer)──

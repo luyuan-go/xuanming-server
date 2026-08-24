@@ -33,13 +33,35 @@ func NewAuctionService(uc *biz.AuctionUsecase) *AuctionService {
 	return &AuctionService{uc: uc}
 }
 
+// priceToInternal 把上行的 uint64 单价转成撮合引擎内部使用的 int64。
+//
+// 为什么撮合引擎的价格**刻意仍是有符号**:订单簿用 ZSET score 表达价格优先级,
+// 买盘靠 `-float64(price)` 编成负分才能"升序取到最高价"(data/book.go scoreOf)。
+// 这正是 CLAUDE.md §5.12 例外① 说的"语义上要参与取负的数值",改无符号会让 `-price`
+// 直接回绕成天文数字,价格优先级整体错乱。
+//
+// 因此符号转换只发生在**这一个入口**,且必须先判上界:超出 int64 的价格在这里就拒掉,
+// 绝不能让它转成负数流进撮合(负价会击穿 biz 的 `price <= 0` 闸之外的一切假设)。
+// biz 侧另有 MaxPrice(默认 1e9)做业务上界,本函数只负责"不让类型转换本身出错"。
+func priceToInternal(price uint64) (int64, bool) {
+	const maxInt64 = uint64(^uint64(0) >> 1)
+	if price > maxInt64 {
+		return 0, false
+	}
+	return int64(price), true
+}
+
 // PlaceOrder 卖家挂单。seller 以 JWT ctx 为准(R5)。
 func (s *AuctionService) PlaceOrder(ctx context.Context, req *auctionv1.PlaceOrderRequest) (*auctionv1.PlaceOrderResponse, error) {
 	ownerID := callerID(ctx)
 	if ownerID == 0 {
 		return &auctionv1.PlaceOrderResponse{Code: commonv1.ErrCode_ERR_UNAUTHORIZED}, nil
 	}
-	order, err := s.uc.PlaceOrder(ctx, ownerID, req.GetMarketId(), req.GetItemConfigId(), req.GetQuantity(), req.GetPrice(), req.GetIdempotencyKey())
+	price, ok := priceToInternal(req.GetPrice())
+	if !ok {
+		return &auctionv1.PlaceOrderResponse{Code: commonv1.ErrCode_ERR_INVALID_ARG}, nil
+	}
+	order, err := s.uc.PlaceOrder(ctx, ownerID, req.GetMarketId(), req.GetItemConfigId(), req.GetQuantity(), price, req.GetIdempotencyKey())
 	if err != nil {
 		return &auctionv1.PlaceOrderResponse{Code: toProtoCode(err)}, nil
 	}
@@ -57,7 +79,11 @@ func (s *AuctionService) Bid(ctx context.Context, req *auctionv1.BidRequest) (*a
 	if ownerID == 0 {
 		return &auctionv1.BidResponse{Code: commonv1.ErrCode_ERR_UNAUTHORIZED}, nil
 	}
-	order, err := s.uc.Bid(ctx, ownerID, req.GetMarketId(), req.GetItemConfigId(), req.GetQuantity(), req.GetPrice(), req.GetIdempotencyKey())
+	price, ok := priceToInternal(req.GetPrice())
+	if !ok {
+		return &auctionv1.BidResponse{Code: commonv1.ErrCode_ERR_INVALID_ARG}, nil
+	}
+	order, err := s.uc.Bid(ctx, ownerID, req.GetMarketId(), req.GetItemConfigId(), req.GetQuantity(), price, req.GetIdempotencyKey())
 	if err != nil {
 		return &auctionv1.BidResponse{Code: toProtoCode(err)}, nil
 	}

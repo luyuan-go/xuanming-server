@@ -111,6 +111,52 @@ def faction(pid: int, fid: int):
     return dpb.BattlePlayerCombatFaction(player_id=pid, combat_faction_id=fid)
 
 
+async def allocate_ready(st, req, match_id: int | None = None, budget_sec: float = 25.0):
+    """发起 AllocateBattle,并**同时扮演那台 DS** 把这一局推到 ready。
+
+    ★ 不这么做的话整份探针一条都跑不完:`AllocateBattle` 会一直阻塞到 DS 用正确的
+    match_id/pod 上报 ready/running 心跳为止,而 mock 模式下**根本没有真 DS 会上报**,
+    于是必然挂满 `ready_wait_timeout`(dev 配 300s)。实测(2026-08-22)Go / Python
+    两侧同样挂死 —— 这是探针自己的缺口,不是实现分叉(README 规矩①的另一种形态:
+    第一条场景就卡住,后面 42 条压根没被执行,而"没跑"很容易被读成"没差异")。
+
+    mock 模式下 pod 名由 match_id 派生(`pandora-battle-{match_id}`),所以探针能精确
+    地只给自己这一局发心跳,不碰别的运行留下的行(规矩②)。
+
+    心跳次数随两侧调度快慢而不同,但心跳响应**不进 diff** —— 进 diff 的只有最终那条
+    AllocateBattle 响应,所以时序差异不会污染比对。
+    """
+    if match_id is None:
+        match_id = req.match_id
+    # ★ 绑成局部名:main() 里**每一条** AllocateBattle 都走本函数(哪条请求会通过校验、
+    # 进而卡在 ready 等待上,不该由探针作者去猜 —— 猜错就是又一次 300s 挂死)。
+    # 这里若仍写成 st.AllocateBattle(...),就会变成自我递归。
+    invoke = st.AllocateBattle
+    # grpc.aio 的 stub 调用返回的是 UnaryUnaryCall(可 await 的对象),**不是** coroutine,
+    # 直接丢给 create_task 会 TypeError。包一层再交出去。
+    call = invoke(req)
+
+    async def _await_call():
+        return await call
+
+    task = asyncio.create_task(_await_call())
+    pod = f"pandora-battle-{match_id}"
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + budget_sec
+    while not task.done() and loop.time() < deadline:
+        await asyncio.sleep(0.15)
+        if task.done():
+            break
+        try:
+            await st.Heartbeat(
+                dpb.HeartbeatRequest(ds_pod_name=pod, match_id=match_id, state="running")
+            )
+        except grpc.aio.AioRpcError:
+            # 记录还没落到 warming 时心跳会被拒 —— 正常,下一轮再试。
+            pass
+    return await task
+
+
 async def main():
     async with grpc.aio.insecure_channel(f"127.0.0.1:{PORT}") as ch:
         st = dgrpc.DSAllocatorServiceStub(ch)
@@ -126,68 +172,75 @@ async def main():
 
         # ── AllocateBattle ────────────────────────────────────────────────
         p.dump("01 allocate 正常 5v5",
-               await st.AllocateBattle(A(match_id=m1, player_ids=roster, map_id=MAP_ID,
-                                         game_mode="5v5_ranked",
-                                         player_combat_factions=fac,
-                                         rating_mode=lvl.LEVEL_RATING_MODE_ELO,
-                                         rating_pool="ranked_5v5")))
+               await allocate_ready(st, A(match_id=m1, player_ids=roster, map_id=MAP_ID,
+                                          game_mode="5v5_ranked",
+                                          player_combat_factions=fac,
+                                          rating_mode=lvl.LEVEL_RATING_MODE_ELO,
+                                          rating_pool="ranked_5v5"), m1))
         mine.add(m1)
         # ★ 幂等命中:同 match_id 重复分配**必须**回同一实例,不能再分配一台。
         p.dump("02 allocate 重复(幂等命中)",
-               await st.AllocateBattle(A(match_id=m1, player_ids=roster, map_id=MAP_ID,
-                                         game_mode="5v5_ranked",
-                                         player_combat_factions=fac,
-                                         rating_mode=lvl.LEVEL_RATING_MODE_ELO,
-                                         rating_pool="ranked_5v5")))
+               await allocate_ready(st, A(match_id=m1, player_ids=roster, map_id=MAP_ID,
+                                          game_mode="5v5_ranked",
+                                          player_combat_factions=fac,
+                                          rating_mode=lvl.LEVEL_RATING_MODE_ELO,
+                                          rating_pool="ranked_5v5")))
         # ★ 同 match_id 但 roster 变了。这是最容易分叉的一条:一侧仍走幂等回原实例,
         # 一侧发现 roster 不同判冲突。放行的话名单外的玩家会拿到票进场。
         p.dump("03 allocate 同 match 不同 roster",
-               await st.AllocateBattle(A(match_id=m1, player_ids=[BASE + 199], map_id=MAP_ID,
-                                         game_mode="5v5_ranked")))
+               await allocate_ready(st, A(match_id=m1, player_ids=[BASE + 199], map_id=MAP_ID,
+                                          game_mode="5v5_ranked")))
 
         p.dump("04 allocate match_id=0",
-               await st.AllocateBattle(A(player_ids=roster, map_id=MAP_ID,
-                                         game_mode="5v5_ranked")))
+               await allocate_ready(st, A(player_ids=roster, map_id=MAP_ID,
+                                          game_mode="5v5_ranked")))
         p.dump("05 allocate 空 roster",
-               await st.AllocateBattle(A(match_id=BASE + 3, map_id=MAP_ID,
-                                         game_mode="5v5_ranked")))
+               await allocate_ready(st, A(match_id=BASE + 3, map_id=MAP_ID,
+                                          game_mode="5v5_ranked")))
         # ★ 关卡表里不存在的 map_id 必须拒。放行的话 DS 会起在一张不存在的图上,
         # 玩家永远卡加载(§9.20 不得让玩家进不去场景)。
+        #
+        # ⚠️ 但**本条在 mock 模式下恒回 OK,两侧一致,不是分叉也不是缺陷**:
+        # 关卡表只在 mode=local/agones 起真 DS、按 map_id 拼地图命令行时才被查
+        # (见 ds_allocator-dev.yaml config_table 段注释);mock 不解析地图,自然无从拒。
+        # 2026-08-22 实测 Go / Python 同为 OK。要真验这条判定必须换 local 模式,
+        # 而 local 会让两个实现互抢 DS 端口(见本文件开头)—— 即"对拍覆盖不到的一格",
+        # 别把它读成"实现放行了非法地图"。07 map_id=0 / 08 game_mode 为空同理。
         p.dump("06 allocate map_id 不在关卡表",
-               await st.AllocateBattle(A(match_id=BASE + 4, player_ids=roster,
-                                         map_id=MAP_ID_ABSENT, game_mode="5v5_ranked")))
+               await allocate_ready(st, A(match_id=BASE + 4, player_ids=roster,
+                                          map_id=MAP_ID_ABSENT, game_mode="5v5_ranked")))
         p.dump("07 allocate map_id=0",
-               await st.AllocateBattle(A(match_id=BASE + 5, player_ids=roster,
-                                         game_mode="5v5_ranked")))
+               await allocate_ready(st, A(match_id=BASE + 5, player_ids=roster,
+                                          game_mode="5v5_ranked")))
         p.dump("08 allocate game_mode 为空",
-               await st.AllocateBattle(A(match_id=BASE + 6, player_ids=roster, map_id=MAP_ID)))
+               await allocate_ready(st, A(match_id=BASE + 6, player_ids=roster, map_id=MAP_ID)))
         # ★ faction 列表与 roster 对不上。proto 明写「必须对 roster 每名玩家精确提供一条」,
         # 空列表只为兼容旧 matchmaker —— 那么"给了但只给一半"该怎么处理是分叉点。
         p.dump("09 allocate faction 只覆盖一半 roster",
-               await st.AllocateBattle(A(match_id=BASE + 7, player_ids=roster, map_id=MAP_ID,
-                                         game_mode="5v5_ranked",
-                                         player_combat_factions=fac[:2])))
+               await allocate_ready(st, A(match_id=BASE + 7, player_ids=roster, map_id=MAP_ID,
+                                          game_mode="5v5_ranked",
+                                          player_combat_factions=fac[:2])))
         p.dump("10 allocate faction 含 roster 外的玩家",
-               await st.AllocateBattle(A(match_id=BASE + 8, player_ids=roster, map_id=MAP_ID,
-                                         game_mode="5v5_ranked",
-                                         player_combat_factions=fac + [faction(BASE + 199, 0)])))
+               await allocate_ready(st, A(match_id=BASE + 8, player_ids=roster, map_id=MAP_ID,
+                                          game_mode="5v5_ranked",
+                                          player_combat_factions=fac + [faction(BASE + 199, 0)])))
         # ★ ELO 但 rating_pool 为空:proto 说这只可能出现在滚动升级期的旧 matchmaker,
         # battle_result 会按旧口径兜底 —— 那 allocator 这一层到底拒不拒?
         p.dump("11 allocate ELO 但 rating_pool 为空",
-               await st.AllocateBattle(A(match_id=BASE + 9, player_ids=roster, map_id=MAP_ID,
-                                         game_mode="5v5_ranked",
-                                         player_combat_factions=fac,
-                                         rating_mode=lvl.LEVEL_RATING_MODE_ELO)))
+               await allocate_ready(st, A(match_id=BASE + 9, player_ids=roster, map_id=MAP_ID,
+                                          game_mode="5v5_ranked",
+                                          player_combat_factions=fac,
+                                          rating_mode=lvl.LEVEL_RATING_MODE_ELO)))
         p.dump("12 allocate roster 内重复玩家",
-               await st.AllocateBattle(A(match_id=BASE + 10, player_ids=roster + [roster[0]],
-                                         map_id=MAP_ID, game_mode="5v5_ranked")))
+               await allocate_ready(st, A(match_id=BASE + 10, player_ids=roster + [roster[0]],
+                                          map_id=MAP_ID, game_mode="5v5_ranked")))
 
         # 单人副本(§17:与 5v5 同一条链,只是 team_size=1 + 另一个池)
         p.dump("13 allocate 单人 PVE",
-               await st.AllocateBattle(A(match_id=m2, player_ids=[BASE + 105], map_id=MAP_ID,
-                                         game_mode="pve_coop",
-                                         player_combat_factions=[faction(BASE + 105, 0)],
-                                         rating_mode=lvl.LEVEL_RATING_MODE_NONE)))
+               await allocate_ready(st, A(match_id=m2, player_ids=[BASE + 105], map_id=MAP_ID,
+                                          game_mode="pve_coop",
+                                          player_combat_factions=[faction(BASE + 105, 0)],
+                                          rating_mode=lvl.LEVEL_RATING_MODE_NONE), m2))
         mine.add(m2)
 
         p.dump_battles("14 本段对局列表", await st.ListBattles(dpb.ListBattlesRequest()), mine)

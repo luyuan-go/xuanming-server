@@ -39,7 +39,7 @@ func TestInventoryRetentionSweep_MySQL(t *testing.T) {
 		mustExec(t, f.db, `INSERT INTO inventory_ledger(player_id,idempotency_key,op,request_fingerprint,detail,created_at) VALUES
 			(9,'ro-1','grant','fp','', DATE_SUB(NOW(), INTERVAL 91 DAY)),
 			(9,'ro-2','use','fp','', DATE_SUB(NOW(), INTERVAL 500 DAY))`)
-		mustExec(t, f.db, `INSERT INTO auction_escrow(player_id,order_id,kind,item_config_id,frozen_qty,frozen_gold,status,created_at,updated_at) VALUES
+		mustExec(t, f.db, `INSERT INTO auction_escrow(player_id,order_id,kind,item_config_id,frozen_qty,frozen_amount,status,created_at,updated_at) VALUES
 			(9,91,1,7001,0,0,2, DATE_SUB(NOW(), INTERVAL 500 DAY), DATE_SUB(NOW(), INTERVAL 400 DAY))`)
 
 		// 极端条件:保留期给 0 天(一切都"超期"),report-only 仍必须一行不删。
@@ -115,7 +115,7 @@ func TestInventoryRetentionSweep_MySQL(t *testing.T) {
 	t.Run("DeleteModeEscrowOnlyClosedExpired", func(t *testing.T) {
 		// order 21: closed 超期 → 删;order 22: closed 未超期 → 留;
 		// order 23: active 超期 400 天 → 永不删(遗留 OPEN/PARTIAL 订单核对依赖其存在)。
-		mustExec(t, f.db, `INSERT INTO auction_escrow(player_id,order_id,kind,item_config_id,frozen_qty,frozen_gold,status,created_at,updated_at) VALUES
+		mustExec(t, f.db, `INSERT INTO auction_escrow(player_id,order_id,kind,item_config_id,frozen_qty,frozen_amount,status,created_at,updated_at) VALUES
 			(2,21,1,7001,0,0,2, DATE_SUB(NOW(), INTERVAL 100 DAY), DATE_SUB(NOW(), INTERVAL 91 DAY)),
 			(2,22,1,7001,0,0,2, DATE_SUB(NOW(), INTERVAL 100 DAY), DATE_SUB(NOW(), INTERVAL 10 DAY)),
 			(2,23,1,7001,5,0,1, DATE_SUB(NOW(), INTERVAL 400 DAY), DATE_SUB(NOW(), INTERVAL 400 DAY))`)

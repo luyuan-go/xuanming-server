@@ -60,13 +60,21 @@ func (g *GrpcInstanceGranter) GrantInstances(ctx context.Context, playerID uint6
 }
 
 // GrantItems 把可堆叠战利品按配置 ID 聚合后写入计数背包。
-func (g *GrpcInstanceGranter) GrantItems(ctx context.Context, playerID uint64, items []StackGrant, idempotencyKey string) error {
+func (g *GrpcInstanceGranter) GrantItems(ctx context.Context, playerID uint64, items []StackGrant, goldAmount uint64, idempotencyKey string) error {
 	grants := make([]*inventoryv1.ItemGrant, 0, len(items))
 	for _, it := range items {
 		grants = append(grants, &inventoryv1.ItemGrant{ItemConfigId: it.ItemConfigID, Count: it.Count})
 	}
+	var currencies []*commonv1.CurrencyAmount
+	if goldAmount > 0 {
+		// 战斗产出目前只有金币。显式给 kind:inventory 对 UNSPECIFIED fail-closed,不回退。
+		currencies = []*commonv1.CurrencyAmount{{
+			Kind:   commonv1.CurrencyKind_CURRENCY_KIND_GOLD,
+			Amount: goldAmount,
+		}}
+	}
 	resp, err := g.cli.GrantItems(ctx, &inventoryv1.GrantItemsRequest{
-		PlayerId: playerID, Items: grants, IdempotencyKey: idempotencyKey,
+		PlayerId: playerID, Items: grants, Currencies: currencies, IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		return err

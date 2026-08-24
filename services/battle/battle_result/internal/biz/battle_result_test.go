@@ -116,7 +116,9 @@ func (r *fakeRepo) SaveResult(_ context.Context, result *battlev1.BattleResult, 
 	}
 	if !settleInfo.DropsSuppressed {
 		for _, d := range dropOutbox {
-			if len(d.ItemConfigIDs) == 0 {
+			// 与真实 MySQLBattleRepo.SaveResult 同一判据:只带金币、不带掉落的行也要写。
+			// 旧判据只看 ItemConfigIDs,会把纯金币收益整条丢掉(假仓比生产严会让漏发测不出来)。
+			if len(d.ItemConfigIDs) == 0 && d.CurrencyAmount == 0 {
 				continue
 			}
 			r.nextDropID++
@@ -125,6 +127,7 @@ func (r *fakeRepo) SaveResult(_ context.Context, result *battlev1.BattleResult, 
 				ItemConfigIDs:         append([]uint32(nil), d.ItemConfigIDs...),
 				StackItemConfigIDs:    append([]uint32(nil), d.StackItemConfigIDs...),
 				InstanceItemConfigIDs: append([]uint32(nil), d.InstanceItemConfigIDs...),
+				CurrencyAmount:        d.CurrencyAmount,
 			})
 		}
 	}
@@ -696,7 +699,11 @@ type grantCall struct {
 type stackGrantCall struct {
 	playerID uint64
 	items    []data.StackGrant
-	key      string
+	// gold 是本次随同发放的金币额(uint64;0 = 纯道具)。
+	// 必须捕获而不是丢掉:金币与堆叠道具共用同一次 GrantItems / 同一幂等键,
+	// 断言只看 items 的话,"金币没跟着发出去"这类漏发在测试里完全不可见。
+	gold uint64
+	key  string
 }
 
 type consumeCall struct {
@@ -717,12 +724,12 @@ func (g *fakeGranter) GrantInstances(_ context.Context, playerID uint64, itemCon
 	return nil
 }
 
-func (g *fakeGranter) GrantItems(_ context.Context, playerID uint64, items []data.StackGrant, key string) error {
+func (g *fakeGranter) GrantItems(_ context.Context, playerID uint64, items []data.StackGrant, goldAmount uint64, key string) error {
 	if g.failStack {
 		return simpleErr("stack grant failed")
 	}
 	cpy := append([]data.StackGrant(nil), items...)
-	g.stackCalls = append(g.stackCalls, stackGrantCall{playerID: playerID, items: cpy, key: key})
+	g.stackCalls = append(g.stackCalls, stackGrantCall{playerID: playerID, items: cpy, gold: goldAmount, key: key})
 	return nil
 }
 
@@ -1833,6 +1840,78 @@ func TestDropPublisherGrantsAndDrains(t *testing.T) {
 	// 幂等键 = battle_drop:{match_id}:{player_id}
 	if granter.calls[0].key != "battle_drop:603:1" {
 		t.Fatalf("idempotency key wrong: %s", granter.calls[0].key)
+	}
+}
+
+// TestDropPublisherGrantsBattleGold 本局金币经同一条掉落出箱链发放(2026-08-22 多币种改造):
+// 没有任何掉落的玩家也必须产出一条"纯货币"出箱行,发布时走 GrantItems 把金额带过去。
+// 断言金额而不只是"调用过一次":金币与堆叠道具共用一次调用,漏传金额在类型上完全合法。
+func TestDropPublisherGrantsBattleGold(t *testing.T) {
+	repo := newFakeRepo()
+	granter := &fakeGranter{}
+	uc := newDropUsecase(repo, granter, []uint32{5001})
+	res := dropResult(620, nil, nil)
+	res.Stats[0].Gold = 250
+	res.Stats[1].Gold = 0 // 无收益玩家不出行
+	if _, err := uc.ReportResult(context.Background(), res, 0); err != nil {
+		t.Fatalf("ReportResult err: %v", err)
+	}
+	if len(repo.dropOutbox) != 1 {
+		t.Fatalf("纯金币收益应产出 1 行出箱, got %d: %+v", len(repo.dropOutbox), repo.dropOutbox)
+	}
+	if d := repo.dropOutbox[0]; d.PlayerID != 1 || d.CurrencyAmount != 250 || len(d.ItemConfigIDs) != 0 {
+		t.Fatalf("纯金币出箱行不符: %+v", d)
+	}
+	n, err := uc.publishDropBatch(context.Background())
+	if err != nil || n != 1 {
+		t.Fatalf("publishDropBatch n=%d err=%v", n, err)
+	}
+	if len(granter.stackCalls) != 1 {
+		t.Fatalf("金币必须走 GrantItems, got %d 次", len(granter.stackCalls))
+	}
+	got := granter.stackCalls[0]
+	if got.playerID != 1 || got.gold != 250 || len(got.items) != 0 {
+		t.Fatalf("GrantItems 收到的金额/道具不符: %+v", got)
+	}
+	// 幂等键与掉落同源(没有道具时不加 :stack 后缀)。
+	if got.key != "battle_drop:620:1" {
+		t.Fatalf("金币发放幂等键=%q want=battle_drop:620:1", got.key)
+	}
+	if len(granter.calls) != 0 {
+		t.Fatalf("纯金币不得触发实例发放, got %d", len(granter.calls))
+	}
+	if len(repo.dropOutbox) != 0 {
+		t.Fatalf("发放成功后出箱应排空, got %d", len(repo.dropOutbox))
+	}
+}
+
+// TestBattleGoldClampedToServerCap DS 上报超上限金币被**就地钳到服务端上限**(§9.6 数值不信 DS),
+// 不是拒整场;且战绩落库与钱包发放读的是同一份 stats,两处必须是同一个钳后值。
+func TestBattleGoldClampedToServerCap(t *testing.T) {
+	repo := newFakeRepo()
+	granter := &fakeGranter{}
+	cfg := conf.BattleConf{EloKFactor: 32, BaseMMR: 1500, DropWhitelist: []uint32{5001}, MaxGoldPerPlayer: 500}
+	uc := NewBattleResultUsecase(repo, NewStaticMMRReader(cfg.BaseMMR), &fakePusher{}, nil, cfg)
+	uc.SetInstanceGranter(granter)
+
+	res := dropResult(621, nil, nil)
+	res.Stats[0].Gold = 1 << 40 // 恶意/出 bug 的 DS 报一个天文数字
+	res.Stats[1].Gold = 0
+	if _, err := uc.ReportResult(context.Background(), res, 0); err != nil {
+		t.Fatalf("超限金币不得拒整场: %v", err)
+	}
+	if d := repo.dropOutbox[0]; d.CurrencyAmount != 500 {
+		t.Fatalf("出箱金额应被钳到 500, got %d", d.CurrencyAmount)
+	}
+	if _, err := uc.publishDropBatch(context.Background()); err != nil {
+		t.Fatalf("publishDropBatch err: %v", err)
+	}
+	if len(granter.stackCalls) != 1 || granter.stackCalls[0].gold != 500 {
+		t.Fatalf("发放金额应为钳后 500, got %+v", granter.stackCalls)
+	}
+	// 战绩落库读的是同一份 stats:钳一次两处一致,不能出现"战绩显示天文数字、钱包只到 500"。
+	if got := res.Stats[0].GetGold(); got != 500 {
+		t.Fatalf("stats 必须被就地钳到 500, got %d", got)
 	}
 }
 

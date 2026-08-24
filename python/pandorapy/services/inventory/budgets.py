@@ -32,10 +32,12 @@ def trade_budgets() -> list[dbguard.TableBudget]:
     """pandora_trade 库(货币 / 道具 / 流水 / 托管)的容量预算。"""
     return [
         dbguard.TableBudget(
-            table="player_currency",
-            max_rows=PLAN_PLAYERS * 3,
+            # 多币种钱包:一玩家一币种一行(CurrencyKind 当前 3 种),故按 PLAN_PLAYERS×3 计,
+            # 再乘既有的 3 倍余量口径(与 player_items 的 PLAN_PLAYERS*200*3 同形)。
+            table="player_wallet",
+            max_rows=PLAN_PLAYERS * 3 * 3,
             max_avg_row_bytes=128,
-            note="每玩家一行;超限说明玩家量级超出容量规划",
+            note="每玩家每币种一行;超限说明玩家量级超出容量规划或币种枚举失控",
         ),
         dbguard.TableBudget(
             table="player_items",

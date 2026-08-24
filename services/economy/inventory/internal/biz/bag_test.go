@@ -76,7 +76,7 @@ func (f *fakeBagRepo) GetCapacityState(_ context.Context, _ uint64, bagType uint
 
 // fakeCapacityCharger 可编程扣费器(记录扣费次数;同 key 幂等由 chargedTiers 模拟)。
 type fakeCapacityCharger struct {
-	gold         int64
+	gold         uint64
 	chargedTiers map[string]bool
 	charges      int
 }
@@ -85,7 +85,7 @@ func capChargeKey(bagType, tier uint32) string {
 	return data.BagCapacityChargeKey(bagType, tier)
 }
 
-func (f *fakeCapacityCharger) ChargeBagCapacity(_ context.Context, _ uint64, bagType, tier, _ uint32, priceGold int64) (bool, int64, error) {
+func (f *fakeCapacityCharger) ChargeBagCapacity(_ context.Context, _ uint64, bagType, tier, _ uint32, _ data.CurrencyKind, priceGold uint64) (bool, uint64, error) {
 	if f.chargedTiers == nil {
 		f.chargedTiers = map[string]bool{}
 	}

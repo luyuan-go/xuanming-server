@@ -114,7 +114,7 @@ from typing import Any
 
 from pandora.ds.v1 import allocator_pb2 as dspb
 
-from pandorapy import dsmetadata, errcode, godur, releasetrack
+from pandorapy import dsmetadata, errcode, godur, releasetrack, safego
 from pandorapy import log as plog
 from pandorapy.services.ds_allocator.battle_auth import (
     BATTLE_DS_WRITER_EPOCH_V2,
@@ -908,6 +908,16 @@ class AllocateMixin:
                     match_id, allocation_id, authoritative
                 )
             except asyncio.CancelledError:
+                # Go 的 `if err := provisionBattleCredential(...); err != nil` 对**任何**
+                # 错误都跑 cleanupAllocatedBattle,入站 ctx 取消也在其中。Python 把取消
+                # 变成 CancelledError 后直接 raise,就把刚分配的 pod + warming 镜像漏了。
+                # 补偿必须 detach 出去:当前任务已在取消中,就地 await 一步都跑不完。
+                safego.detach(
+                    "ds_allocator.cleanup_allocated_battle.credential_cancelled",
+                    lambda: self.cleanup_allocated_battle(
+                        match_id, allocation_id, pod_name, authoritative
+                    ),
+                )
                 raise
             except BaseException as cred_exc:  # noqa: BLE001 —— 与 Go 的 `err != nil` 同宽
                 plog.get().error(
@@ -944,6 +954,18 @@ class AllocateMixin:
         try:
             res = await self.wait_battle_ready(match_id, pod_name, allocation_id)
         except asyncio.CancelledError:
+            # ★ 入站取消/超时在 Go 侧是 waitBattleReady 返回 ctx.Err(),落进下面那条
+            #   "非超时失败"兜底分支 → cleanupAllocatedBattle(Go 注释原话:"避免泄漏")。
+            #   实测(2026-08-22 对拍):同一条被调用方超时掐断的 AllocateBattle,Go 打了
+            #   battle_ready_wait_aborted → battle_gameserver_released →
+            #   battle_allocate_rejected 三条,Python 只有第一条 —— pod 与 warming 镜像
+            #   全泄漏。补偿必须 detach 出去跑,原因见 safego.detach 的 docstring。
+            safego.detach(
+                "ds_allocator.cleanup_allocated_battle.ready_wait_cancelled",
+                lambda: self.cleanup_allocated_battle(
+                    match_id, allocation_id, pod_name, authoritative
+                ),
+            )
             raise
         except BaseException as werr:  # noqa: BLE001 —— 下面按哨兵分流
             if _is_ready_wait_timeout(werr):
@@ -982,6 +1004,15 @@ class AllocateMixin:
                 OWNER_BEGIN_BUDGET_SEC,
             )
         except asyncio.CancelledError:
+            # Go 的 `if err := ownerBeginPlayers(...); err != nil` 里,只有
+            # errOwnerBeginOutcomeUnknown 那一条刻意不 cleanup;入站 ctx 取消走的是下面
+            # 那条 battle_ready_refused_owner_begin_failed 分支,照常回收 pod。
+            safego.detach(
+                "ds_allocator.cleanup_allocated_battle.owner_begin_cancelled",
+                lambda: self.cleanup_allocated_battle(
+                    match_id, allocation_id, pod_name, authoritative
+                ),
+            )
             raise
         except BaseException as owner_exc:  # noqa: BLE001 —— 下面按哨兵分流
             if is_owner_begin_outcome_unknown(owner_exc):

@@ -424,7 +424,7 @@ constexpr PlayerStats::ParseTableT_ PlayerStats::InternalGenerateParseTable_(con
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(PlayerStats, _impl_.healing_), 9>(),
        {72, 9, 0,
         PROTOBUF_FIELD_OFFSET(PlayerStats, _impl_.healing_)}},
-      // int64 gold = 10 [json_name = "gold"];
+      // uint64 gold = 10 [json_name = "gold"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(PlayerStats, _impl_.gold_), 10>(),
        {80, 10, 0,
         PROTOBUF_FIELD_OFFSET(PlayerStats, _impl_.gold_)}},
@@ -457,8 +457,8 @@ constexpr PlayerStats::ParseTableT_ PlayerStats::InternalGenerateParseTable_(con
       {PROTOBUF_FIELD_OFFSET(PlayerStats, _impl_.damage_taken_), _Internal::kHasBitsOffset + 6, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
       // int64 healing = 9 [json_name = "healing"];
       {PROTOBUF_FIELD_OFFSET(PlayerStats, _impl_.healing_), _Internal::kHasBitsOffset + 9, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-      // int64 gold = 10 [json_name = "gold"];
-      {PROTOBUF_FIELD_OFFSET(PlayerStats, _impl_.gold_), _Internal::kHasBitsOffset + 10, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // uint64 gold = 10 [json_name = "gold"];
+      {PROTOBUF_FIELD_OFFSET(PlayerStats, _impl_.gold_), _Internal::kHasBitsOffset + 10, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // int32 mmr_delta = 11 [json_name = "mmrDelta"];
       {PROTOBUF_FIELD_OFFSET(PlayerStats, _impl_.mmr_delta_), _Internal::kHasBitsOffset + 8, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt32)},
       // repeated uint32 dropped_item_config_ids = 20 [json_name = "droppedItemConfigIds"];
@@ -485,7 +485,7 @@ inline constexpr PlayerStats::Impl_::Impl_(
         assists_{0},
         mmr_delta_{0},
         healing_{::int64_t{0}},
-        gold_{::int64_t{0}},
+        gold_{::uint64_t{0u}},
         dropped_item_config_ids_ { visibility, ::_pbi::InternalMetadataOffset::Build<
             ::pandora::battle::v1::PlayerStats,
             PROTOBUF_FIELD_OFFSET(::pandora::battle::v1::PlayerStats, _impl_.dropped_item_config_ids_)>()
@@ -2740,7 +2740,7 @@ const char descriptor_table_protodef_pandora_2fbattle_2fv1_2fbattle_2eproto[] AB
     "deaths\030\005 \001(\005R\006deaths\022\030\n\007assists\030\006 \001(\005R\007a"
     "ssists\022!\n\014damage_dealt\030\007 \001(\003R\013damageDeal"
     "t\022!\n\014damage_taken\030\010 \001(\003R\013damageTaken\022\030\n\007"
-    "healing\030\t \001(\003R\007healing\022\022\n\004gold\030\n \001(\003R\004go"
+    "healing\030\t \001(\003R\007healing\022\022\n\004gold\030\n \001(\004R\004go"
     "ld\022\033\n\tmmr_delta\030\013 \001(\005R\010mmrDelta\0225\n\027dropp"
     "ed_item_config_ids\030\024 \003(\rR\024droppedItemCon"
     "figIdsJ\004\010\014\020\024\"\332\002\n\014BattleResult\022\031\n\010match_i"
@@ -3075,12 +3075,12 @@ PROTOBUF_NOINLINE void PlayerStats::Clear() {
     }
   }
 
-  // int64 gold = 10 [json_name = "gold"];
+  // uint64 gold = 10 [json_name = "gold"];
   if (CheckHasBit(cached_has_bits, 0x00000400U)) {
     if (this_._internal_gold() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<10>(
-              stream, this_._internal_gold(), target);
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          10, this_._internal_gold(), target);
     }
   }
 
@@ -3202,10 +3202,10 @@ PROTOBUF_NOINLINE void PlayerStats::Clear() {
             this_._internal_healing());
       }
     }
-    // int64 gold = 10 [json_name = "gold"];
+    // uint64 gold = 10 [json_name = "gold"];
     if (CheckHasBit(cached_has_bits, 0x00000400U)) {
       if (this_._internal_gold() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_gold());
       }
     }

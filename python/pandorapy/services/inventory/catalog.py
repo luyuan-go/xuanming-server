@@ -28,8 +28,11 @@ from google.protobuf import json_format
 from pandora.config.v1 import equipment_affix_pb2 as _affix_pb2
 from pandora.config.v1 import item_pb2 as _item_pb2
 from pandora.config.v1 import role_attr_map_pb2 as _attr_pb2
+from pandora.config.v1 import shop_pb2 as _shop_pb2
 
 from pandorapy.configtable import ConfigTableError, MANIFEST_FILE_NAME, ReloadMutex, read_manifest, verify_checksum
+from pandorapy.services.inventory import currency as _ccy
+from pandorapy.services.inventory.currency_biz import ShopEntry
 
 # 装备鉴定池的总权重上限(与 Go 侧 1_000_000 同值)。
 # 不设的话,一条权重写成 2^62 的行会让加权抽取整型溢出/永远抽中它。
@@ -98,6 +101,10 @@ class Tables:
     # affix_by_pool 按 pool_id 聚合(表内顺序保留 —— attr_count 取 rows[0] 与 Go 一致)。
     affix_by_pool: dict[int, list[_affix_pb2.EquipmentAffixRow]]
     role_attrs: dict[int, _attr_pb2.RoleAttrMapRow]
+    # shops 按 shop_id 聚合,组内已按「排序 → 道具ID」升序(与 Go 的 ShopEntriesOf 同序)。
+    # ★ 排序在**服务端**定死而不是让客户端自己排:商品顺序是策划的展示意图,
+    #   两端各排一次迟早会因并列项的处理差异而不一致。
+    shops: dict[int, list[ShopEntry]] = dataclasses.field(default_factory=dict)
 
     def item_count(self) -> int:
         return len(self.items)
@@ -126,6 +133,7 @@ _TABLE_PROTOS: dict[str, tuple[str, type]] = {
         _affix_pb2.EquipmentAffixTableData,
     ),
     "role_attr_map": ("pandora.config.v1.RoleAttrMapTableData", _attr_pb2.RoleAttrMapTableData),
+    "shop": ("pandora.config.v1.ShopTableData", _shop_pb2.ShopTableData),
 }
 
 
@@ -179,6 +187,7 @@ def load_tables(active_dir: str | pathlib.Path, expect_version: int = 0) -> Load
     item_rows = _load_one(active, manifest, "item")
     affix_rows = _load_one(active, manifest, "equipment_affix")
     attr_rows = _load_one(active, manifest, "role_attr_map")
+    shop_rows = _load_one(active, manifest, "shop")
 
     items: dict[int, _item_pb2.ItemRow] = {}
     for row in item_rows:
@@ -196,12 +205,15 @@ def load_tables(active_dir: str | pathlib.Path, expect_version: int = 0) -> Load
             raise ConfigTableError(f"role_attr_map 表 id 重复: {row.id}")
         role_attrs[row.id] = row
 
+    shops = _index_shop_rows(shop_rows, items)
+
     tables = Tables(
         version=manifest.version,
         source_rev=manifest.source_rev,
         items=items,
         affix_by_pool=affix_by_pool,
         role_attrs=role_attrs,
+        shops=shops,
     )
     validate_inventory_tables(tables)
 
@@ -303,6 +315,62 @@ def validate_inventory_tables(t: Tables) -> None:
             )
 
 
+def _index_shop_rows(rows, items) -> dict[int, list[ShopEntry]]:  # noqa: ANN001
+    """商店表逐行校验 + 外键 + 按 shop_id 聚合排序。
+
+    对应 Go 的 validateShopRow(逐行业务校验)+ validateCrossTables 里的
+    shop.道具ID → item 外键 + ShopEntriesOf(排序)。
+
+    这些校验之所以必须在**加载期整批拒**而不是购买时逐次拒:一张配错的商店表
+    会让整个商店页签在玩家面前半死不活(有的商品能买有的报错),而加载期拒批次
+    会保留上一份正确配置继续服务(§9.15 加载成功才切换)。
+
+    ★ 外键这一条尤其不能省:Go 侧在加载期就拒,Python 侧若放行,同一份漂移批次
+      会出现"Go 副本拒载、Python 副本正常启动"的不对称 —— 而 Python 副本上的表现
+      是每次购买那件道具都报 ErrInternal,查起来比"整批拒载"难得多。
+    """
+    grouped: dict[int, list[ShopEntry]] = {}
+    for row in rows:
+        if row.id == 0:
+            raise ConfigTableError("shop 表主键为 0")
+        if row.shop_id == 0:
+            raise ConfigTableError(f"shop 主键 {row.id}: shop_id 必须 > 0")
+        if row.item_config_id == 0:
+            raise ConfigTableError(f"shop 表 主键 {row.id} 的 道具ID 为 0(必填外键)")
+        if row.item_config_id not in items:
+            raise ConfigTableError(
+                f"shop 表 主键 {row.id} 的 道具ID({row.item_config_id})在表 item 中不存在"
+            )
+        if row.count_per_unit == 0:
+            raise ConfigTableError(f"shop 主键 {row.id}: 每份数量 必须 >= 1")
+        if row.unit_price == 0:
+            # 0 价商品等于免费发放,却绕过了发放审计链(GrantItems 的幂等流水与额度闸)。
+            # 要送东西请走活动 / 邮件。
+            raise ConfigTableError(
+                f"shop 主键 {row.id}: 单价 必须 > 0(免费发放请走活动/邮件,不要配 0 价商品)"
+            )
+        if int(row.currency_kind) not in (
+            _ccy.CURRENCY_GOLD,
+            _ccy.CURRENCY_DIAMOND,
+            _ccy.CURRENCY_HONOR,
+        ):
+            # UNSPECIFIED / 未知值一律拒,**不回退成金币**:静默回退会让配错的商品
+            # 按金币扣钱,是不可观测的经济事故(currency.proto)。
+            raise ConfigTableError(f"shop 主键 {row.id}: 货币类型 非法: {int(row.currency_kind)}")
+        grouped.setdefault(row.shop_id, []).append(
+            ShopEntry(
+                item_config_id=row.item_config_id,
+                count_per_unit=row.count_per_unit,
+                currency_kind=int(row.currency_kind),
+                unit_price=row.unit_price,
+                sort_order=row.sort_order,
+            )
+        )
+    for shop_id, entries in grouped.items():
+        entries.sort(key=lambda e: (e.sort_order, e.item_config_id))
+    return grouped
+
+
 def _validate_item_heal(item: _item_pb2.ItemRow) -> None:
     """与 Go validateItemRow 相同的回血类型/数值组合门禁。"""
     if item.use_heal_type in (ITEM_HEAL_TYPE_UNSPECIFIED, ITEM_HEAL_TYPE_FIXED):
@@ -393,6 +461,30 @@ class Store:
                 for r in rows
             ],
         )
+
+    def list_shop(self, shop_id: int) -> list[ShopEntry] | None:
+        """某商店的全部在售商品(已按 sort_order → item_config_id 升序)。
+
+        商店不存在 / 无在售商品 → None,由 biz 翻成"商店不可用"。
+        """
+        return self._tables.shops.get(shop_id)
+
+    def lookup_shop_entry(self, shop_id: int, item_config_id: int) -> ShopEntry | None:
+        """精确取某商店里某道具的档位(购买定价的唯一来源)。
+
+        ★ 同一商店里同一道具配了多档(例如"单买"与"10 个装")时**返回第一档并不安全** ——
+          购买请求只带 item_config_id,无法区分档位,两档价格不同就成了
+          "服务端替玩家选便宜的"。因此发现重复时返回 None(fail-closed),
+          由表设计避免这种配法:打包商品应当用独立的道具ID,而不是同一道具配两个单价。
+        """
+        found: ShopEntry | None = None
+        for entry in self._tables.shops.get(shop_id) or ():
+            if entry.item_config_id != item_config_id:
+                continue
+            if found is not None:
+                return None
+            found = entry
+        return found
 
     def item_max_stacks(self) -> list[tuple[int, int]]:
         """把同源 item.max_stack_size 投影给后端驻留背包段(对应 Go 的 itemMaxStacksFromTables)。

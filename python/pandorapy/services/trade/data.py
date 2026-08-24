@@ -31,6 +31,7 @@ from typing import Awaitable, Callable, Protocol
 
 import grpc
 from pandora.common.v1 import errcode_pb2
+from pandora.common.v1 import currency_pb2
 from pandora.inventory.v1 import inventory_pb2, inventory_pb2_grpc
 from pandora.trade.v1 import trade_pb2
 from redis.asyncio.client import Redis
@@ -322,7 +323,12 @@ class GrpcResourceLedger:
             buyer_id=order.buyer_id,
             seller_items=_to_item_grants(order.items),
             buyer_items=_to_item_grants(order.buyer_items),
-            price=order.price,
+            # P2P 交易当前只用金币计价。显式给 kind:inventory 对 UNSPECIFIED 一律
+            # fail-closed,**不会**回退成金币(currency.proto)。
+            # price=0 的纯物物交换也带 kind,语义更清楚。
+            price_amount=currency_pb2.CurrencyAmount(
+                kind=currency_pb2.CURRENCY_KIND_GOLD, amount=order.price
+            ),
         )
         # 传输层异常(AioRpcError / 超时)在这里**不捕获**,原样上抛 —— 见 docstring。
         resp = await self._stub.SettlePlayerTrade(req, timeout=INVENTORY_RPC_TIMEOUT_SEC)

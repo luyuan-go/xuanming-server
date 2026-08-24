@@ -53,7 +53,7 @@ message AuctionOrder {
   uint32 item_config_id  = 5;
   int64  quantity        = 6;  // 挂单总量
   int64  filled_quantity = 7;  // 已成交量
-  int64  price           = 8;  // 单价(金币 / 个)
+  uint64 price           = 8;  // 单价(金币 / 个;非负金额按 §5.12 用 uint64)
   AuctionOrderStatus status = 9;
   int64  created_at_ms   = 10;
   int64  updated_at_ms   = 11;
@@ -69,7 +69,7 @@ message AuctionMatchEvent {
   uint64 buyer_id       = 6;
   uint32 item_config_id = 7;
   int64  quantity       = 8;
-  int64  price          = 9;  // 成交单价(被动挂单价)
+  uint64 price          = 9;  // 成交单价(被动挂单价;§5.12 非负用 uint64)
   int64  matched_at_ms  = 10;
 }
 
@@ -77,7 +77,7 @@ message PlaceOrderRequest {
   uint32 market_id       = 1;
   uint32 item_config_id  = 2;
   int64  quantity        = 3;
-  int64  price           = 4;  // 卖家期望单价
+  uint64 price           = 4;  // 卖家期望单价(> 0;§5.12 非负用 uint64)
   string idempotency_key = 5;  // 客户端生成,重试不重复挂单
   // seller_id 以 JWT ctx 为准(R5),请求体不传
 }
@@ -93,7 +93,7 @@ message BidRequest {
   uint32 market_id       = 1;
   uint32 item_config_id  = 2;
   int64  quantity        = 3;
-  int64  price           = 4;  // 买家期望单价
+  uint64 price           = 4;  // 买家期望单价(> 0;§5.12 非负用 uint64)
   string idempotency_key = 5;
   // buyer_id 以 JWT ctx 为准(R5)
 }

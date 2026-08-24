@@ -59,7 +59,7 @@ func (s *InventoryService) GetInventory(ctx context.Context, req *inventoryv1.Ge
 	if code != commonv1.ErrCode_OK {
 		return &inventoryv1.GetInventoryResponse{Code: code}, nil
 	}
-	gold, items, capacity, instances, err := s.uc.GetInventoryFull(ctx, playerID)
+	balances, items, capacity, instances, err := s.uc.GetInventoryFull(ctx, playerID)
 	if err != nil {
 		return &inventoryv1.GetInventoryResponse{Code: toProtoCode(err)}, nil
 	}
@@ -70,11 +70,11 @@ func (s *InventoryService) GetInventory(ctx context.Context, req *inventoryv1.Ge
 	return &inventoryv1.GetInventoryResponse{
 		Code: commonv1.ErrCode_OK,
 		Inventory: &inventoryv1.Inventory{
-			PlayerId:  playerID,
-			Gold:      gold,
-			Items:     out,
-			Capacity:  capacity,
-			Instances: toProtoInstances(instances),
+			PlayerId:   playerID,
+			Items:      out,
+			Capacity:   capacity,
+			Instances:  toProtoInstances(instances),
+			Currencies: biz.BalancesToProto(balances),
 		},
 	}, nil
 }
@@ -93,11 +93,15 @@ func (s *InventoryService) GrantItems(ctx context.Context, req *inventoryv1.Gran
 	for _, it := range req.GetItems() {
 		items = append(items, data.ItemGrant{ItemConfigID: it.GetItemConfigId(), Count: it.GetCount()})
 	}
-	gold, err := s.uc.GrantItems(ctx, req.GetPlayerId(), items, req.GetGold(), req.GetIdempotencyKey())
+	currencies, cerr := biz.BalancesFromProto(req.GetCurrencies())
+	if cerr != nil {
+		return &inventoryv1.GrantItemsResponse{Code: toProtoCode(cerr)}, nil
+	}
+	balances, err := s.uc.GrantItems(ctx, req.GetPlayerId(), items, currencies, req.GetIdempotencyKey())
 	if err != nil {
 		return &inventoryv1.GrantItemsResponse{Code: toProtoCode(err)}, nil
 	}
-	return &inventoryv1.GrantItemsResponse{Code: commonv1.ErrCode_OK, Gold: gold}, nil
+	return &inventoryv1.GrantItemsResponse{Code: commonv1.ErrCode_OK, Currencies: biz.BalancesToProto(balances)}, nil
 }
 
 // UseItem 大厅态使用消耗品。以调用者身份为准。
@@ -143,11 +147,16 @@ func (s *InventoryService) SellItem(ctx context.Context, req *inventoryv1.SellIt
 	if code != commonv1.ErrCode_OK {
 		return &inventoryv1.SellItemResponse{Code: code}, nil
 	}
-	remaining, gold, err := s.uc.SellItem(ctx, playerID, req.GetItemConfigId(), req.GetCount(), req.GetIdempotencyKey())
+	outcome, err := s.uc.SellItem(ctx, playerID, req.GetItemConfigId(), req.GetCount(), req.GetIdempotencyKey())
 	if err != nil {
 		return &inventoryv1.SellItemResponse{Code: toProtoCode(err)}, nil
 	}
-	return &inventoryv1.SellItemResponse{Code: commonv1.ErrCode_OK, Remaining: remaining, Gold: gold}, nil
+	return &inventoryv1.SellItemResponse{
+		Code:      commonv1.ErrCode_OK,
+		Remaining: outcome.Remaining,
+		Balance:   biz.CurrencyAmountProto(outcome.Kind, outcome.Balances.Get(outcome.Kind)),
+		Earned:    biz.CurrencyAmountProto(outcome.Kind, outcome.Earned),
+	}, nil
 }
 
 // DiscardItem 丢弃可堆叠物品。以调用者身份为准。
@@ -173,7 +182,7 @@ func (s *InventoryService) SettleAuctionMatch(ctx context.Context, req *inventor
 	}
 	err := s.uc.SettleAuctionMatch(ctx,
 		req.GetMatchId(), req.GetSellerId(), req.GetBuyerId(), req.GetSellOrderId(), req.GetBuyOrderId(),
-		req.GetItemConfigId(), req.GetQuantity(), req.GetUnitPrice())
+		req.GetItemConfigId(), req.GetQuantity(), req.GetCurrencyKind(), req.GetUnitPrice())
 	if err != nil {
 		return &inventoryv1.SettleAuctionMatchResponse{Code: toProtoCode(err)}, nil
 	}
@@ -197,7 +206,8 @@ func (s *InventoryService) SettlePlayerTrade(ctx context.Context, req *inventory
 	}
 	err := s.uc.SettlePlayerTrade(ctx,
 		req.GetOrderId(), req.GetSellerId(), req.GetBuyerId(),
-		toGrants(req.GetSellerItems()), toGrants(req.GetBuyerItems()), req.GetPrice())
+		toGrants(req.GetSellerItems()), toGrants(req.GetBuyerItems()),
+		req.GetPriceAmount().GetKind(), req.GetPriceAmount().GetAmount())
 	if err != nil {
 		return &inventoryv1.SettlePlayerTradeResponse{Code: toProtoCode(err)}, nil
 	}
@@ -212,7 +222,7 @@ func (s *InventoryService) FreezeForOrder(ctx context.Context, req *inventoryv1.
 	}
 	err := s.uc.FreezeForOrder(ctx,
 		req.GetPlayerId(), req.GetOrderId(), biz.EscrowSide(req.GetSide()),
-		req.GetItemConfigId(), req.GetQuantity(), req.GetUnitPrice())
+		req.GetItemConfigId(), req.GetQuantity(), req.GetCurrencyKind(), req.GetUnitPrice())
 	if err != nil {
 		return &inventoryv1.FreezeForOrderResponse{Code: toProtoCode(err)}, nil
 	}
@@ -227,7 +237,7 @@ func (s *InventoryService) EnsureAuctionEscrow(ctx context.Context, req *invento
 	}
 	err := s.uc.EnsureAuctionEscrow(ctx,
 		req.GetPlayerId(), req.GetOrderId(), biz.EscrowSide(req.GetSide()),
-		req.GetItemConfigId(), req.GetRemainingQuantity(), req.GetUnitPrice())
+		req.GetItemConfigId(), req.GetRemainingQuantity(), req.GetCurrencyKind(), req.GetUnitPrice())
 	if err != nil {
 		return &inventoryv1.EnsureAuctionEscrowResponse{Code: toProtoCode(err)}, nil
 	}
@@ -318,11 +328,15 @@ func (s *InventoryService) SellInstance(ctx context.Context, req *inventoryv1.Se
 	if code != commonv1.ErrCode_OK {
 		return &inventoryv1.SellInstanceResponse{Code: code}, nil
 	}
-	gold, err := s.uc.SellInstance(ctx, playerID, req.GetInstanceId(), req.GetItemConfigId(), req.GetIdempotencyKey())
+	outcome, err := s.uc.SellInstance(ctx, playerID, req.GetInstanceId(), req.GetItemConfigId(), req.GetIdempotencyKey())
 	if err != nil {
 		return &inventoryv1.SellInstanceResponse{Code: toProtoCode(err)}, nil
 	}
-	return &inventoryv1.SellInstanceResponse{Code: commonv1.ErrCode_OK, Gold: gold}, nil
+	return &inventoryv1.SellInstanceResponse{
+		Code:    commonv1.ErrCode_OK,
+		Balance: biz.CurrencyAmountProto(outcome.Kind, outcome.Balances.Get(outcome.Kind)),
+		Earned:  biz.CurrencyAmountProto(outcome.Kind, outcome.Earned),
+	}, nil
 }
 
 // MoveInstance 移动一件装备实例到新格子。以调用者身份为准。

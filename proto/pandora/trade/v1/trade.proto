@@ -47,7 +47,7 @@ message Order {
   uint64  seller_id  = 2;
   uint64  buyer_id   = 3;
   repeated TradeItem items = 4;  // 卖家交付给买家的道具
-  int64   price      = 5;  // 买家付卖家的金币(>=0)
+  uint64  price      = 5;  // 买家付卖家的金币(>=0;§5.12 非负用 uint64)
   OrderState state   = 6;
   int64   created_at_ms = 7;
   int64   expires_at_ms = 8;
@@ -60,7 +60,7 @@ message CreateOrderRequest {
   uint64 seller_id = 1;
   uint64 buyer_id  = 2;
   repeated TradeItem items = 3;  // 卖家交付给买家的道具
-  int64 price      = 4;          // 买家付卖家的金币(>=0)
+  uint64 price     = 4;          // 买家付卖家的金币(>=0;§5.12 非负用 uint64)
   repeated TradeItem buyer_items = 5;  // 买家交付给卖家的道具(可空 = 纯金币购买)
 }
 

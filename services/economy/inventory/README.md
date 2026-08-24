@@ -150,10 +150,10 @@ service.UseItem (inventory.go:104)
 - **幂等键复用防串改**:`claimLedger` 把 `idempotency_key` 绑定到请求内容指纹(`GrantFingerprint`
   / `UseFingerprint` / `SellFingerprint`,`inventory_repo.go:215+`);同 key 换不同请求内容 → 冲突拒,
   不静默当 no-op。
-- **`GrantItems`**(`biz/inventory.go:256` → `data:325`):同骨架,`ON DUPLICATE KEY UPDATE` 累加
-  `player_items` / `player_currency`,回写发放后 `gold` 快照。
-- **`SellItem`**(`biz/inventory.go:320`):biz 层用 `safeMulInt64` 防 `单价×数量` int64 溢出变负数
-  反加金币(`inventory.go:342`),再走 `data:434` 扣道具 + 加金币事务。
+- **`GrantItems`**(`biz/inventory.go` → `data`):同骨架,`ON DUPLICATE KEY UPDATE` 累加
+  `player_items`;货币按 kind 逐笔走 `addCurrencyTx`(锁行→比较→写绝对值),回写发放后**全币种**余额快照。
+- **`SellItem`**(`biz/inventory.go`):biz 层用 `data.SafeMulCurrency` 防 `单价×数量` 溢出,
+  再走 data 层「扣道具 + 加货币」同事务。响应带 `earned`(本次收入),幂等重放回放首次金额而非 0。
 - **真实配置同源**:`cmd/inventory/configtable.go` 每次从热更 `Store` 读取 `item.type/max_stack/
   sell_price/usable`。`GrantItems` 拒装备、`GrantInstances` 拒可堆叠物，未知 ID 一律拒；不再使用
   `2001/3001` 样例。`usable=true` 只授权内部 `ConsumeBattleItem`，不授权大厅 `UseItem`。
@@ -238,10 +238,11 @@ authorizeOwner (biz/bag.go:80)
 
 | 表 | 键 | 用途 |
 |---|---|---|
-| `player_currency` | PK `player_id` | `gold` 货币余额 |
+| `player_wallet` | PK `player_id+currency_kind` | 多币种余额(`amount BIGINT UNSIGNED`;无行=该币种为 0) |
+| `player_currency` | PK `player_id` | **legacy** 单币种 `gold`;000005 已搬入 `player_wallet`,只读待 contract 删表 |
 | `player_items` | uk `player_id+item_config_id` | 可堆叠道具持有(扣空即删行) |
 | `inventory_ledger` | uk `player_id+idempotency_key` | 发放 / 用 / 售 / 结算幂等流水 + `request_fingerprint` + 结果快照(§9.24 保留期 90 天) |
-| `auction_escrow` | uk `player_id+order_id` | 拍卖挂单托管(`kind` 道具/金币、`frozen_qty`/`frozen_gold`、`status` active/closed;closed 超期 90 天清) |
+| `auction_escrow` | uk `player_id+order_id` | 拍卖挂单托管(`kind` 道具/货币、`frozen_qty`/`frozen_amount`+`currency_kind`、`status` active/closed;closed 超期 90 天清) |
 | `player_item_instance` | PK `instance_id` | 装备实例(`capacity>0` 启用;鉴定态 / 词条 / slot / 绑定) |
 | `mail_transfer_escrow` | PK `instance_id` | 邮件 transfer 附件实例在途托管 |
 

@@ -28,7 +28,17 @@ from collections.abc import AsyncIterator
 from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy import mysqlx
+from pandorapy.services.inventory import currency
 from pandorapy.services.inventory import fingerprint as fp
+from pandorapy.services.inventory.models import LedgerSnapshot
+
+# 事务内货币原语在 currency.py(对应 Go 的 data/currency.go)。这里再导出一次,
+# 让调用方(repo.py / repo_instance.py)只 import 一个 rsql 就够 —— 与改造前
+# add_gold_tx / deduct_gold_tx 就在本模块的调用形态保持一致。
+add_currency_tx = currency.add_currency_tx
+deduct_currency_tx = currency.deduct_currency_tx
+read_balances_tx = currency.read_balances_tx
+apply_currency_deltas_tx = currency.apply_currency_deltas_tx
 
 
 @contextlib.asynccontextmanager
@@ -103,14 +113,34 @@ _INSERT_LEDGER = (
     "(player_id, idempotency_key, op, request_fingerprint, detail) VALUES (%s, %s, %s, %s, %s)"
 )
 
+# LEDGER_RESULT_COLUMNS 是结果快照四列的统一读取口径(与 Go 的 ledgerResultColumns 同序)。
+#
+# result_gold 是多币种改造之前的单币种列:新行不写它作为权威(仍**双写**以便旧副本可读),
+# 老行的 result_currencies 为 NULL,此时把 result_gold 当作金币余额还原 ——
+# 存量行的重放结果因此与升级前逐字节一致。
+LEDGER_RESULT_COLUMNS = "result_remaining, result_gold, result_currencies, result_currency_delta"
+
+
+def scan_ledger_result(
+    remaining: int, legacy_gold: int, raw_balances: bytes | None, raw_delta: bytes | None
+) -> LedgerSnapshot:
+    """把结果四列还原成 LedgerSnapshot。对应 Go 的 scanLedgerResult。"""
+    balances = currency.decode_balances(raw_balances)
+    if not raw_balances and legacy_gold > 0:
+        # 老行回退:升级前只可能有金币。
+        balances = {currency.CURRENCY_GOLD: legacy_gold}
+    return LedgerSnapshot(
+        remaining=remaining, balances=balances, delta=currency.decode_balances(raw_delta)
+    )
+
 
 async def claim_ledger(
     cur, player_id: int, idempotency_key: str, op: str, fingerprint: str, detail: str
-) -> tuple[bool, int, int]:  # noqa: ANN001
+) -> tuple[bool, LedgerSnapshot]:  # noqa: ANN001
     """在事务里声明幂等键 + 记录请求指纹。对应 Go 的 claimLedger。
 
-    返回 (already, snap_remaining, snap_gold):
-      - 首次:插入成功 → already=False,快照 0/0
+    返回 (already, snap):
+      - 首次:插入成功 → already=False,空快照
       - 重复(uk 1062):读回已存指纹 + 结果快照
           指纹不一致 → ErrInventoryIdempotencyConflict(fail-closed 留证)
           指纹一致   → already=True + 首次结果快照(回放)
@@ -131,10 +161,10 @@ async def claim_ledger(
                 exc,
             ) from exc
     else:
-        return False, 0, 0
+        return False, LedgerSnapshot()
 
     await cur.execute(
-        "SELECT request_fingerprint, result_remaining, result_gold FROM inventory_ledger "
+        f"SELECT request_fingerprint, {LEDGER_RESULT_COLUMNS} FROM inventory_ledger "
         "WHERE player_id = %s AND idempotency_key = %s LIMIT 1",
         (player_id, idempotency_key),
     )
@@ -146,7 +176,7 @@ async def claim_ledger(
             player_id,
             idempotency_key,
         )
-    stored_fp, snap_remaining, snap_gold = str(row[0]), int(row[1] or 0), int(row[2] or 0)
+    stored_fp = str(row[0])
     if stored_fp != fingerprint:
         # 同键不同请求内容:发放/扣减/结算的完整性冲突(防 key 复用串改账),fail-closed 留证。
         plog.get().warning(
@@ -161,7 +191,7 @@ async def claim_ledger(
             player_id,
             idempotency_key,
         )
-    return True, snap_remaining, snap_gold
+    return True, scan_ledger_result(int(row[1] or 0), int(row[2] or 0), row[3], row[4])
 
 
 async def claim_sale_ledger(
@@ -175,7 +205,7 @@ async def claim_sale_ledger(
     item_config_id: int = 0,
     count: int = 0,
     instance_id: int = 0,
-) -> tuple[bool, int, int]:
+) -> tuple[bool, LedgerSnapshot]:
     """售价热更安全的幂等声明。对应 Go 的 claimSaleLedger。
 
     新行只存**客户端意图**指纹(不含 gold);旧行(升级前提交的,指纹里含首次成交价)
@@ -197,10 +227,10 @@ async def claim_sale_ledger(
                 exc,
             ) from exc
     else:
-        return False, 0, 0
+        return False, LedgerSnapshot()
 
     await cur.execute(
-        "SELECT op, request_fingerprint, detail, result_remaining, result_gold "
+        f"SELECT op, request_fingerprint, detail, {LEDGER_RESULT_COLUMNS} "
         "FROM inventory_ledger WHERE player_id = %s AND idempotency_key = %s LIMIT 1",
         (player_id, idempotency_key),
     )
@@ -213,7 +243,8 @@ async def claim_sale_ledger(
             idempotency_key,
         )
     stored_op, stored_fp, stored_detail = str(row[0]), str(row[1]), str(row[2] or "")
-    snap_remaining, snap_gold = int(row[3] or 0), int(row[4] or 0)
+    snap_remaining, legacy_gold = int(row[3] or 0), int(row[4] or 0)
+    raw_balances, raw_delta = row[5], row[6]
 
     matched = stored_op == op and stored_fp == fingerprint
     if not matched and stored_op == op:
@@ -238,7 +269,48 @@ async def claim_sale_ledger(
             player_id,
             idempotency_key,
         )
-    return True, snap_remaining, snap_gold
+    snap = scan_ledger_result(snap_remaining, legacy_gold, raw_balances, raw_delta)
+    if not snap.delta and legacy_gold > 0 and not raw_delta:
+        # 老行没有 delta 列。出售的**首次入账额**可以从 detail 里那份"人读摘要"恢复:
+        # 该格式由服务端生成、且刚被 _legacy_sale_ledger_matches 严格校验过完整性,
+        # 这里只是把已验证的数字取出来,不是把 detail 当业务字段用。
+        #
+        # 少了这一段会怎样:老行重放时 earned 恒 0 —— 客户端第二次收到"出售成功,获得 0 金币",
+        # 而首次那笔其实入账了。两次响应都是成功却互相矛盾。
+        earned = _legacy_sale_earned(
+            stored_detail, op=op, item_config_id=item_config_id, count=count,
+            instance_id=instance_id,
+        )
+        if earned is not None:
+            snap.delta = {currency.CURRENCY_GOLD: earned}
+    return True, snap
+
+
+def _legacy_sale_earned(
+    detail: str,
+    *,
+    op: str,
+    item_config_id: int,
+    count: int,
+    instance_id: int,
+) -> int | None:
+    """从升级前流水的 detail 恢复首次出售入账额(仅金币)。对应 Go 的 legacySaleEarned。
+
+    只在 _legacy_sale_ledger_matches 已判定意图完全一致后调用。
+    """
+    if op == "sell":
+        parsed = _parse_kv(detail, "sell item={} count={} gold={}")
+        if parsed is None:
+            return None
+        _item_id, _cnt, gold = parsed
+        return gold if gold > 0 else None
+    if op == "sell_inst":
+        parsed = _parse_kv(detail, "sell instance={} item={} gold={}")
+        if parsed is None:
+            return None
+        _inst_id, _item_id, gold = parsed
+        return gold if gold > 0 else None
+    return None
 
 
 def _legacy_sale_ledger_matches(
@@ -307,14 +379,25 @@ def _parse_kv(text: str, template: str) -> tuple[int, ...] | None:
 
 
 async def update_ledger_result(
-    cur, player_id: int, idempotency_key: str, remaining: int, gold: int
-) -> None:  # noqa: ANN001
-    """把首次执行的结果快照写回流水(供后续幂等回放返回稳定值)。"""
+    cur, player_id: int, idempotency_key: str, remaining: int, balances, delta  # noqa: ANN001
+) -> None:
+    """把首次执行的结果快照写回流水(供后续幂等回放返回稳定值)。对应 Go 的 updateLedgerResult。
+
+    ★ result_gold 与 result_currencies **双写**:前者是多币种改造之前的单币种列,
+      滚动升级窗口里旧副本仍会去读它(§9.21 共存窗口)。双写代价是一个整数列,
+      换来"新副本写的行,旧副本也能正确重放金币结果"。金币之外的币种旧副本本就
+      理解不了,那种流水只可能由新功能产生,旧副本不会去重放。
+      contract 阶段(确认无旧副本后)再删列并停止双写。
+    """
+    raw_balances = currency.encode_balances(balances)
+    raw_delta = currency.encode_balances(delta)
+    legacy_gold = currency.balances_get(balances, currency.CURRENCY_GOLD)
     try:
         await cur.execute(
-            "UPDATE inventory_ledger SET result_remaining = %s, result_gold = %s "
+            "UPDATE inventory_ledger SET result_remaining = %s, result_gold = %s, "
+            "result_currencies = %s, result_currency_delta = %s "
             "WHERE player_id = %s AND idempotency_key = %s",
-            (remaining, gold, player_id, idempotency_key),
+            (remaining, legacy_gold, raw_balances, raw_delta, player_id, idempotency_key),
         )
     except Exception as exc:  # noqa: BLE001
         raise errcode.PandoraError(
@@ -326,39 +409,12 @@ async def update_ledger_result(
         ) from exc
 
 
-# ── 货币 / 道具堆叠 ────────────────────────────────────────────────────────
+# ── 道具堆叠(货币在 currency.py)──────────────────────────────────────────
 
-_UPSERT_GOLD = (
-    "INSERT INTO player_currency (player_id, gold) VALUES (%s, %s) "
-    "ON DUPLICATE KEY UPDATE gold = gold + VALUES(gold)"
-)
 _UPSERT_ITEM = (
     "INSERT INTO player_items (player_id, item_config_id, count) VALUES (%s, %s, %s) "
     "ON DUPLICATE KEY UPDATE count = count + VALUES(count)"
 )
-
-
-async def read_gold_tx(cur, player_id: int) -> int:  # noqa: ANN001
-    """在事务里读 gold(无行 → 0,不是错误:没建过档的玩家余额就是 0)。"""
-    try:
-        await cur.execute(
-            "SELECT gold FROM player_currency WHERE player_id = %s LIMIT 1", (player_id,)
-        )
-        row = await cur.fetchone()
-    except Exception as exc:  # noqa: BLE001
-        raise errcode.PandoraError(
-            errcode.ErrInternal, "read gold player=%d: %s", player_id, exc
-        ) from exc
-    return int(row[0]) if row else 0
-
-
-async def add_gold_tx(cur, player_id: int, n: int) -> None:  # noqa: ANN001
-    try:
-        await cur.execute(_UPSERT_GOLD, (player_id, n))
-    except Exception as exc:  # noqa: BLE001
-        raise errcode.PandoraError(
-            errcode.ErrInternal, "add gold player=%d: %s", player_id, exc
-        ) from exc
 
 
 async def add_item_tx(cur, player_id: int, item_config_id: int, n: int) -> None:  # noqa: ANN001
@@ -372,49 +428,6 @@ async def add_item_tx(cur, player_id: int, item_config_id: int, n: int) -> None:
             item_config_id,
             exc,
         ) from exc
-
-
-async def deduct_gold_tx(cur, player_id: int, n: int) -> int:  # noqa: ANN001
-    """锁货币行并扣减 n。行不存在(余额 0)或不足 → ErrInventoryInsufficient。
-
-    ★ 必须 FOR UPDATE。不锁行的话两笔并发扣减会各自读到同一个 have,
-      各自算出"够",双双成功 —— 余额被扣成负数(超扣)。
-    """
-    try:
-        await cur.execute(
-            "SELECT gold FROM player_currency WHERE player_id = %s FOR UPDATE", (player_id,)
-        )
-        row = await cur.fetchone()
-    except Exception as exc:  # noqa: BLE001
-        raise errcode.PandoraError(
-            errcode.ErrInternal, "lock gold player=%d: %s", player_id, exc
-        ) from exc
-    if row is None:
-        raise errcode.PandoraError(
-            errcode.ErrInventoryInsufficient,
-            "insufficient gold player=%d need=%d have=0",
-            player_id,
-            n,
-        )
-    have = int(row[0])
-    if have < n:
-        raise errcode.PandoraError(
-            errcode.ErrInventoryInsufficient,
-            "insufficient gold player=%d need=%d have=%d",
-            player_id,
-            n,
-            have,
-        )
-    remaining = have - n
-    try:
-        await cur.execute(
-            "UPDATE player_currency SET gold = %s WHERE player_id = %s", (remaining, player_id)
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise errcode.PandoraError(
-            errcode.ErrInternal, "deduct gold player=%d: %s", player_id, exc
-        ) from exc
-    return remaining
 
 
 async def deduct_item_tx(cur, player_id: int, item_config_id: int, n: int) -> int:  # noqa: ANN001

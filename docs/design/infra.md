@@ -74,7 +74,8 @@ version      INT          NOT NULL  DEFAULT 0                    -- 乐观锁
 |---|---|---|
 | `trade_orders` | 交易订单 | uniq(order_id), idx(seller_id), idx(buyer_id) |
 | `trade_audit` | 审计日志(append-only) | idx(order_id), idx(created_at) |
-| `player_currency` | 玩家货币余额(inventory) | PK(player_id) |
+| `player_wallet` | 玩家多币种钱包(inventory;一玩家一币种一行,无行=余额 0) | PK(player_id, currency_kind) |
+| `player_currency` | **legacy** 单币种金币余额(inventory);000005 已把数据搬入 `player_wallet`,expand 期只读保留,contract 时删 | PK(player_id) |
 | `player_items` | 玩家道具持有(inventory) | uk(player_id, item_config_id) |
 | `inventory_ledger` | 资产变动流水 / 幂等键(inventory) | uk(player_id, idempotency_key) |
 | `auction_escrow` | 拍卖挂单冻结(escrow:卖冻道具 / 买冻金币) | uk(player_id, order_id), idx(player_id) |

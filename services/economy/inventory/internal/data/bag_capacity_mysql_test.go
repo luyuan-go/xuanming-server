@@ -20,24 +20,24 @@ func TestBagCapacityPurchase_MySQL(t *testing.T) {
 	ctx := context.Background()
 	const player = uint64(401)
 
-	mustExec(t, inv.db, `INSERT INTO player_currency (player_id, gold) VALUES (?, 1000)`, player)
+	mustExec(t, inv.db, `INSERT INTO player_wallet (player_id, currency_kind, amount) VALUES (?, 1, 1000)`, player)
 
 	t.Run("扣费幂等与冲突", func(t *testing.T) {
-		already, remaining, err := invRepo.ChargeBagCapacity(ctx, player, BagWarehouseType, 1, 20, 200)
+		already, remaining, err := invRepo.ChargeBagCapacity(ctx, player, BagWarehouseType, 1, 20, CurrencyGold, 200)
 		if err != nil || already || remaining != 800 {
 			t.Fatalf("首扣: already=%v remaining=%d err=%v", already, remaining, err)
 		}
 		// 同档重试:幂等回放零扣费。
-		already, remaining, err = invRepo.ChargeBagCapacity(ctx, player, BagWarehouseType, 1, 20, 200)
+		already, remaining, err = invRepo.ChargeBagCapacity(ctx, player, BagWarehouseType, 1, 20, CurrencyGold, 200)
 		if err != nil || !already || remaining != 800 {
 			t.Fatalf("重试应回放: already=%v remaining=%d err=%v", already, remaining, err)
 		}
 		// 同档不同参数(配置漂移)→ 指纹冲突。
-		if _, _, err := invRepo.ChargeBagCapacity(ctx, player, BagWarehouseType, 1, 20, 999); errcode.As(err) != errcode.ErrInventoryIdempotencyConflict {
+		if _, _, err := invRepo.ChargeBagCapacity(ctx, player, BagWarehouseType, 1, 20, CurrencyGold, 999); errcode.As(err) != errcode.ErrInventoryIdempotencyConflict {
 			t.Fatalf("配置漂移应指纹冲突: %v", err)
 		}
 		// 余额不足。
-		if _, _, err := invRepo.ChargeBagCapacity(ctx, player, BagWarehouseType, 2, 20, 5000); errcode.As(err) != errcode.ErrInventoryInsufficient {
+		if _, _, err := invRepo.ChargeBagCapacity(ctx, player, BagWarehouseType, 2, 20, CurrencyGold, 5000); errcode.As(err) != errcode.ErrInventoryInsufficient {
 			t.Fatalf("余额不足应拒: %v", err)
 		}
 	})

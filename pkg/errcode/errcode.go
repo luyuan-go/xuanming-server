@@ -191,6 +191,12 @@ const (
 	ErrInventoryCapacityFull        Code = 7016 // 背包格子已满(装备实例数达 capacity 上限)
 	ErrInventorySlotOccupied        Code = 7017 // 目标格子已被占用 / 越界(移动实例)
 	ErrInventoryInstanceBound       Code = 7018 // 绑定实例不可托管转移(邮件 transfer 扣出拒;bound=不可交易)
+	// ErrInventoryNotPurchasable NPC 商店购买被拒:该商店不存在、该道具不在该商店在售集合内,
+	// 或本次购买份数超出服务端单次上限。价格永远以商店表为准,客户端上报价格一律不采信。
+	ErrInventoryNotPurchasable Code = 7019
+	// ErrInventoryCurrencyOverflow 货币入账会越过单币种余额硬上限(MaxCurrencyAmount)。
+	// 无符号余额下"加钱溢出"必须显式拒绝:回绕会把首富瞬间变成零元户,且不可观测。
+	ErrInventoryCurrencyOverflow Code = 7020
 )
 
 // dialogue(8000-8999)

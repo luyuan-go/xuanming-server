@@ -103,6 +103,28 @@ def spawn(name: str, factory: Callable[[], Awaitable[None]]) -> asyncio.Task:
     return supervise(name, asyncio.create_task(factory(), name=name))
 
 
+# detach 出去的补偿任务：asyncio 对 Task 只持**弱引用**（官方文档明写），没人拿着的
+# 任务可能在跑完之前就被 GC 掉。补偿跑一半被回收 = 又一种"零日志的坏"，所以这里持强
+# 引用到任务自己结束为止。
+_DETACHED: set[asyncio.Task] = set()
+
+
+def detach(name: str, factory: Callable[[], Awaitable[None]]) -> asyncio.Task:
+    """把补偿动作从**正在被取消的调用链**里摘出去跑，对应 Go 的 `plog.Detach(ctx)` 用法。
+
+    Go 侧入站 ctx 被取消，只是让 RPC 返回一个 error，补偿分支照常拿一个 detached ctx
+    把 pod 回收 / 镜像删干净；Python 侧入站取消表现为**当前任务被 cancel**，此后任何
+    `await` 都会立刻再抛 `CancelledError` —— 就地补偿一步都跑不完，等于没写。
+
+    所以补偿必须交给一个不在取消链上的新任务。调用方拿到 task 后**不要 await**
+    （await 会把它重新拽回取消链）；取消语义仍由调用方自己 `raise` 保持传播。
+    """
+    task = spawn(name, factory)
+    _DETACHED.add(task)
+    task.add_done_callback(_DETACHED.discard)
+    return task
+
+
 async def run_once(name: str, fn: Callable[[], Awaitable[None]]) -> bool:
     """同步执行一轮并兜住其中的异常，返回"是否发生了异常"。
 

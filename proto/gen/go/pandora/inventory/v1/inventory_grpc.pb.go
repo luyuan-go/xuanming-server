@@ -1,9 +1,10 @@
 // Pandora InventoryService 协议(背包,W5 ③ 2026-06-18)。
 //
 // 职责(docs/design/go-services.md §2.9 economy 域):
-//   - 玩家货币(金币)余额读写
+//   - 玩家**多币种**货币余额读写(CurrencyKind × uint64,按 (player_id, kind) 存)
 //   - 背包道具持有(按 item_config_id 堆叠计数)
-//   - 大厅态道具使用(开箱 / 经验书 / 消耗品)与出售换金币
+//   - 大厅态道具使用(开箱 / 经验书 / 消耗品)与出售换货币
+//   - NPC 商店服务端权威买卖(GetShop / PurchaseShopItem)
 //
 // 边界(docs/design/ds-arch.md §0.1):
 //   - 战斗内即时用道具 / 出装 / 购买道具 = UE GAS(GameplayEffect),不经 gRPC;
@@ -45,6 +46,8 @@ const (
 	InventoryService_DiscardInstance_FullMethodName        = "/pandora.inventory.v1.InventoryService/DiscardInstance"
 	InventoryService_MoveInstance_FullMethodName           = "/pandora.inventory.v1.InventoryService/MoveInstance"
 	InventoryService_SellInstance_FullMethodName           = "/pandora.inventory.v1.InventoryService/SellInstance"
+	InventoryService_GetShop_FullMethodName                = "/pandora.inventory.v1.InventoryService/GetShop"
+	InventoryService_PurchaseShopItem_FullMethodName       = "/pandora.inventory.v1.InventoryService/PurchaseShopItem"
 	InventoryService_FreezeForOrder_FullMethodName         = "/pandora.inventory.v1.InventoryService/FreezeForOrder"
 	InventoryService_EnsureAuctionEscrow_FullMethodName    = "/pandora.inventory.v1.InventoryService/EnsureAuctionEscrow"
 	InventoryService_SettleAuctionMatch_FullMethodName     = "/pandora.inventory.v1.InventoryService/SettleAuctionMatch"
@@ -74,7 +77,10 @@ type InventoryServiceClient interface {
 	// DiscardBattleItem 持久扣减副本内丢弃的可堆叠道具(系统接口)。装备实例不支持：
 	// phase0 DS 本地 Guid 不是 inventory instance_id，实例只能回大厅走 DiscardInstance。
 	DiscardBattleItem(ctx context.Context, in *DiscardBattleItemRequest, opts ...grpc.CallOption) (*DiscardBattleItemResponse, error)
-	// SellItem 出售道具换金币(原子扣道具 + 加金币)。
+	// SellItem 出售可堆叠道具换货币(原子扣道具 + 加货币)。
+	// 单价来自道具表 sell_price;结算币种取服务端配置 `currency.sell_kind`(默认金币)。
+	// 刻意**不**给道具表加"出售币种"列:当前没有"卖某道具得钻石"的确认需求,
+	// 加列要动策划源表且属预设性复杂化(§15.3);真有需求时再加列,接口不用改。
 	SellItem(ctx context.Context, in *SellItemRequest, opts ...grpc.CallOption) (*SellItemResponse, error)
 	// DiscardItem 丢弃可堆叠道具(客户端 RPC,以调用者身份为准)。
 	// 幂等键绑定 item_config_id+count；响应丢失重试不会重复扣减。
@@ -93,9 +99,24 @@ type InventoryServiceClient interface {
 	// MoveInstance 移动一件装备实例到新格子(改 slot_index;客户端 RPC,以调用者身份为准)。
 	// 目标格越界(>= capacity)/ 已被占用 → 拒。纯大厅整理操作,不影响属性。
 	MoveInstance(ctx context.Context, in *MoveInstanceRequest, opts ...grpc.CallOption) (*MoveInstanceResponse, error)
-	// SellInstance 出售唯一装备实例换金币(客户端 RPC,以调用者身份为准)。
-	// 绑定实例拒绝；删除实例与金币入账、ledger 幂等流水在同一事务。
+	// SellInstance 出售唯一装备实例换货币(客户端 RPC,以调用者身份为准)。
+	// 绑定实例拒绝；删除实例与货币入账、ledger 幂等流水在同一事务。
 	SellInstance(ctx context.Context, in *SellInstanceRequest, opts ...grpc.CallOption) (*SellInstanceResponse, error)
+	// GetShop 读某个商店的权威价目表(客户端 RPC;只读,不鉴权到具体玩家资产)。
+	// 客户端用它渲染商品列表与单价——展示口径与扣费口径因此同源,不会漂移(§17.3)。
+	// 商店不存在 / 未配置 → ERR_INVALID_ARG,客户端据此隐藏商店页签。
+	GetShop(ctx context.Context, in *GetShopRequest, opts ...grpc.CallOption) (*GetShopResponse, error)
+	// PurchaseShopItem 向 NPC 商店购买道具(客户端 RPC,以调用者身份为准)。
+	//
+	// 服务端权威链:读商店表定价 → 校验该商店确实在售该道具 → 溢出安全算总价 →
+	// 同一 MySQL 本地事务里【扣货币 + 入包(堆叠计数或生成装备实例) + 写 ledger 幂等流水】。
+	// 客户端传来的任何价格都不被信任;count 只是"买几份",单价与每份数量以表为准。
+	//
+	// 幂等键 = idempotency_key(客户端生成,绑定 shop_id+item_config_id+count 指纹):
+	// 响应丢失重试不会重复扣费、不会重复入包(§9.7)。
+	// 余额不足 → ERR_INVENTORY_INSUFFICIENT;不在售 → ERR_INVENTORY_NOT_PURCHASABLE;
+	// 装备实例背包满 → ERR_INVENTORY_CAPACITY_FULL(此时整笔回滚,不扣钱)。
+	PurchaseShopItem(ctx context.Context, in *PurchaseShopItemRequest, opts ...grpc.CallOption) (*PurchaseShopItemResponse, error)
 	// FreezeForOrder 拍卖挂单冻结资产(系统接口,仅后端内部直连):
 	//
 	//	卖单(SELL):把 quantity 个 item_config_id 从活跃背包移入托管(escrow),挂单期间不可被别处消耗;
@@ -306,6 +327,26 @@ func (c *inventoryServiceClient) SellInstance(ctx context.Context, in *SellInsta
 	return out, nil
 }
 
+func (c *inventoryServiceClient) GetShop(ctx context.Context, in *GetShopRequest, opts ...grpc.CallOption) (*GetShopResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetShopResponse)
+	err := c.cc.Invoke(ctx, InventoryService_GetShop_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *inventoryServiceClient) PurchaseShopItem(ctx context.Context, in *PurchaseShopItemRequest, opts ...grpc.CallOption) (*PurchaseShopItemResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PurchaseShopItemResponse)
+	err := c.cc.Invoke(ctx, InventoryService_PurchaseShopItem_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *inventoryServiceClient) FreezeForOrder(ctx context.Context, in *FreezeForOrderRequest, opts ...grpc.CallOption) (*FreezeForOrderResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FreezeForOrderResponse)
@@ -432,7 +473,10 @@ type InventoryServiceServer interface {
 	// DiscardBattleItem 持久扣减副本内丢弃的可堆叠道具(系统接口)。装备实例不支持：
 	// phase0 DS 本地 Guid 不是 inventory instance_id，实例只能回大厅走 DiscardInstance。
 	DiscardBattleItem(context.Context, *DiscardBattleItemRequest) (*DiscardBattleItemResponse, error)
-	// SellItem 出售道具换金币(原子扣道具 + 加金币)。
+	// SellItem 出售可堆叠道具换货币(原子扣道具 + 加货币)。
+	// 单价来自道具表 sell_price;结算币种取服务端配置 `currency.sell_kind`(默认金币)。
+	// 刻意**不**给道具表加"出售币种"列:当前没有"卖某道具得钻石"的确认需求,
+	// 加列要动策划源表且属预设性复杂化(§15.3);真有需求时再加列,接口不用改。
 	SellItem(context.Context, *SellItemRequest) (*SellItemResponse, error)
 	// DiscardItem 丢弃可堆叠道具(客户端 RPC,以调用者身份为准)。
 	// 幂等键绑定 item_config_id+count；响应丢失重试不会重复扣减。
@@ -451,9 +495,24 @@ type InventoryServiceServer interface {
 	// MoveInstance 移动一件装备实例到新格子(改 slot_index;客户端 RPC,以调用者身份为准)。
 	// 目标格越界(>= capacity)/ 已被占用 → 拒。纯大厅整理操作,不影响属性。
 	MoveInstance(context.Context, *MoveInstanceRequest) (*MoveInstanceResponse, error)
-	// SellInstance 出售唯一装备实例换金币(客户端 RPC,以调用者身份为准)。
-	// 绑定实例拒绝；删除实例与金币入账、ledger 幂等流水在同一事务。
+	// SellInstance 出售唯一装备实例换货币(客户端 RPC,以调用者身份为准)。
+	// 绑定实例拒绝；删除实例与货币入账、ledger 幂等流水在同一事务。
 	SellInstance(context.Context, *SellInstanceRequest) (*SellInstanceResponse, error)
+	// GetShop 读某个商店的权威价目表(客户端 RPC;只读,不鉴权到具体玩家资产)。
+	// 客户端用它渲染商品列表与单价——展示口径与扣费口径因此同源,不会漂移(§17.3)。
+	// 商店不存在 / 未配置 → ERR_INVALID_ARG,客户端据此隐藏商店页签。
+	GetShop(context.Context, *GetShopRequest) (*GetShopResponse, error)
+	// PurchaseShopItem 向 NPC 商店购买道具(客户端 RPC,以调用者身份为准)。
+	//
+	// 服务端权威链:读商店表定价 → 校验该商店确实在售该道具 → 溢出安全算总价 →
+	// 同一 MySQL 本地事务里【扣货币 + 入包(堆叠计数或生成装备实例) + 写 ledger 幂等流水】。
+	// 客户端传来的任何价格都不被信任;count 只是"买几份",单价与每份数量以表为准。
+	//
+	// 幂等键 = idempotency_key(客户端生成,绑定 shop_id+item_config_id+count 指纹):
+	// 响应丢失重试不会重复扣费、不会重复入包(§9.7)。
+	// 余额不足 → ERR_INVENTORY_INSUFFICIENT;不在售 → ERR_INVENTORY_NOT_PURCHASABLE;
+	// 装备实例背包满 → ERR_INVENTORY_CAPACITY_FULL(此时整笔回滚,不扣钱)。
+	PurchaseShopItem(context.Context, *PurchaseShopItemRequest) (*PurchaseShopItemResponse, error)
 	// FreezeForOrder 拍卖挂单冻结资产(系统接口,仅后端内部直连):
 	//
 	//	卖单(SELL):把 quantity 个 item_config_id 从活跃背包移入托管(escrow),挂单期间不可被别处消耗;
@@ -578,6 +637,12 @@ func (UnimplementedInventoryServiceServer) MoveInstance(context.Context, *MoveIn
 }
 func (UnimplementedInventoryServiceServer) SellInstance(context.Context, *SellInstanceRequest) (*SellInstanceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SellInstance not implemented")
+}
+func (UnimplementedInventoryServiceServer) GetShop(context.Context, *GetShopRequest) (*GetShopResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetShop not implemented")
+}
+func (UnimplementedInventoryServiceServer) PurchaseShopItem(context.Context, *PurchaseShopItemRequest) (*PurchaseShopItemResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PurchaseShopItem not implemented")
 }
 func (UnimplementedInventoryServiceServer) FreezeForOrder(context.Context, *FreezeForOrderRequest) (*FreezeForOrderResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FreezeForOrder not implemented")
@@ -848,6 +913,42 @@ func _InventoryService_SellInstance_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _InventoryService_GetShop_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetShopRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(InventoryServiceServer).GetShop(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: InventoryService_GetShop_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(InventoryServiceServer).GetShop(ctx, req.(*GetShopRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _InventoryService_PurchaseShopItem_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PurchaseShopItemRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(InventoryServiceServer).PurchaseShopItem(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: InventoryService_PurchaseShopItem_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(InventoryServiceServer).PurchaseShopItem(ctx, req.(*PurchaseShopItemRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _InventoryService_FreezeForOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FreezeForOrderRequest)
 	if err := dec(in); err != nil {
@@ -1100,6 +1201,14 @@ var InventoryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SellInstance",
 			Handler:    _InventoryService_SellInstance_Handler,
+		},
+		{
+			MethodName: "GetShop",
+			Handler:    _InventoryService_GetShop_Handler,
+		},
+		{
+			MethodName: "PurchaseShopItem",
+			Handler:    _InventoryService_PurchaseShopItem_Handler,
 		},
 		{
 			MethodName: "FreezeForOrder",

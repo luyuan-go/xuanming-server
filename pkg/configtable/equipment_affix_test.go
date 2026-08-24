@@ -3,6 +3,8 @@ package configtable
 import (
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	configpb "github.com/luyuancpp/pandora/proto/gen/go/pandora/config/v1"
 )
 
@@ -29,9 +31,11 @@ func TestValidateEquipmentAffixRowBounds(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			row := *valid
-			tt.edit(&row)
-			if err := validateEquipmentAffixRow(&row); err == nil {
+			// 必须 proto.Clone,不能 `row := *valid`:值拷贝会把 MessageState 里的
+			// sync.Mutex / sizeCache 一起复制(CLAUDE.md §5.10;go vet copylocks 会报)。
+			row := proto.Clone(valid).(*configpb.EquipmentAffixRow)
+			tt.edit(row)
+			if err := validateEquipmentAffixRow(row); err == nil {
 				t.Fatal("invalid row accepted")
 			}
 		})

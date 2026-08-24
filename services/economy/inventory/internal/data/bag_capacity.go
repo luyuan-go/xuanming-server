@@ -35,7 +35,10 @@ func BagCapacityChargeKey(bagType, tier uint32) string {
 // ChargeBagCapacity 购买扣费(trade 库单事务;①):
 // 首次 → 扣 priceGold 并记账;同 key 重试(already=true)→ 零扣费,返回首次后的余额快照。
 // 同 key 不同档参数(配置漂移)→ ErrInventoryIdempotencyConflict;余额不足 → ErrInventoryInsufficient。
-func (r *MySQLInventoryRepo) ChargeBagCapacity(ctx context.Context, playerID uint64, bagType, tier, slots uint32, priceGold int64) (already bool, goldRemaining int64, err error) {
+func (r *MySQLInventoryRepo) ChargeBagCapacity(ctx context.Context, playerID uint64, bagType, tier, slots uint32, kind CurrencyKind, price uint64) (already bool, remainingBalance uint64, err error) {
+	if verr := ValidateCurrencyKind(kind); verr != nil {
+		return false, 0, verr
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, 0, errcode.New(errcode.ErrInternal, "begin charge tx: %v", err)
@@ -43,9 +46,14 @@ func (r *MySQLInventoryRepo) ChargeBagCapacity(ctx context.Context, playerID uin
 	defer func() { _ = tx.Rollback() }()
 
 	key := BagCapacityChargeKey(bagType, tier)
-	fingerprint := hashHex(fmt.Sprintf("bagcap|%d|%d|%d|%d|%d", playerID, bagType, tier, slots, priceGold))
-	detail := fmt.Sprintf("buy capacity bag=%d tier=%d slots=%d gold=%d", bagType, tier, slots, priceGold)
-	hit, _, snapGold, lerr := claimLedger(ctx, tx, playerID, key, bagCapacityChargeOp, fingerprint, detail)
+	// 指纹沿用旧格式(gold=<price>)当且仅当币种是金币:格容购买在多币种之前只可能是金币,
+	// 换格式会让存量流水在同 key 重试时被误判成 ErrInventoryIdempotencyConflict(同 GrantFingerprint)。
+	fingerprint := hashHex(fmt.Sprintf("bagcap|%d|%d|%d|%d|%d", playerID, bagType, tier, slots, price))
+	if kind != CurrencyGold {
+		fingerprint = hashHex(fmt.Sprintf("bagcap|%d|%d|%d|%d|%d|cur=%d", playerID, bagType, tier, slots, price, int32(kind)))
+	}
+	detail := fmt.Sprintf("buy capacity bag=%d tier=%d slots=%d gold=%d", bagType, tier, slots, price)
+	hit, snap, lerr := claimLedger(ctx, tx, playerID, key, bagCapacityChargeOp, fingerprint, detail)
 	if lerr != nil {
 		return false, 0, lerr
 	}
@@ -54,14 +62,18 @@ func (r *MySQLInventoryRepo) ChargeBagCapacity(ctx context.Context, playerID uin
 		if cerr := tx.Commit(); cerr != nil {
 			return false, 0, errcode.New(errcode.ErrInternal, "commit charge replay player=%d: %v", playerID, cerr)
 		}
-		return true, snapGold, nil
+		return true, snap.Balances.Get(kind), nil
 	}
 
-	remaining, derr := deductGoldTx(ctx, tx, playerID, priceGold)
+	remaining, derr := deductCurrencyTx(ctx, tx, playerID, kind, price)
 	if derr != nil {
 		return false, 0, derr
 	}
-	if uerr := updateLedgerResult(ctx, tx, playerID, key, int64(slots), remaining); uerr != nil {
+	balances, rerr := readBalancesTx(ctx, tx, playerID)
+	if rerr != nil {
+		return false, 0, rerr
+	}
+	if uerr := updateLedgerResult(ctx, tx, playerID, key, int64(slots), balances, Balances{kind: price}); uerr != nil {
 		return false, 0, uerr
 	}
 	if cerr := tx.Commit(); cerr != nil {

@@ -9,7 +9,7 @@
     {
       "id": 2,
       "talent_id": 2,
-      "attr_key": "Hp",
+      "attr_key": "MaxHp",
       "value_per_level": 20
     },
     {
@@ -51,7 +51,7 @@
     {
       "id": 9,
       "talent_id": 8,
-      "attr_key": "Hp",
+      "attr_key": "MaxHp",
       "value_per_level": 15
     },
     {

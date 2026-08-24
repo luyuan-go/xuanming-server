@@ -4,7 +4,7 @@
 
 `base` 同时用来切分**四种跨运行共享的资源**,两次运行必须给不相交的段:
 
-    player_id   auction_orders.owner_id / inventory 的 player_currency+player_items
+    player_id   auction_orders.owner_id / inventory 的 player_wallet+player_items
     market_id   auction_orders 按 market_id 分片,ListMarket 是按 market_id 全表扫
     idem_key    auction_idempotency_keys 的 uk 是 (owner_id, idempotency_key)
     频率配额键   Redis `auction:{action}:{player_id}` 窗口 60s
@@ -42,6 +42,7 @@ from google.protobuf import text_format
 from pandora.auction.v1 import auction_pb2 as apb
 from pandora.auction.v1 import auction_pb2_grpc as agrpc
 from pandora.common.v1 import errcode_pb2 as ec
+from pandora.common.v1 import currency_pb2 as cpb
 from pandora.inventory.v1 import inventory_pb2 as ipb
 from pandora.inventory.v1 import inventory_pb2_grpc as igrpc
 
@@ -163,7 +164,11 @@ def find(orders, order_id):
 
 
 async def wallet(inv, player_id) -> tuple[int, int]:
-    """返回 (gold, ITEM 数量)。ERR 时返回 (-1,-1) 让断言直接暴露。"""
+    """返回 (金币余额, ITEM 数量)。ERR 时返回 (-1,-1) 让断言直接暴露。
+
+    多币种改造(2026-08-22)后 Inventory 下发的是 `currencies` 列表(按 kind 升序、
+    只含非零项),不再有 `gold` 标量。缺项 = 0,**不是**错误。
+    """
     r = await inv.GetInventory(ipb.GetInventoryRequest(player_id=player_id),
                                metadata=md(player_id))
     if r.code != ec.OK:
@@ -172,7 +177,11 @@ async def wallet(inv, player_id) -> tuple[int, int]:
     for it in r.inventory.items:
         if it.item_config_id == ITEM:
             n = it.count
-    return r.inventory.gold, n
+    gold = 0
+    for c in r.inventory.currencies:
+        if c.kind == cpb.CURRENCY_KIND_GOLD:
+            gold = c.amount
+    return gold, n
 
 
 # ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -191,10 +200,11 @@ async def main() -> None:
         print("\n=== S0 铺底资产(证明后续交易场景真的有货可动)===")
         g1 = await inv.GrantItems(ipb.GrantItemsRequest(
             player_id=SELLER, items=[ipb.ItemGrant(item_config_id=ITEM, count=50)],
-            gold=0, idempotency_key=f"probe-seed-s-{BASE}"))
+            idempotency_key=f"probe-seed-s-{BASE}"))
         expect("给卖家发 50 个道具", code(g1), "OK")
         g2 = await inv.GrantItems(ipb.GrantItemsRequest(
-            player_id=BUYER, items=[], gold=1_000_000,
+            player_id=BUYER, items=[],
+            currencies=[cpb.CurrencyAmount(kind=cpb.CURRENCY_KIND_GOLD, amount=1_000_000)],
             idempotency_key=f"probe-seed-b-{BASE}"))
         expect("给买家发 100 万金币", code(g2), "OK")
 

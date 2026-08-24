@@ -5166,7 +5166,7 @@ const char descriptor_table_protodef_pandora_2flogin_2fv1_2flogin_2eproto[] ABSL
     "KNOWN\020\001\022$\n RESUME_WAIT_REASON_ADMIT_BARR"
     "IER\020\002\022\037\n\033RESUME_WAIT_REASON_MATCHING\020\003\022#"
     "\n\037RESUME_WAIT_REASON_ROLE_UNKNOWN\020\004\022\"\n\036R"
-    "ESUME_WAIT_REASON_NO_CAPACITY\020\0052\334\t\n\014Logi"
+    "ESUME_WAIT_REASON_NO_CAPACITY\020\0052\314\n\n\014Logi"
     "nService\022^\n\005Login\022\036.pandora.login.v1.Log"
     "inRequest\032\037.pandora.login.v1.LoginRespon"
     "se\"\024\202\323\344\223\002\016\"\t/v1/login:\001*\022b\n\006Logout\022\037.pan"
@@ -5194,14 +5194,17 @@ const char descriptor_table_protodef_pandora_2flogin_2fv1_2flogin_2eproto[] ABSL
     "t:\001*\022\204\001\n\016VerifyDSTicket\022\'.pandora.login."
     "v1.VerifyDSTicketRequest\032(.pandora.login"
     ".v1.VerifyDSTicketResponse\"\037\202\323\344\223\002\031\"\024/v1/"
-    "ds/ticket/verify:\001*\022\210\001\n\020GetResumeContext"
-    "\022).pandora.login.v1.GetResumeContextRequ"
-    "est\032*.pandora.login.v1.GetResumeContextR"
-    "esponse\"\035\202\323\344\223\002\027\"\022/v1/resume/context:\001*2\201"
-    "\001\n\024LoginInternalService\022i\n\020ResolvePlayer"
-    "Nos\022).pandora.login.v1.ResolvePlayerNosR"
-    "equest\032*.pandora.login.v1.ResolvePlayerN"
-    "osResponseb\006proto3"
+    "ds/ticket/verify:\001*\022n\n\025ResolvePlayerNosF"
+    "orDS\022).pandora.login.v1.ResolvePlayerNos"
+    "Request\032*.pandora.login.v1.ResolvePlayer"
+    "NosResponse\022\210\001\n\020GetResumeContext\022).pando"
+    "ra.login.v1.GetResumeContextRequest\032*.pa"
+    "ndora.login.v1.GetResumeContextResponse\""
+    "\035\202\323\344\223\002\027\"\022/v1/resume/context:\001*2\201\001\n\024Login"
+    "InternalService\022i\n\020ResolvePlayerNos\022).pa"
+    "ndora.login.v1.ResolvePlayerNosRequest\032*"
+    ".pandora.login.v1.ResolvePlayerNosRespon"
+    "seb\006proto3"
 };
 static const ::_pbi::DescriptorTable* PROTOBUF_NONNULL const
     descriptor_table_pandora_2flogin_2fv1_2flogin_2eproto_deps[2] = {
@@ -5212,7 +5215,7 @@ static ::absl::once_flag descriptor_table_pandora_2flogin_2fv1_2flogin_2eproto_o
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_pandora_2flogin_2fv1_2flogin_2eproto = {
     false,
     false,
-    7538,
+    7650,
     descriptor_table_protodef_pandora_2flogin_2fv1_2flogin_2eproto,
     "pandora/login/v1/login.proto",
     &descriptor_table_pandora_2flogin_2fv1_2flogin_2eproto_once,

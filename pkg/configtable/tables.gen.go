@@ -17,6 +17,9 @@ type Tables struct {
 	Version   uint64
 	SourceRev string
 
+	// AttrPointEffect 配置表 attr_point_effect(角色/z_属性加点_效果.xlsx)
+	AttrPointEffect *AttrPointEffectTable
+
 	// ChestDrop 配置表 chest_drop(道具/d_宝箱掉落.xlsx)
 	ChestDrop *ChestDropTable
 
@@ -40,6 +43,9 @@ type Tables struct {
 
 	// EquipmentAffix 配置表 equipment_affix(道具/d_装备词条.xlsx)
 	EquipmentAffix *EquipmentAffixTable
+
+	// EquipmentAttr 配置表 equipment_attr(道具/装备属性表.xlsx)
+	EquipmentAttr *EquipmentAttrTable
 
 	// GameModule 配置表 game_module(程序/y_游戏模块.xlsx)
 	GameModule *GameModuleTable
@@ -74,8 +80,14 @@ type Tables struct {
 	// Role 配置表 role(角色/j_角色配置表.xlsx)
 	Role *RoleTable
 
+	// Shop 配置表 shop(道具/d_商店.xlsx)
+	Shop *ShopTable
+
 	// SkillBullet 配置表 skill_bullet(技能/j_技能_方位类型_子弹.xlsx)
 	SkillBullet *SkillBulletTable
+
+	// SkillCardEffect 配置表 skill_card_effect(技能/j_技能卡_效果.xlsx)
+	SkillCardEffect *SkillCardEffectTable
 
 	// SkillCard 配置表 skill_card(技能/j_技能卡.xlsx)
 	SkillCard *SkillCardTable
@@ -113,6 +125,7 @@ type Tables struct {
 
 // specByName 清单表名 → 解析构建注册(Store.Load 消费)。
 var specByName = map[string]tableSpec{
+	"attr_point_effect":   {protoName: "pandora.config.v1.AttrPointEffectTableData", build: buildAttrPointEffectTable},
 	"chest_drop":          {protoName: "pandora.config.v1.ChestDropTableData", build: buildChestDropTable},
 	"chest_group":         {protoName: "pandora.config.v1.ChestGroupTableData", build: buildChestGroupTable},
 	"chest_point":         {protoName: "pandora.config.v1.ChestPointTableData", build: buildChestPointTable},
@@ -121,6 +134,7 @@ var specByName = map[string]tableSpec{
 	"dialogue":            {protoName: "pandora.config.v1.DialogueTableData", build: buildDialogueTable},
 	"drop":                {protoName: "pandora.config.v1.DropTableData", build: buildDropTable},
 	"equipment_affix":     {protoName: "pandora.config.v1.EquipmentAffixTableData", build: buildEquipmentAffixTable},
+	"equipment_attr":      {protoName: "pandora.config.v1.EquipmentAttrTableData", build: buildEquipmentAttrTable},
 	"game_module":         {protoName: "pandora.config.v1.GameModuleTableData", build: buildGameModuleTable},
 	"gm_command":          {protoName: "pandora.config.v1.GmCommandTableData", build: buildGmCommandTable},
 	"item":                {protoName: "pandora.config.v1.ItemTableData", build: buildItemTable},
@@ -132,7 +146,9 @@ var specByName = map[string]tableSpec{
 	"role_attr_map":       {protoName: "pandora.config.v1.RoleAttrMapTableData", build: buildRoleAttrMapTable},
 	"role_level":          {protoName: "pandora.config.v1.RoleLevelTableData", build: buildRoleLevelTable},
 	"role":                {protoName: "pandora.config.v1.RoleTableData", build: buildRoleTable},
+	"shop":                {protoName: "pandora.config.v1.ShopTableData", build: buildShopTable},
 	"skill_bullet":        {protoName: "pandora.config.v1.SkillBulletTableData", build: buildSkillBulletTable},
+	"skill_card_effect":   {protoName: "pandora.config.v1.SkillCardEffectTableData", build: buildSkillCardEffectTable},
 	"skill_card":          {protoName: "pandora.config.v1.SkillCardTableData", build: buildSkillCardTable},
 	"skill_card_upgrade":  {protoName: "pandora.config.v1.SkillCardUpgradeTableData", build: buildSkillCardUpgradeTable},
 	"skill_circle":        {protoName: "pandora.config.v1.SkillCircleTableData", build: buildSkillCircleTable},
@@ -219,6 +235,24 @@ func validateCrossTables(dst *Tables) error {
 		}
 		if !dst.Role.Exists(v) {
 			return fmt.Errorf("表 role_level 主键 %d 的 角色ID(%d)在表 role 中不存在", row.GetId(), v)
+		}
+	}
+	for _, row := range dst.Shop.All() {
+		v := row.GetItemConfigId()
+		if v == 0 {
+			return fmt.Errorf("表 shop 主键 %d 的 道具ID 为 0(必填外键)", row.GetId())
+		}
+		if !dst.Item.Exists(v) {
+			return fmt.Errorf("表 shop 主键 %d 的 道具ID(%d)在表 item 中不存在", row.GetId(), v)
+		}
+	}
+	for _, row := range dst.SkillCardEffect.All() {
+		v := row.GetCardId()
+		if v == 0 {
+			return fmt.Errorf("表 skill_card_effect 主键 %d 的 技能卡ID 为 0(必填外键)", row.GetId())
+		}
+		if !dst.SkillCard.Exists(v) {
+			return fmt.Errorf("表 skill_card_effect 主键 %d 的 技能卡ID(%d)在表 skill_card 中不存在", row.GetId(), v)
 		}
 	}
 	for _, row := range dst.SkillCard.All() {
@@ -381,6 +415,34 @@ func (tb *Tables) RoleLevelRoleIdRowByID(id uint32) (*configpb.RoleRow, bool) {
 	return tb.RoleLevelRoleIdRow(row)
 }
 
+// ShopItemConfigIdRow 解析 shop.道具ID → item 行(外键正查)。
+func (tb *Tables) ShopItemConfigIdRow(row *configpb.ShopRow) (*configpb.ItemRow, bool) {
+	return tb.Item.ByID(row.GetItemConfigId())
+}
+
+// ShopItemConfigIdRowByID 按 shop 主键取行再解析 道具ID → item 行。
+func (tb *Tables) ShopItemConfigIdRowByID(id uint32) (*configpb.ItemRow, bool) {
+	row, ok := tb.Shop.ByID(id)
+	if !ok {
+		return nil, false
+	}
+	return tb.ShopItemConfigIdRow(row)
+}
+
+// SkillCardEffectCardIdRow 解析 skill_card_effect.技能卡ID → skill_card 行(外键正查)。
+func (tb *Tables) SkillCardEffectCardIdRow(row *configpb.SkillCardEffectRow) (*configpb.SkillCardRow, bool) {
+	return tb.SkillCard.ByID(row.GetCardId())
+}
+
+// SkillCardEffectCardIdRowByID 按 skill_card_effect 主键取行再解析 技能卡ID → skill_card 行。
+func (tb *Tables) SkillCardEffectCardIdRowByID(id uint32) (*configpb.SkillCardRow, bool) {
+	row, ok := tb.SkillCardEffect.ByID(id)
+	if !ok {
+		return nil, false
+	}
+	return tb.SkillCardEffectCardIdRow(row)
+}
+
 // SkillCardSkillIdRow 解析 skill_card.技能ID → skill 行(外键正查)。
 func (tb *Tables) SkillCardSkillIdRow(row *configpb.SkillCardRow) (*configpb.SkillRow, bool) {
 	return tb.Skill.ByID(row.GetSkillId())
@@ -449,6 +511,22 @@ func (tb *Tables) TalentEffectTalentIdRowByID(id uint32) (*configpb.TalentRow, b
 		return nil, false
 	}
 	return tb.TalentEffectTalentIdRow(row)
+}
+
+func buildAttrPointEffectTable(raw []byte, mt ManifestTable, dst *Tables) error {
+	var data configpb.AttrPointEffectTableData
+	if err := unmarshalTable(raw, &data); err != nil {
+		return fmt.Errorf("表 attr_point_effect 解析失败: %w", err)
+	}
+	if got := uint32(len(data.GetRows())); got != mt.Rows {
+		return fmt.Errorf("表 attr_point_effect 行数 %d 与 manifest 声明 %d 不一致(疑似截断)", got, mt.Rows)
+	}
+	t, err := newAttrPointEffectTable(&data)
+	if err != nil {
+		return err
+	}
+	dst.AttrPointEffect = t
+	return nil
 }
 
 func buildChestDropTable(raw []byte, mt ManifestTable, dst *Tables) error {
@@ -576,6 +654,22 @@ func buildEquipmentAffixTable(raw []byte, mt ManifestTable, dst *Tables) error {
 		return err
 	}
 	dst.EquipmentAffix = t
+	return nil
+}
+
+func buildEquipmentAttrTable(raw []byte, mt ManifestTable, dst *Tables) error {
+	var data configpb.EquipmentAttrTableData
+	if err := unmarshalTable(raw, &data); err != nil {
+		return fmt.Errorf("表 equipment_attr 解析失败: %w", err)
+	}
+	if got := uint32(len(data.GetRows())); got != mt.Rows {
+		return fmt.Errorf("表 equipment_attr 行数 %d 与 manifest 声明 %d 不一致(疑似截断)", got, mt.Rows)
+	}
+	t, err := newEquipmentAttrTable(&data)
+	if err != nil {
+		return err
+	}
+	dst.EquipmentAttr = t
 	return nil
 }
 
@@ -755,6 +849,22 @@ func buildRoleTable(raw []byte, mt ManifestTable, dst *Tables) error {
 	return nil
 }
 
+func buildShopTable(raw []byte, mt ManifestTable, dst *Tables) error {
+	var data configpb.ShopTableData
+	if err := unmarshalTable(raw, &data); err != nil {
+		return fmt.Errorf("表 shop 解析失败: %w", err)
+	}
+	if got := uint32(len(data.GetRows())); got != mt.Rows {
+		return fmt.Errorf("表 shop 行数 %d 与 manifest 声明 %d 不一致(疑似截断)", got, mt.Rows)
+	}
+	t, err := newShopTable(&data)
+	if err != nil {
+		return err
+	}
+	dst.Shop = t
+	return nil
+}
+
 func buildSkillBulletTable(raw []byte, mt ManifestTable, dst *Tables) error {
 	var data configpb.SkillBulletTableData
 	if err := unmarshalTable(raw, &data); err != nil {
@@ -768,6 +878,22 @@ func buildSkillBulletTable(raw []byte, mt ManifestTable, dst *Tables) error {
 		return err
 	}
 	dst.SkillBullet = t
+	return nil
+}
+
+func buildSkillCardEffectTable(raw []byte, mt ManifestTable, dst *Tables) error {
+	var data configpb.SkillCardEffectTableData
+	if err := unmarshalTable(raw, &data); err != nil {
+		return fmt.Errorf("表 skill_card_effect 解析失败: %w", err)
+	}
+	if got := uint32(len(data.GetRows())); got != mt.Rows {
+		return fmt.Errorf("表 skill_card_effect 行数 %d 与 manifest 声明 %d 不一致(疑似截断)", got, mt.Rows)
+	}
+	t, err := newSkillCardEffectTable(&data)
+	if err != nil {
+		return err
+	}
+	dst.SkillCardEffect = t
 	return nil
 }
 

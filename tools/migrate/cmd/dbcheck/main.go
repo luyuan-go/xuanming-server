@@ -137,7 +137,8 @@ var registry = map[string]map[string]tableEntry{
 		"player_mail_archive":   {Class: classSwept, RequiredIndexes: []indexSpec{{Name: "idx_archived", Columns: []string{"archived_at"}}}, PendingWhere: "archived_at < NOW()"},
 	},
 	"pandora_trade": {
-		"player_currency":      {Class: classBounded},
+		"player_wallet":        {Class: classBounded}, // 多币种钱包:每玩家每币种一行,被玩家数×币种枚举有界
+		"player_currency":      {Class: classBounded}, // legacy 单币种 gold 表:expand 期仍在(000005 只搬数据不删),contract 时连同本行一起删
 		"player_items":         {Class: classBounded}, // count=0 行被 uk(player,item) 有界,故意不清(§9.24 豁免注记)
 		"player_item_instance": {Class: classBounded}, // 容量上限×玩家数;丢弃硬删
 		"mail_transfer_escrow": {Class: classBounded}, // 在途托管行,领取/释放即删;量级=在途 transfer 邮件数(§9.24 豁免注记)

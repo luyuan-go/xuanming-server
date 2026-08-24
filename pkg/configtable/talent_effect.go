@@ -14,26 +14,8 @@ import (
 // 视图结构与通用访问 API(All/ByID/Exists/Count/ByIDs/RandOne/Where/First/ListByTalentId)在
 // talent_effect_table.gen.go(tools/configtable-gen 生成,勿手改)。
 
-// allowedTalentAttrKeys 是专精效果可以作用的 GAS 属性名白名单。
-//
-// **权威在客户端**:Pandora-Client-SVN/Pandora/Source/Pandora/Public/GAS/MyEntityAttrSet.h
-// 的 UMyEntityAttrSet。这里是校验用副本,不是第二份权威(§9.22)——服务端不消费这些数值,
-// 但必须在加载期挡住拼错的键:attr_key 写错在 DS 上的表现是"这个天赋点了完全没反应",
-// 既不报错也不崩,是最难定位的一类配置事故。宁可在导表/加载边界整批拒绝。
-//
-// ⚠️ UMyEntityAttrSet 增删属性时必须同步本表(以及 TestTalentEffectAttrKeyWhitelist 的注释)。
-var allowedTalentAttrKeys = map[string]struct{}{
-	"Hp":            {}, // 血量
-	"Atk":           {}, // 攻击力
-	"Defense":       {}, // 防御
-	"Shield":        {}, // 护盾
-	"CritChance":    {}, // 暴击率
-	"CritDamage":    {}, // 暴击伤害
-	"HitChance":     {}, // 命中率
-	"DodgeChance":   {}, // 闪避率
-	"MoveSpeedRate": {}, // 移动速度倍率
-	"AtkSpeedRate":  {}, // 攻击速度倍率
-}
+// 属性键白名单与「战斗属性集」的定义共享一份:见 combat_attr_key.go 的 combatAttrKeys。
+// 专精效果与技能卡效果填的是同一个 UE GAS 属性集,各存一份必然漂移(§9.22 权威唯一)。
 
 // MaxTalentEffectValuePerLevel 是单级加成绝对值上限。
 //
@@ -47,9 +29,9 @@ const MaxTalentEffectValuePerLevel = 10000
 //
 // 跨行约束(同一专精不得对同一属性重复加成)看不到其它行,放在 ValidateEffects。
 func validateTalentEffectRow(row *configpb.TalentEffectRow) error {
-	if _, ok := allowedTalentAttrKeys[row.GetAttrKey()]; !ok {
-		return fmt.Errorf("属性键(attr_key=%q)不是 UE GAS 属性名,该效果在 DS 上永远不会生效;"+
-			"合法取值见 MyEntityAttrSet.h", row.GetAttrKey())
+	if !IsCombatAttrKey(row.GetAttrKey()) {
+		return fmt.Errorf("属性键(attr_key=%q)不是战斗属性集里的属性,该效果在 DS 上永远不会生效;"+
+			"合法取值:%s(权威见 MyEntityAttrSet.h)", row.GetAttrKey(), CombatAttrKeysHint())
 	}
 	if row.GetValuePerLevel() == 0 {
 		return fmt.Errorf("每级数值(value_per_level)为 0,该效果行没有任何作用")

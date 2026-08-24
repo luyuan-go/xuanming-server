@@ -100,6 +100,13 @@ class TradeConf(pconfig.BaseModel):
     rate_quota_per_min: int = 0
     # max_orders_per_player 单玩家同时参与的订单总数上限(默认 200,不变量 §18)。
     max_orders_per_player: int = 0
+    # max_trade_price 单笔交易金额上限(默认 1_000_000_000,与拍卖 max_price 同量级)。
+    #
+    # 2026-08-22 货币无符号化时补:此前 trade 只有 `price < 0` 一道闸,**没有任何上界**。
+    # CreateOrderRequest.price 已是 uint64,那道闸恒为 False(Python 连类型报错都不会有),
+    # 一个 price=-1 的旧请求会被解成 1.8e19 并直接建单、占配额、写 Redis。
+    # 上界闸是这条链唯一的防线,必须与 Go 侧 conf.MaxTradePrice 逐字同步。
+    max_trade_price: int = 0
     # inventory_addr inventory 服务 gRPC 直连地址。配置后走真实 P2P 原子对转。
     inventory_addr: str = ""
     # allow_noop_ledger 显式允许退回 NoopResourceLedger(结算永远成功、不真实扣转)。
@@ -137,6 +144,10 @@ class Config(pconfig.BaseConf):
             t.rate_quota_per_min = 20
         if t.max_orders_per_player <= 0:
             t.max_orders_per_player = 200
+        # 0 = 未配置 → 取默认。刻意**不**把 0 当成"不限价":
+        # 一个漏配的字段不该等于拆掉唯一的价格防线。
+        if t.max_trade_price <= 0:
+            t.max_trade_price = 1_000_000_000
         if not self.server.grpc.addr:
             self.server.grpc.addr = DEFAULT_GRPC_ADDR
         if not self.server.http.addr:

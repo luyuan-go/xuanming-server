@@ -102,7 +102,7 @@ class TransferRepoMixin:
         """
         fingerprint = fp.escrow_out_fingerprint(to_player_id, instance_ids)
         async with rsql.transaction(self._pool) as cur:
-            already, _r, _g = await rsql.claim_ledger(
+            already, _snap = await rsql.claim_ledger(
                 cur, source_player_id, escrow_key, "escrow_out", fingerprint, detail
             )
             if already:
@@ -182,7 +182,7 @@ class TransferRepoMixin:
             [(it.instance_id, it.item_config_id) for it in items]
         )
         async with rsql.transaction(self._pool) as cur:
-            already, _r, _g = await rsql.claim_ledger(
+            already, _snap = await rsql.claim_ledger(
                 cur, to_player_id, idempotency_key, "transfer_claim", fingerprint, detail
             )
             if already:

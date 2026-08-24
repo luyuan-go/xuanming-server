@@ -26,6 +26,7 @@ syntax = "proto3";
 package pandora.bag.v1;
 
 import "pandora/common/v1/errcode.proto";
+import "pandora/common/v1/currency.proto";
 
 service BagService {
   // LoadBag 加载 DS 驻留组(owner DS checkout;Admission 通过后调用)。
@@ -204,8 +205,12 @@ message PurchaseCapacityResponse {
   uint32 purchases          = 2;  // 已购档数(含本次;幂等重放返回当前值)
   uint32 extra              = 3;  // 已购增量总格数
   uint32 effective_capacity = 4;  // 本段有效容量(base + extra;DS 据此 ExpandCapacity)
-  int64  gold_cost          = 5;  // 本次实际扣费(幂等重放 / 未新购 = 0)
-  int64  gold_remaining     = 6;  // 扣费后金币余额(UI 展示)
+  reserved 5, 6;                  // 原 int64 gold_cost / gold_remaining,已被下面两个多币种字段取代
+  reserved "gold_cost", "gold_remaining";
+  // 本次实际扣费(幂等重放 / 未新购 → amount = 0)。
+  pandora.common.v1.CurrencyAmount cost    = 7;
+  // 扣费后该币种余额(UI 展示)。
+  pandora.common.v1.CurrencyAmount balance = 8;
 }
 
 message GetSectionsRequest {

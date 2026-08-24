@@ -1309,7 +1309,7 @@ class LoginUsecase:
                 _R.RESUME_WAIT_REASON_OWNER_UNKNOWN, OWNER_UNKNOWN_RETRY_AFTER_MS
             )
         else:
-            out.resume = owned
+            out.resume = await self._enrich_resume_from_match_authority(player_id, owned)
         return await deliver(out)
 
     # ── 战斗态两层权威(presence 投影 + matchmaker 耐久事实)──────────────
@@ -1944,6 +1944,112 @@ class LoginUsecase:
         )
         return True, out
 
+    # ── 撮合权威富化 / 首次进场 ──────────────────────────
+
+    async def _enrich_resume_from_match_authority(
+        self, player_id: int, out: ResumeContextResult
+    ) -> ResumeContextResult:
+        """owner 定完路由后,补充**非归属**的展示/恢复字段。对齐 Go `enrichResumeFromMatchAuthority`。
+
+        它绝不改 route / target / owner_epoch / entry_state：撮合权威只回答"这个玩家在撮合
+        流程的哪一步",不回答"他归谁管"(§9.22 单一 owner)。所以四个字段一律**只在为空时**
+        填,已有值的一概不覆盖。
+
+        ★ 为什么这条不能省：owner 记录里根本没有 match_id(`apply_owner_placement` 不设,
+          Go 的 `applyOwnerPlacement` 同样不设——这是两栈**共同设计**,不是缺陷),而客户端
+          `HasCompleteOwnerTarget` 对 route=BATTLE 硬要求 `match_id > 0`。缺了它 TARGET 判残缺,
+          连续 3 拍同 owner 身份后直接终态回登录(实测：`authority_entry_terminal`)。
+
+        富化失败只降级为字段缺失(客户端有 DS 握手后反查关卡表的兜底路径),不影响进场判定。
+        """
+        if self._match_resolver is None:
+            return out
+        try:
+            ma = await self._match_resolver.resolve_player_match_context(player_id)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — 与 Go 的 `if err != nil` 同宽
+            plog.get().warning(
+                "resume_match_enrichment_unavailable", player_id=player_id, err=str(exc),
+                hint="只影响 match_stage/game_mode/map_id 展示字段,不影响 owner 定的进场判定",
+            )
+            return out
+        # 只有活跃 claim 才是可恢复的撮合会话;终态/漂移记录不该带给客户端。
+        if ma.state != match_pb2.PLAYER_MATCH_CONTEXT_STATE_ACTIVE:
+            return out
+        if out.match_id == 0:
+            out.match_id = ma.match_id
+        if out.match_stage == _R.RESUME_MATCH_STAGE_UNSPECIFIED:
+            out.match_stage = _resume_stage_from_match_stage(ma.stage)
+        if out.game_mode == "":
+            out.game_mode = ma.game_mode
+        if out.map_id == 0:
+            out.map_id = ma.map_id
+        return out
+
+    async def _resolve_first_entry(
+        self, player_id: int, sess_jti: str
+    ) -> ResumeContextResult:
+        """owner 明确"无归属"时的首次进场链。对齐 Go `resolveFirstEntry`。
+
+        这不是故障：登出释放归属后重进也走这里。§9.23 要求统一入口在此**同样给出明确五态**,
+        而不是回一个什么都没填的裸响应——客户端拿到 entry_state=UNSPECIFIED 会判
+        `incomplete authoritative entry contract` 并无限 fail-closed 重查(实测：被踢回登录后
+        再登录就永远卡在登录界面)。
+
+            角色查询失败 → WAIT/ROLE_UNKNOWN(不得冒充未选角);
+            role=0       → ROLE_REQUIRED(且不分配 Hub、不占座、不签票);
+            role>0       → 分配首个 Hub,再回查权威给出 TARGET。
+        """
+        log = plog.get()
+        try:
+            role_id = await self._load_selected_role(player_id)
+        except asyncio.CancelledError:
+            raise
+        except BaseException:  # noqa: BLE001 — _load_selected_role 已打过 warning
+            return _wait_resume(
+                _R.RESUME_WAIT_REASON_ROLE_UNKNOWN, OWNER_UNKNOWN_RETRY_AFTER_MS
+            )
+        # 同 Login 的角色门：没部署角色权威(dev 裸跑)时不设门,直接分配 Hub。
+        if self._role_repo is not None and role_id == 0:
+            # debug 而非信息级：恢复入口会被客户端反复重查,未选角期间每次都走到这里。
+            log.debug(
+                "first_entry_role_required", player_id=player_id,
+                reason="role_not_selected",
+            )
+            out = ResumeContextResult()
+            out.route = _R.RESUME_ROUTE_HUB
+            out.entry_state = _R.RESUME_ENTRY_STATE_ROLE_REQUIRED
+            return out
+        # 已选角但无归属：补分配首个 Hub。复用既有 resolve_hub_endpoint(内部 assign_hub →
+        # 强 Begin 写权威),不新起第二条分配路径(§9.23 单一入口 / §15.2 复用)。
+        try:
+            await self.resolve_hub_endpoint(player_id, sess_jti)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            log.warning(
+                "first_entry_hub_assign_failed", player_id=player_id, err=str(exc),
+                reason="hub_assign_failed", role_id=role_id,
+                hint="带 retry_after 的 WAIT,客户端重查本入口继续推进",
+            )
+            return _wait_resume(
+                _R.RESUME_WAIT_REASON_NO_CAPACITY, OWNER_UNKNOWN_RETRY_AFTER_MS
+            )
+        # 分配成功 → 权威里已有归属,回查给出 exact TARGET。
+        decided, owned = await self._resolve_resume_from_owner(player_id)
+        if decided and owned.entry_state != _R.RESUME_ENTRY_STATE_WAIT:
+            return await self._enrich_resume_from_match_authority(player_id, owned)
+        # 刚分配完却查不到归属：不自洽,不冒充 TARGET,让客户端重查(§9.22 fail-closed)。
+        log.warning(
+            "first_entry_owner_missing_after_assign", player_id=player_id,
+            reason="owner_record_missing_after_assign", role_id=role_id,
+            hint="刚分配完 Hub 却查不到归属记录;返回 WAIT 让客户端重查权威",
+        )
+        return _wait_resume(
+            _R.RESUME_WAIT_REASON_OWNER_UNKNOWN, OWNER_UNKNOWN_RETRY_AFTER_MS
+        )
+
     # ── Hub 解析 ───────────────────────────────────────────────────────────
 
     async def _resolve_hub(
@@ -2511,10 +2617,14 @@ class LoginUsecase:
             raise errcode.PandoraError(errcode.ErrUnauthorized, "resume context: no player id")
         decided, owned = await self._resolve_resume_from_owner(player_id)
         if not decided:
-            # owner 明确"无归属" = 首次进场:客户端应走 Login/EnterRole 拿 Hub,
-            # 这里如实回 UNSPECIFIED,不冒充 HUB。
-            return ResumeContextResult()
-        return owned
+            # owner 明确"无归属" = 首次进场:走角色门 → 分配首个 Hub → 回查 exact TARGET
+            # (§9.23 统一入口)。**不能**回裸 UNSPECIFIED:客户端会判
+            # `incomplete authoritative entry contract` 并无限 fail-closed 重查。
+            return await self._resolve_first_entry(player_id, str(claims.get("jti") or ""))
+        if owned.entry_state == _R.RESUME_ENTRY_STATE_WAIT:
+            # 权威不可达 / 屏障未开:客户端按 retry_after 重查,不做富化。
+            return owned
+        return await self._enrich_resume_from_match_authority(player_id, owned)
 
 
 # ── TicketUsecase(legacy HS256)──────────────────────────────────────────────

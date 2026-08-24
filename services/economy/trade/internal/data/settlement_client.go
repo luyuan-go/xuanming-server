@@ -55,7 +55,12 @@ func (g *GrpcResourceLedger) Settle(ctx context.Context, order *tradev1.Order, i
 		BuyerId:     order.GetBuyerId(),
 		SellerItems: toItemGrants(order.GetItems()),
 		BuyerItems:  toItemGrants(order.GetBuyerItems()),
-		Price:       order.GetPrice(),
+		// P2P 交易当前只用金币计价。显式给 kind:inventory 对 UNSPECIFIED 一律 fail-closed,
+		// **不会**回退成金币(currency.proto)。price=0 的纯物物交换也带 kind,语义更清楚。
+		PriceAmount: &commonv1.CurrencyAmount{
+			Kind:   commonv1.CurrencyKind_CURRENCY_KIND_GOLD,
+			Amount: order.GetPrice(),
+		},
 	})
 	if err != nil {
 		return err

@@ -31,6 +31,7 @@
 #include "google/protobuf/extension_set.h"  // IWYU pragma: export
 #include "google/protobuf/unknown_field_set.h"
 #include "pandora/common/v1/errcode.pb.h"
+#include "pandora/common/v1/currency.pb.h"
 // @@protoc_insertion_point(includes)
 
 // Must be included last.
@@ -428,267 +429,6 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SaveCheckpointResponse final : publ
     ::google::protobuf::internal::HasBits<1> _has_bits_;
     ::google::protobuf::internal::CachedSize _cached_size_;
     int code_;
-    PROTOBUF_TSAN_DECLARE_MEMBER
-  };
-  union { Impl_ _impl_; };
-  friend struct ::TableStruct_pandora_2fbag_2fv1_2fbag_2eproto;
-};
-// -------------------------------------------------------------------
-
-class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED PurchaseCapacityResponse final : public ::google::protobuf::Message
-/* @@protoc_insertion_point(class_definition:pandora.bag.v1.PurchaseCapacityResponse) */ {
- public:
-  inline PurchaseCapacityResponse() : PurchaseCapacityResponse(nullptr) {}
-  ~PurchaseCapacityResponse() PROTOBUF_FINAL;
-
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-  void operator delete(PurchaseCapacityResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
-    SharedDtor(*msg);
-    ::google::protobuf::internal::SizedDelete(msg, sizeof(PurchaseCapacityResponse));
-  }
-#endif
-
-  template <typename = void>
-  explicit constexpr PurchaseCapacityResponse(::google::protobuf::internal::ConstantInitialized,
-                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
-                               class_data);
-
-  inline PurchaseCapacityResponse(const PurchaseCapacityResponse& from) : PurchaseCapacityResponse(nullptr, from) {}
-  inline PurchaseCapacityResponse(PurchaseCapacityResponse&& from) noexcept : PurchaseCapacityResponse(nullptr, ::std::move(from)) {}
-  inline PurchaseCapacityResponse& operator=(const PurchaseCapacityResponse& from) {
-    CopyFrom(from);
-    return *this;
-  }
-  inline PurchaseCapacityResponse& operator=(PurchaseCapacityResponse&& from) noexcept {
-    if (this == &from) return *this;
-    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
-      InternalSwap(&from);
-    } else {
-      CopyFrom(from);
-    }
-    return *this;
-  }
-
-  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
-      ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
-  }
-  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
-  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
-  }
-
-  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
-    return GetDescriptor();
-  }
-  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
-  GetDescriptor() {
-    return default_instance().GetMetadata().descriptor;
-  }
-  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
-    return default_instance().GetMetadata().reflection;
-  }
-  [[nodiscard]] static const PurchaseCapacityResponse& default_instance() {
-    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<PurchaseCapacityResponse>(&PurchaseCapacityResponse_globals_);
-  }
-  static constexpr int kIndexInFileMessages = 17;
-  friend void swap(PurchaseCapacityResponse& a, PurchaseCapacityResponse& b) { a.Swap(&b); }
-  inline void Swap(PurchaseCapacityResponse* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
-      InternalSwap(other);
-    } else {
-      ::google::protobuf::internal::GenericSwap(this, other);
-    }
-  }
-  void UnsafeArenaSwap(PurchaseCapacityResponse* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    ABSL_DCHECK(GetArena() == other->GetArena());
-    InternalSwap(other);
-  }
-
-  // implements Message ----------------------------------------------
-
-  [[nodiscard]] PurchaseCapacityResponse* PROTOBUF_NONNULL
-  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
-    return ::google::protobuf::Message::DefaultConstruct<PurchaseCapacityResponse>(arena);
-  }
-  using ::google::protobuf::Message::CopyFrom;
-  void CopyFrom(const PurchaseCapacityResponse& from);
-  using ::google::protobuf::Message::MergeFrom;
-  void MergeFrom(const PurchaseCapacityResponse& from) { PurchaseCapacityResponse::MergeImpl(*this, from); }
-
-  private:
-  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
-                        const ::google::protobuf::MessageLite& from_msg);
-
-  public:
-  [[nodiscard]] bool IsInitialized() const {
-    return true;
-  }
-  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
-  #if defined(PROTOBUF_CUSTOM_VTABLE)
-  private:
-  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
-  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
-
-  public:
-  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
-    return _InternalSerialize(*this, target, stream);
-  }
-  #else   // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] ::size_t ByteSizeLong() const final;
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
-  #endif  // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] int GetCachedSize() const {
-    return _impl_._cached_size_.Get();
-  }
-
-  private:
-  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static void SharedDtor(MessageLite& self);
-  void InternalSwap(PurchaseCapacityResponse* PROTOBUF_NONNULL other);
- private:
-  template <typename T>
-  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
-  static ::absl::string_view FullMessageName() { return "pandora.bag.v1.PurchaseCapacityResponse"; }
-
-  explicit PurchaseCapacityResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  PurchaseCapacityResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const PurchaseCapacityResponse& from);
-  PurchaseCapacityResponse(
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, PurchaseCapacityResponse&& from) noexcept
-      : PurchaseCapacityResponse(arena) {
-    *this = ::std::move(from);
-  }
-  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
-  static void* PROTOBUF_NONNULL PlacementNew_(
-      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static constexpr auto InternalNewImpl_();
-
- public:
-  static constexpr auto InternalGenerateClassData_(
-      const MessageLite& prototype,
-      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
-
-  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
-  // nested types ----------------------------------------------------
-
-  // accessors -------------------------------------------------------
-  enum : int {
-    kCodeFieldNumber = 1,
-    kPurchasesFieldNumber = 2,
-    kExtraFieldNumber = 3,
-    kEffectiveCapacityFieldNumber = 4,
-    kGoldCostFieldNumber = 5,
-    kGoldRemainingFieldNumber = 6,
-  };
-  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-  void clear_code() ;
-  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
-  void set_code(::pandora::common::v1::ErrCode value);
-
-  private:
-  ::pandora::common::v1::ErrCode _internal_code() const;
-  void _internal_set_code(::pandora::common::v1::ErrCode value);
-
-  public:
-  // uint32 purchases = 2 [json_name = "purchases"];
-  void clear_purchases() ;
-  [[nodiscard]] ::uint32_t purchases() const;
-  void set_purchases(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_purchases() const;
-  void _internal_set_purchases(::uint32_t value);
-
-  public:
-  // uint32 extra = 3 [json_name = "extra"];
-  void clear_extra() ;
-  [[nodiscard]] ::uint32_t extra() const;
-  void set_extra(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_extra() const;
-  void _internal_set_extra(::uint32_t value);
-
-  public:
-  // uint32 effective_capacity = 4 [json_name = "effectiveCapacity"];
-  void clear_effective_capacity() ;
-  [[nodiscard]] ::uint32_t effective_capacity() const;
-  void set_effective_capacity(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_effective_capacity() const;
-  void _internal_set_effective_capacity(::uint32_t value);
-
-  public:
-  // int64 gold_cost = 5 [json_name = "goldCost"];
-  void clear_gold_cost() ;
-  [[nodiscard]] ::int64_t gold_cost() const;
-  void set_gold_cost(::int64_t value);
-
-  private:
-  ::int64_t _internal_gold_cost() const;
-  void _internal_set_gold_cost(::int64_t value);
-
-  public:
-  // int64 gold_remaining = 6 [json_name = "goldRemaining"];
-  void clear_gold_remaining() ;
-  [[nodiscard]] ::int64_t gold_remaining() const;
-  void set_gold_remaining(::int64_t value);
-
-  private:
-  ::int64_t _internal_gold_remaining() const;
-  void _internal_set_gold_remaining(::int64_t value);
-
-  public:
-  // @@protoc_insertion_point(class_scope:pandora.bag.v1.PurchaseCapacityResponse)
- private:
-  class _Internal;
-  using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<3, 6,
-                          0, 0,
-                          2>;
-  static constexpr ParseTableT_ InternalGenerateParseTable_(
-      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
-  friend class ::google::protobuf::internal::TcParser;
-  #ifndef PROTOBUF_MESSAGE_GLOBALS
-  static const ParseTableT_ _table_;
-  #endif
-
-  friend class ::google::protobuf::MessageLite;
-  friend class ::google::protobuf::Arena;
-  friend ::google::protobuf::internal::PrivateAccess;
-  template <typename T>
-  friend class ::google::protobuf::Arena::InternalHelper;
-  using InternalArenaConstructable_ = void;
-  using DestructorSkippable_ = void;
-  struct Impl_ {
-    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
-                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
-        const PurchaseCapacityResponse& from_msg);
-    ::google::protobuf::internal::HasBits<1> _has_bits_;
-    ::google::protobuf::internal::CachedSize _cached_size_;
-    int code_;
-    ::uint32_t purchases_;
-    ::uint32_t extra_;
-    ::uint32_t effective_capacity_;
-    ::int64_t gold_cost_;
-    ::int64_t gold_remaining_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -1990,6 +1730,279 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED AppendJournalResponse final : publi
     ::google::protobuf::internal::CachedSize _cached_size_;
     ::uint64_t acked_seq_;
     int code_;
+    PROTOBUF_TSAN_DECLARE_MEMBER
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_pandora_2fbag_2fv1_2fbag_2eproto;
+};
+// -------------------------------------------------------------------
+
+class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED PurchaseCapacityResponse final : public ::google::protobuf::Message
+/* @@protoc_insertion_point(class_definition:pandora.bag.v1.PurchaseCapacityResponse) */ {
+ public:
+  inline PurchaseCapacityResponse() : PurchaseCapacityResponse(nullptr) {}
+  ~PurchaseCapacityResponse() PROTOBUF_FINAL;
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+  void operator delete(PurchaseCapacityResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
+    SharedDtor(*msg);
+    ::google::protobuf::internal::SizedDelete(msg, sizeof(PurchaseCapacityResponse));
+  }
+#endif
+
+  template <typename = void>
+  explicit constexpr PurchaseCapacityResponse(::google::protobuf::internal::ConstantInitialized,
+                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+                               class_data);
+
+  inline PurchaseCapacityResponse(const PurchaseCapacityResponse& from) : PurchaseCapacityResponse(nullptr, from) {}
+  inline PurchaseCapacityResponse(PurchaseCapacityResponse&& from) noexcept : PurchaseCapacityResponse(nullptr, ::std::move(from)) {}
+  inline PurchaseCapacityResponse& operator=(const PurchaseCapacityResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline PurchaseCapacityResponse& operator=(PurchaseCapacityResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
+      ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
+  }
+  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
+  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
+  }
+
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
+    return GetDescriptor();
+  }
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
+  GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  [[nodiscard]] static const PurchaseCapacityResponse& default_instance() {
+    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<PurchaseCapacityResponse>(&PurchaseCapacityResponse_globals_);
+  }
+  static constexpr int kIndexInFileMessages = 17;
+  friend void swap(PurchaseCapacityResponse& a, PurchaseCapacityResponse& b) { a.Swap(&b); }
+  inline void Swap(PurchaseCapacityResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
+      InternalSwap(other);
+    } else {
+      ::google::protobuf::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(PurchaseCapacityResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    ABSL_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  [[nodiscard]] PurchaseCapacityResponse* PROTOBUF_NONNULL
+  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
+    return ::google::protobuf::Message::DefaultConstruct<PurchaseCapacityResponse>(arena);
+  }
+  using ::google::protobuf::Message::CopyFrom;
+  void CopyFrom(const PurchaseCapacityResponse& from);
+  using ::google::protobuf::Message::MergeFrom;
+  void MergeFrom(const PurchaseCapacityResponse& from) { PurchaseCapacityResponse::MergeImpl(*this, from); }
+
+  private:
+  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
+                        const ::google::protobuf::MessageLite& from_msg);
+
+  public:
+  [[nodiscard]] bool IsInitialized() const {
+    return true;
+  }
+  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
+  #if defined(PROTOBUF_CUSTOM_VTABLE)
+  private:
+  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
+  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
+
+  public:
+  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+    return _InternalSerialize(*this, target, stream);
+  }
+  #else   // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] ::size_t ByteSizeLong() const final;
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
+  #endif  // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] int GetCachedSize() const {
+    return _impl_._cached_size_.Get();
+  }
+
+  private:
+  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static void SharedDtor(MessageLite& self);
+  void InternalSwap(PurchaseCapacityResponse* PROTOBUF_NONNULL other);
+ private:
+  template <typename T>
+  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
+  static ::absl::string_view FullMessageName() { return "pandora.bag.v1.PurchaseCapacityResponse"; }
+
+  explicit PurchaseCapacityResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  PurchaseCapacityResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const PurchaseCapacityResponse& from);
+  PurchaseCapacityResponse(
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, PurchaseCapacityResponse&& from) noexcept
+      : PurchaseCapacityResponse(arena) {
+    *this = ::std::move(from);
+  }
+  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
+  static void* PROTOBUF_NONNULL PlacementNew_(
+      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static constexpr auto InternalNewImpl_();
+
+ public:
+  static constexpr auto InternalGenerateClassData_(
+      const MessageLite& prototype,
+      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
+
+  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+  enum : int {
+    kCostFieldNumber = 7,
+    kBalanceFieldNumber = 8,
+    kCodeFieldNumber = 1,
+    kPurchasesFieldNumber = 2,
+    kExtraFieldNumber = 3,
+    kEffectiveCapacityFieldNumber = 4,
+  };
+  // .pandora.common.v1.CurrencyAmount cost = 7 [json_name = "cost"];
+  [[nodiscard]] bool has_cost()
+      const;
+  void clear_cost() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& cost() const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE release_cost();
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_cost();
+  void set_allocated_cost(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  void unsafe_arena_set_allocated_cost(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE unsafe_arena_release_cost();
+
+  private:
+  const ::pandora::common::v1::CurrencyAmount& _internal_cost() const;
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL _internal_mutable_cost();
+
+  public:
+  // .pandora.common.v1.CurrencyAmount balance = 8 [json_name = "balance"];
+  [[nodiscard]] bool has_balance()
+      const;
+  void clear_balance() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& balance() const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE release_balance();
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_balance();
+  void set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  void unsafe_arena_set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE unsafe_arena_release_balance();
+
+  private:
+  const ::pandora::common::v1::CurrencyAmount& _internal_balance() const;
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL _internal_mutable_balance();
+
+  public:
+  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+  void clear_code() ;
+  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
+  void set_code(::pandora::common::v1::ErrCode value);
+
+  private:
+  ::pandora::common::v1::ErrCode _internal_code() const;
+  void _internal_set_code(::pandora::common::v1::ErrCode value);
+
+  public:
+  // uint32 purchases = 2 [json_name = "purchases"];
+  void clear_purchases() ;
+  [[nodiscard]] ::uint32_t purchases() const;
+  void set_purchases(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_purchases() const;
+  void _internal_set_purchases(::uint32_t value);
+
+  public:
+  // uint32 extra = 3 [json_name = "extra"];
+  void clear_extra() ;
+  [[nodiscard]] ::uint32_t extra() const;
+  void set_extra(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_extra() const;
+  void _internal_set_extra(::uint32_t value);
+
+  public:
+  // uint32 effective_capacity = 4 [json_name = "effectiveCapacity"];
+  void clear_effective_capacity() ;
+  [[nodiscard]] ::uint32_t effective_capacity() const;
+  void set_effective_capacity(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_effective_capacity() const;
+  void _internal_set_effective_capacity(::uint32_t value);
+
+  public:
+  // @@protoc_insertion_point(class_scope:pandora.bag.v1.PurchaseCapacityResponse)
+ private:
+  class _Internal;
+  using ParseTableT_ =
+      ::google::protobuf::internal::TcParseTable<3, 6,
+                          2, 0,
+                          2>;
+  static constexpr ParseTableT_ InternalGenerateParseTable_(
+      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
+  friend class ::google::protobuf::internal::TcParser;
+  #ifndef PROTOBUF_MESSAGE_GLOBALS
+  static const ParseTableT_ _table_;
+  #endif
+
+  friend class ::google::protobuf::MessageLite;
+  friend class ::google::protobuf::Arena;
+  friend ::google::protobuf::internal::PrivateAccess;
+  template <typename T>
+  friend class ::google::protobuf::Arena::InternalHelper;
+  using InternalArenaConstructable_ = void;
+  using DestructorSkippable_ = void;
+  struct Impl_ {
+    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
+                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+        const PurchaseCapacityResponse& from_msg);
+    ::google::protobuf::internal::HasBits<1> _has_bits_;
+    ::google::protobuf::internal::CachedSize _cached_size_;
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE cost_;
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE balance_;
+    int code_;
+    ::uint32_t purchases_;
+    ::uint32_t extra_;
+    ::uint32_t effective_capacity_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -7236,7 +7249,7 @@ inline void PurchaseCapacityRequest::_internal_set_bag_type(::uint32_t value) {
 inline void PurchaseCapacityResponse::clear_code() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.code_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
 }
 inline ::pandora::common::v1::ErrCode PurchaseCapacityResponse::code() const {
   // @@protoc_insertion_point(field_get:pandora.bag.v1.PurchaseCapacityResponse.code)
@@ -7244,7 +7257,7 @@ inline ::pandora::common::v1::ErrCode PurchaseCapacityResponse::code() const {
 }
 inline void PurchaseCapacityResponse::set_code(::pandora::common::v1::ErrCode value) {
   _internal_set_code(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
   // @@protoc_insertion_point(field_set:pandora.bag.v1.PurchaseCapacityResponse.code)
 }
 inline ::pandora::common::v1::ErrCode PurchaseCapacityResponse::_internal_code() const {
@@ -7260,7 +7273,7 @@ inline void PurchaseCapacityResponse::_internal_set_code(::pandora::common::v1::
 inline void PurchaseCapacityResponse::clear_purchases() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.purchases_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
 }
 inline ::uint32_t PurchaseCapacityResponse::purchases() const {
   // @@protoc_insertion_point(field_get:pandora.bag.v1.PurchaseCapacityResponse.purchases)
@@ -7268,7 +7281,7 @@ inline ::uint32_t PurchaseCapacityResponse::purchases() const {
 }
 inline void PurchaseCapacityResponse::set_purchases(::uint32_t value) {
   _internal_set_purchases(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
   // @@protoc_insertion_point(field_set:pandora.bag.v1.PurchaseCapacityResponse.purchases)
 }
 inline ::uint32_t PurchaseCapacityResponse::_internal_purchases() const {
@@ -7284,7 +7297,7 @@ inline void PurchaseCapacityResponse::_internal_set_purchases(::uint32_t value) 
 inline void PurchaseCapacityResponse::clear_extra() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.extra_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
 }
 inline ::uint32_t PurchaseCapacityResponse::extra() const {
   // @@protoc_insertion_point(field_get:pandora.bag.v1.PurchaseCapacityResponse.extra)
@@ -7292,7 +7305,7 @@ inline ::uint32_t PurchaseCapacityResponse::extra() const {
 }
 inline void PurchaseCapacityResponse::set_extra(::uint32_t value) {
   _internal_set_extra(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
   // @@protoc_insertion_point(field_set:pandora.bag.v1.PurchaseCapacityResponse.extra)
 }
 inline ::uint32_t PurchaseCapacityResponse::_internal_extra() const {
@@ -7308,7 +7321,7 @@ inline void PurchaseCapacityResponse::_internal_set_extra(::uint32_t value) {
 inline void PurchaseCapacityResponse::clear_effective_capacity() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.effective_capacity_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
 }
 inline ::uint32_t PurchaseCapacityResponse::effective_capacity() const {
   // @@protoc_insertion_point(field_get:pandora.bag.v1.PurchaseCapacityResponse.effective_capacity)
@@ -7316,7 +7329,7 @@ inline ::uint32_t PurchaseCapacityResponse::effective_capacity() const {
 }
 inline void PurchaseCapacityResponse::set_effective_capacity(::uint32_t value) {
   _internal_set_effective_capacity(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
   // @@protoc_insertion_point(field_set:pandora.bag.v1.PurchaseCapacityResponse.effective_capacity)
 }
 inline ::uint32_t PurchaseCapacityResponse::_internal_effective_capacity() const {
@@ -7328,52 +7341,190 @@ inline void PurchaseCapacityResponse::_internal_set_effective_capacity(::uint32_
   _impl_.effective_capacity_ = value;
 }
 
-// int64 gold_cost = 5 [json_name = "goldCost"];
-inline void PurchaseCapacityResponse::clear_gold_cost() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_cost_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
+// .pandora.common.v1.CurrencyAmount cost = 7 [json_name = "cost"];
+inline bool PurchaseCapacityResponse::has_cost() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000001U);
+  PROTOBUF_ASSUME(!value || _impl_.cost_ != nullptr);
+  return value;
 }
-inline ::int64_t PurchaseCapacityResponse::gold_cost() const {
-  // @@protoc_insertion_point(field_get:pandora.bag.v1.PurchaseCapacityResponse.gold_cost)
-  return _internal_gold_cost();
-}
-inline void PurchaseCapacityResponse::set_gold_cost(::int64_t value) {
-  _internal_set_gold_cost(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
-  // @@protoc_insertion_point(field_set:pandora.bag.v1.PurchaseCapacityResponse.gold_cost)
-}
-inline ::int64_t PurchaseCapacityResponse::_internal_gold_cost() const {
+inline const ::pandora::common::v1::CurrencyAmount& PurchaseCapacityResponse::_internal_cost() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.gold_cost_;
+  const ::pandora::common::v1::CurrencyAmount* p = _impl_.cost_;
+  return p != nullptr ? *p : *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<::pandora::common::v1::CurrencyAmount>(&::pandora::common::v1::CurrencyAmount_globals_);
 }
-inline void PurchaseCapacityResponse::_internal_set_gold_cost(::int64_t value) {
+inline const ::pandora::common::v1::CurrencyAmount& PurchaseCapacityResponse::cost() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.bag.v1.PurchaseCapacityResponse.cost)
+  return _internal_cost();
+}
+inline void PurchaseCapacityResponse::unsafe_arena_set_allocated_cost(
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_cost_ = value;
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.cost_);
+  }
+  _impl_.cost_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:pandora.bag.v1.PurchaseCapacityResponse.cost)
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE PurchaseCapacityResponse::release_cost() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::pandora::common::v1::CurrencyAmount* released = _impl_.cost_;
+  _impl_.cost_ = nullptr;
+  if (::google::protobuf::internal::DebugHardenForceCopyInRelease()) {
+    auto* old = reinterpret_cast<::google::protobuf::MessageLite*>(released);
+    released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    if (GetArena() == nullptr) {
+      delete old;
+    }
+  } else {
+    if (GetArena() != nullptr) {
+      released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    }
+  }
+  return released;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE PurchaseCapacityResponse::unsafe_arena_release_cost() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.bag.v1.PurchaseCapacityResponse.cost)
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::pandora::common::v1::CurrencyAmount* temp = _impl_.cost_;
+  _impl_.cost_ = nullptr;
+  return temp;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL PurchaseCapacityResponse::_internal_mutable_cost() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.cost_ == nullptr) {
+    auto* p = ::google::protobuf::Message::DefaultConstruct<::pandora::common::v1::CurrencyAmount>(GetArena());
+    _impl_.cost_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(p);
+  }
+  return _impl_.cost_;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL PurchaseCapacityResponse::mutable_cost()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::pandora::common::v1::CurrencyAmount* _msg = _internal_mutable_cost();
+  // @@protoc_insertion_point(field_mutable:pandora.bag.v1.PurchaseCapacityResponse.cost)
+  return _msg;
+}
+inline void PurchaseCapacityResponse::set_allocated_cost(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::Arena* message_arena = GetArena();
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (message_arena == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.cost_);
+  }
+
+  if (value != nullptr) {
+    ::google::protobuf::Arena* submessage_arena = reinterpret_cast<::google::protobuf::Message*>(value)->GetArena();
+    if (message_arena != submessage_arena) {
+      value = ::google::protobuf::internal::GetOwnedMessage(message_arena, value, submessage_arena);
+    }
+    SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  }
+
+  _impl_.cost_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  // @@protoc_insertion_point(field_set_allocated:pandora.bag.v1.PurchaseCapacityResponse.cost)
 }
 
-// int64 gold_remaining = 6 [json_name = "goldRemaining"];
-inline void PurchaseCapacityResponse::clear_gold_remaining() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_remaining_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
+// .pandora.common.v1.CurrencyAmount balance = 8 [json_name = "balance"];
+inline bool PurchaseCapacityResponse::has_balance() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000002U);
+  PROTOBUF_ASSUME(!value || _impl_.balance_ != nullptr);
+  return value;
 }
-inline ::int64_t PurchaseCapacityResponse::gold_remaining() const {
-  // @@protoc_insertion_point(field_get:pandora.bag.v1.PurchaseCapacityResponse.gold_remaining)
-  return _internal_gold_remaining();
-}
-inline void PurchaseCapacityResponse::set_gold_remaining(::int64_t value) {
-  _internal_set_gold_remaining(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
-  // @@protoc_insertion_point(field_set:pandora.bag.v1.PurchaseCapacityResponse.gold_remaining)
-}
-inline ::int64_t PurchaseCapacityResponse::_internal_gold_remaining() const {
+inline const ::pandora::common::v1::CurrencyAmount& PurchaseCapacityResponse::_internal_balance() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.gold_remaining_;
+  const ::pandora::common::v1::CurrencyAmount* p = _impl_.balance_;
+  return p != nullptr ? *p : *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<::pandora::common::v1::CurrencyAmount>(&::pandora::common::v1::CurrencyAmount_globals_);
 }
-inline void PurchaseCapacityResponse::_internal_set_gold_remaining(::int64_t value) {
+inline const ::pandora::common::v1::CurrencyAmount& PurchaseCapacityResponse::balance() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.bag.v1.PurchaseCapacityResponse.balance)
+  return _internal_balance();
+}
+inline void PurchaseCapacityResponse::unsafe_arena_set_allocated_balance(
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_remaining_ = value;
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.balance_);
+  }
+  _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:pandora.bag.v1.PurchaseCapacityResponse.balance)
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE PurchaseCapacityResponse::release_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ::pandora::common::v1::CurrencyAmount* released = _impl_.balance_;
+  _impl_.balance_ = nullptr;
+  if (::google::protobuf::internal::DebugHardenForceCopyInRelease()) {
+    auto* old = reinterpret_cast<::google::protobuf::MessageLite*>(released);
+    released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    if (GetArena() == nullptr) {
+      delete old;
+    }
+  } else {
+    if (GetArena() != nullptr) {
+      released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    }
+  }
+  return released;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE PurchaseCapacityResponse::unsafe_arena_release_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.bag.v1.PurchaseCapacityResponse.balance)
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ::pandora::common::v1::CurrencyAmount* temp = _impl_.balance_;
+  _impl_.balance_ = nullptr;
+  return temp;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL PurchaseCapacityResponse::_internal_mutable_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.balance_ == nullptr) {
+    auto* p = ::google::protobuf::Message::DefaultConstruct<::pandora::common::v1::CurrencyAmount>(GetArena());
+    _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(p);
+  }
+  return _impl_.balance_;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL PurchaseCapacityResponse::mutable_balance()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ::pandora::common::v1::CurrencyAmount* _msg = _internal_mutable_balance();
+  // @@protoc_insertion_point(field_mutable:pandora.bag.v1.PurchaseCapacityResponse.balance)
+  return _msg;
+}
+inline void PurchaseCapacityResponse::set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::Arena* message_arena = GetArena();
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (message_arena == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.balance_);
+  }
+
+  if (value != nullptr) {
+    ::google::protobuf::Arena* submessage_arena = reinterpret_cast<::google::protobuf::Message*>(value)->GetArena();
+    if (message_arena != submessage_arena) {
+      value = ::google::protobuf::internal::GetOwnedMessage(message_arena, value, submessage_arena);
+    }
+    SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  }
+
+  _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  // @@protoc_insertion_point(field_set_allocated:pandora.bag.v1.PurchaseCapacityResponse.balance)
 }
 
 // -------------------------------------------------------------------

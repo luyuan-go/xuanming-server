@@ -8,9 +8,11 @@
   排查时被当成现状读,实际早已与 xlsx 不符)。所以这里每次现生成、用完即弃,
   唯一源头始终是策划的 z_专精_效果.xlsx → configtable/dist/talent_effect.json。
 
+  做法与 attr_point_effect_csv.ps1 逐条对齐,三份效果表的导入流程不该各有一套规矩。
+
   用法(改完表之后):
-    1. pwsh tools/scripts/configtable_gen.ps1        # 先把 xlsx 导成 dist
-    2. pwsh tools/scripts/talent_effect_csv.ps1      # 再生成 CSV
+    1. pwsh tools/scripts/configtable_gen.ps1         # 先把 xlsx 导成 dist
+    2. pwsh tools/scripts/talent_effect_csv.ps1   # 再生成 CSV
     3. 在 UE 编辑器里把 CSV 重导入 cfgtalenteffect 数据表(见下方"首次创建")
 
   首次创建(结构是新加的 C++ USTRUCT,必须先编译出 FCfgTalentEffect 才能建表):
@@ -45,7 +47,7 @@ if (-not $OutPath) {
 
 $rows = (Get-Content -Raw -Encoding UTF8 $DistJson | ConvertFrom-Json).rows
 if (-not $rows) {
-    Write-Error "$DistJson 里没有任何行,不生成空表(空表会让所有天赋静默失去加成)。"
+    Write-Error "$DistJson 里没有任何行,不生成空表(空表会让所有天赋静默失去战斗加成)。"
 }
 
 # 首列是 DataTable 行名,取 ID;其余列名必须与 FCfgTalentEffect 的 UPROPERTY 同名。

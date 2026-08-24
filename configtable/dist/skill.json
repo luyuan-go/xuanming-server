@@ -964,7 +964,7 @@
       "ability_path": "/Game/Test/Role/Hero/ParagonDekker/GA/GA_ParagonDekker_Skill01.GA_ParagonDekker_Skill01_C",
       "target_select_mode": 1,
       "use_distance": 2000,
-      "damage_rate": 7
+      "damage_rate": 2
     },
     {
       "id": 101221,
@@ -977,7 +977,7 @@
       "ability_path": "/Game/Test/Role/Hero/ParagonDekker/GA/GA_ParagonDekker_Skill02.GA_ParagonDekker_Skill02_C",
       "target_select_mode": 1,
       "use_distance": 2200,
-      "damage_rate": 0.48
+      "damage_rate": 2
     },
     {
       "id": 101231,
@@ -990,7 +990,133 @@
       "ability_path": "/Game/Test/Role/Hero/ParagonDekker/GA/GA_ParagonDekker_Skill03.GA_ParagonDekker_Skill03_C",
       "target_select_mode": 1,
       "use_distance": 3500,
-      "damage_rate": 7.504
+      "damage_rate": 6,
+      "correction_rate": 1,
+      "effect_count": 1,
+      "damage_display": 938
+    },
+    {
+      "id": 101401,
+      "remark": "普攻1段",
+      "segment": 1,
+      "next_segment_id": 101402,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Attack01.GA_Wukong_Attack01_C",
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 0.5
+    },
+    {
+      "id": 101402,
+      "remark": "普攻2段",
+      "segment": 2,
+      "next_segment_id": 101403,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Attack02.GA_Wukong_Attack02_C",
+      "target_select_mode": 1,
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 0.5
+    },
+    {
+      "id": 101403,
+      "remark": "普攻3段",
+      "segment": 3,
+      "next_segment_id": 101404,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Attack03.GA_Wukong_Attack03_C",
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 0.6
+    },
+    {
+      "id": 101404,
+      "remark": "普攻4段",
+      "segment": 4,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Attack04.GA_Wukong_Attack04_C",
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 0.7
+    },
+    {
+      "id": 101411,
+      "remark": "聚形散气",
+      "segment": 1,
+      "cd_timing": 1,
+      "cd_duration": 6,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Skill01.GA_Wukong_Skill01_C",
+      "target_select_mode": 2,
+      "orient_target_type": 1,
+      "orient_target_id": 102,
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 1
+    },
+    {
+      "id": 101421,
+      "remark": "戳棍",
+      "segment": 1,
+      "next_segment_id": 101422,
+      "cd_timing": 3,
+      "cd_duration": 10,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Skill02_Charge.GA_Wukong_Skill02_Charge_C",
+      "target_camp": 4,
+      "damage_rate": 1
+    },
+    {
+      "id": 101422,
+      "remark": "戳棍1段",
+      "segment": 1,
+      "cd_timing": 1,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Skill02_1.GA_Wukong_Skill02_1_C",
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 1
+    },
+    {
+      "id": 101423,
+      "remark": "戳棍2段",
+      "segment": 2,
+      "cd_timing": 1,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Skill02_2.GA_Wukong_Skill02_2_C",
+      "target_camp": 4,
+      "use_distance": 1200,
+      "rot_mode": 1,
+      "damage_rate": 2
+    },
+    {
+      "id": 101424,
+      "remark": "戳棍3段",
+      "segment": 3,
+      "cd_timing": 1,
+      "disable_move": true,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Skill02_3.GA_Wukong_Skill02_3_C",
+      "target_camp": 4,
+      "use_distance": 1500,
+      "rot_mode": 1,
+      "damage_rate": 3
+    },
+    {
+      "id": 101431,
+      "remark": "身外身法",
+      "segment": 1,
+      "cd_timing": 1,
+      "cd_duration": 30,
+      "ability_path": "/Game/Test/Role/Hero/Wukong/GA/GA_Wukong_Skill03.GA_Wukong_Skill03_C",
+      "target_camp": 4,
+      "use_distance": 500,
+      "rot_mode": 1,
+      "damage_rate": 1
     }
   ]
 }

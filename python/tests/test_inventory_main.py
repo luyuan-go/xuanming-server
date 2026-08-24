@@ -23,6 +23,7 @@ import pytest
 
 from pandorapy import errcode
 from pandorapy.services.inventory import biz as ibiz
+from pandorapy.services.inventory import currency as ccy
 from pandorapy.services.inventory import catalog as icat
 from pandorapy.services.inventory import conf as iconf
 from pandorapy.services.inventory import fingerprint as ifp
@@ -43,6 +44,10 @@ GO_MAIN = "services/economy/inventory/cmd/inventory/main.go"
 GO_REPO = "services/economy/inventory/internal/data/inventory_repo.go"
 GO_INSTANCE = "services/economy/inventory/internal/data/inventory_instance.go"
 GO_TRANSFER = "services/economy/inventory/internal/data/inventory_transfer.go"
+GO_SHOP = "services/economy/inventory/internal/data/shop_purchase.go"
+
+GOLD = ccy.CURRENCY_GOLD
+DIAMOND = ccy.CURRENCY_DIAMOND
 GO_CT = "services/economy/inventory/cmd/inventory/configtable.go"
 DEV_YAML = "services/economy/inventory/etc/inventory-dev.yaml"
 
@@ -243,21 +248,50 @@ def test_fingerprint_formats_match_go_source(repo_root: pathlib.Path) -> None:
     assert ifp.legacy_sell_instance_fingerprint(99, 7, 50) == _sha("sell_inst|99|item=7|gold=50")
     assert '"sell_inst|%d|item=%d|gold=%d"' in repo_src
 
-    assert ifp.auction_settle_fingerprint(1, 2, 7, 3, 60) == _sha(
+    # ★ 金币成交必须**沿用旧格式**:多币种上线前写下的存量流水行,指纹就是按
+    #   `|gold=%d` 算的。无条件换成 `|cur=` 会让存量行遇到同 key 重试被判成
+    #   ErrInventoryIdempotencyConflict —— 那是"同键不同请求"的反作弊信号,
+    #   用它来报"我升级了协议"会把真正的串账淹没在噪声里。
+    assert ifp.auction_settle_fingerprint(1, 2, 7, 3, GOLD, 60) == _sha(
         "auction_settle|seller=1|buyer=2|item=7|qty=3|gold=60"
     )
     assert "auction_settle|seller=%d|buyer=%d|item=%d|qty=%d|gold=%d" in repo_src
+    # 非金币才启用新格式(与 Go 的 else 分支同串)。
+    assert ifp.auction_settle_fingerprint(1, 2, 7, 3, DIAMOND, 60) == _sha(
+        "auction_settle|seller=1|buyer=2|item=7|qty=3|cur=2:60"
+    )
+    assert "auction_settle|seller=%d|buyer=%d|item=%d|qty=%d|cur=%d:%d" in repo_src
 
     # grant:items 必须按 item_config_id 升序规范化,否则同一笔发放算出两个指纹。
-    assert ifp.grant_fingerprint([(9, 1), (2, 5)], 100) == _sha("grant|2:5|9:1|gold=100")
-    assert ifp.grant_fingerprint([(2, 5), (9, 1)], 100) == ifp.grant_fingerprint(
-        [(9, 1), (2, 5)], 100
+    assert ifp.grant_fingerprint([(9, 1), (2, 5)], {GOLD: 100}) == _sha("grant|2:5|9:1|gold=100")
+    assert ifp.grant_fingerprint([(2, 5), (9, 1)], {GOLD: 100}) == ifp.grant_fingerprint(
+        [(9, 1), (2, 5)], {GOLD: 100}
     )
+    # 纯道具发放(无货币)也走旧格式的 `|gold=0` —— 存量行就是这么算的。
+    assert ifp.grant_fingerprint([(2, 5)], {}) == _sha("grant|2:5|gold=0")
+    assert ifp.grant_fingerprint([(2, 5)], {GOLD: 0}) == ifp.grant_fingerprint([(2, 5)], {})
+    # 出现非金币币种才切新格式;describe_balances 按 kind 升序、逗号分隔。
+    assert ifp.grant_fingerprint([(2, 5)], {DIAMOND: 7, GOLD: 3}) == _sha(
+        "grant|2:5|cur=1:3,2:7"
+    )
+    assert 'b.WriteString("|cur=")' in repo_src
 
     assert ifp.player_trade_settle_fingerprint(
-        1, 2, [(9, 1), (2, 5)], [(3, 2)], 70
+        1, 2, [(9, 1), (2, 5)], [(3, 2)], GOLD, 70
     ) == _sha("trade_settle|seller=1|buyer=2|sell|2:5|9:1|buy|3:2|price=70")
     assert "trade_settle|seller=%d|buyer=%d|" in repo_src
+    # 非金币 + 非零价才追加 `|cur=<kind>`;price=0 的纯物物交换永远走旧格式。
+    assert ifp.player_trade_settle_fingerprint(
+        1, 2, [(9, 1), (2, 5)], [(3, 2)], DIAMOND, 70
+    ) == _sha("trade_settle|seller=1|buyer=2|sell|2:5|9:1|buy|3:2|price=70|cur=2")
+    assert ifp.player_trade_settle_fingerprint(
+        1, 2, [(9, 1)], [(3, 2)], DIAMOND, 0
+    ) == ifp.player_trade_settle_fingerprint(1, 2, [(9, 1)], [(3, 2)], GOLD, 0)
+
+    # 商店购买指纹**刻意不含价格**(价格是热更配置,编进去会让改价后的重试判冲突)。
+    assert ifp.purchase_fingerprint(1, 10001, 3) == _sha("shop_buy|shop=1|item=10001|units=3")
+    shop_src = (repo_root / GO_SHOP).read_text(encoding="utf-8")
+    assert '"shop_buy|shop=%d|item=%d|units=%d"' in shop_src
 
     assert ifp.grant_instances_fingerprint([9, 2]) == _sha("grant_inst|2|9")
     assert '"grant_inst"' in inst_src
@@ -645,11 +679,12 @@ class _FakeRepo:
     def __init__(self) -> None:
         self.instances: list[ItemInstance] = []
         self.items: list[ItemStack] = []
-        self.gold = 0
+        # 多币种改造后 get_inventory 返回的是 {kind: amount} 快照,不再是 gold 标量。
+        self.balances: dict[int, int] = {}
         self.identified: tuple | None = None
 
     async def get_inventory(self, player_id: int):  # noqa: ANN001, ARG002
-        return self.gold, self.items
+        return self.balances, self.items
 
     async def list_instances(self, player_id: int):  # noqa: ANN001, ARG002
         return self.instances
@@ -796,7 +831,7 @@ def test_check_items_owned_skips_instance_table_when_capacity_disabled() -> None
 def test_unknown_escrow_side_is_rejected() -> None:
     uc = ibiz.InventoryUsecase(_FakeRepo(), iconf.InventoryConf())
     with pytest.raises(errcode.PandoraError) as ei:
-        asyncio.run(uc.freeze_for_order(1, 2, 99, 7, 1, 1))
+        asyncio.run(uc.freeze_for_order(1, 2, 99, 7, 1, GOLD, 1))
     assert ei.value.code == errcode.ErrInvalidArg
 
 
@@ -804,9 +839,9 @@ def test_self_settlement_is_rejected_on_both_paths() -> None:
     """自成交 / 自交易:同一玩家在同 key 下要写两条流水 → 唯一键冲突整笔失败。"""
     uc = ibiz.InventoryUsecase(_FakeRepo(), iconf.InventoryConf())
     with pytest.raises(errcode.PandoraError):
-        asyncio.run(uc.settle_auction_match(1, 5, 5, 2, 3, 7, 1, 1))
+        asyncio.run(uc.settle_auction_match(1, 5, 5, 2, 3, 7, 1, GOLD, 1))
     with pytest.raises(errcode.PandoraError):
-        asyncio.run(uc.settle_player_trade(1, 5, 5, [], [], 10))
+        asyncio.run(uc.settle_player_trade(1, 5, 5, [], [], GOLD, 10))
 
 
 # ── service 层:鉴权边界(两种方向,不许统一)─────────────────────────────
@@ -959,7 +994,7 @@ def test_settle_overflow_is_rejected_not_wrapped() -> None:
     """Python 的 int 不会溢出,但列是 BIGINT —— 判据必须与 Go 一致地拒掉。"""
     uc = ibiz.InventoryUsecase(_FakeRepo(), iconf.InventoryConf())
     with pytest.raises(errcode.PandoraError) as ei:
-        asyncio.run(uc.settle_auction_match(1, 5, 6, 2, 3, 7, 2**62, 2**62))
+        asyncio.run(uc.settle_auction_match(1, 5, 6, 2, 3, 7, 2**62, GOLD, 2**62))
     assert ei.value.code == errcode.ErrInvalidArg
 
 
@@ -968,7 +1003,7 @@ def test_grant_items_rejects_equipment_config() -> None:
     uc = ibiz.InventoryUsecase(_FakeRepo(), iconf.InventoryConf())
     uc.set_item_catalog(_FakeCatalog(_equip_def(), None))
     with pytest.raises(errcode.PandoraError) as ei:
-        asyncio.run(uc.grant_items(1, [ItemGrant(item_config_id=10, count=1)], 0, "k"))
+        asyncio.run(uc.grant_items(1, [ItemGrant(item_config_id=10, count=1)], {}, "k"))
     assert ei.value.code == errcode.ErrInvalidArg
 
 

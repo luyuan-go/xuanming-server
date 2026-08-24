@@ -237,8 +237,23 @@ class TradeUsecase:
                     it.item_config_id,
                     it.count,
                 )
+        # 价格双向闸。**两道都要**,原因两边不同:
+        #
+        # 下界:Go 侧 price 是 uint64,`price < 0` 恒为 false 所以已删;Python **没有类型保护**,
+        #      biz 可以被进程内任何调用方传进真正的负数(既有用例正是这么测的),
+        #      所以这道闸在 Python 侧仍然有效、必须保留。
+        # 上界:proto 的 price 是 uint64,一个 price=-1 的老客户端 / 被篡改请求会被解成 1.8e19。
+        #      没有上界就会一路落 Redis、占配额,直到 inventory 结算才被挡下。
+        #      与 Go 侧 services/economy/trade/internal/biz/trade.go 的同名闸逐字对齐。
         if price < 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "price must be >= 0")
+        if price > self._cfg.max_trade_price:
+            raise errcode.PandoraError(
+                errcode.ErrInvalidArg,
+                "price out of range: %d (max %d)",
+                price,
+                self._cfg.max_trade_price,
+            )
 
         now = now_ms()
         order = trade_pb2.Order(

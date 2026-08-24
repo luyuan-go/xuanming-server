@@ -30,7 +30,9 @@ import random
 from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy.services.inventory import catalog as cat
+from pandorapy.services.inventory import currency as ccy
 from pandorapy.services.inventory.conf import InventoryConf
+from pandorapy.services.inventory.currency_biz import ShopUsecaseMixin
 from pandorapy.services.inventory.models import (
     EscrowKind,
     EscrowedInstance,
@@ -39,10 +41,10 @@ from pandorapy.services.inventory.models import (
     ItemGrant,
     ItemInstance,
     ItemStack,
+    SaleOutcome,
     TransferClaimItem,
 )
 from pandorapy.services.inventory import settle as settle_mod
-from pandorapy.services.inventory.settle import safe_mul_int64
 
 # ── 请求形状上限(§9.18 读取侧 / 写入侧上限)────────────────────────────────
 
@@ -89,10 +91,13 @@ def _default_rand_intn(n: int) -> int:
     return random.randrange(n)
 
 
-class InventoryUsecase:
-    """inventory 服务业务逻辑核心。对应 Go 的 biz.InventoryUsecase。"""
+class InventoryUsecase(ShopUsecaseMixin):
+    """inventory 服务业务逻辑核心。对应 Go 的 biz.InventoryUsecase。
 
-    __slots__ = ("_repo", "_cfg", "_catalog", "_sf", "_rand_intn")
+    货币规则与 NPC 商店在 ShopUsecaseMixin(currency_biz.py),对应 Go 的 biz/currency.go。
+    """
+
+    __slots__ = ("_repo", "_cfg", "_catalog", "_sf", "_rand_intn", "_shops")
 
     def __init__(self, repo, cfg: InventoryConf) -> None:  # noqa: ANN001
         self._repo = repo
@@ -102,6 +107,9 @@ class InventoryUsecase:
         # sf 生成装备实例 instance_id。可为 None:未装配时 GrantInstances 返回
         # ErrInvalidArg(实例背包未启用),不影响堆叠计数背包。
         self._sf = None
+        # shops 是商店表的唯一权威(生产 = configtable shop 表)。未注入即 fail-closed:
+        # 一份可能与客户端漂移的兜底价格参与扣钱,比拒掉一次购买危险得多。
+        self._shops = None
         self._rand_intn = _default_rand_intn
 
     # ── 注入(用 setter 而非构造参数,避免旧调用点被迫改签名)──
@@ -125,15 +133,15 @@ class InventoryUsecase:
 
     # ── 读 ────────────────────────────────────────────────────────────────
 
-    async def get_inventory(self, player_id: int) -> tuple[int, list[ItemStack]]:
+    async def get_inventory(self, player_id: int) -> tuple[dict[int, int], list[ItemStack]]:
         if player_id == 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "player_id required")
         return await self._repo.get_inventory(player_id)
 
     async def get_inventory_full(
         self, player_id: int
-    ) -> tuple[int, list[ItemStack], int, list[ItemInstance]]:
-        """货币 + 堆叠道具 + 容量 + 装备实例。
+    ) -> tuple[dict[int, int], list[ItemStack], int, list[ItemInstance]]:
+        """全部币种余额 + 堆叠道具 + 容量 + 装备实例。
 
         ★ 未启用实例背包(capacity<=0)时**不读** player_item_instance 表:
           既有库可能尚未迁移出该表,读它会让整个 GetInventory 报内部错。
@@ -141,11 +149,11 @@ class InventoryUsecase:
         """
         if player_id == 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "player_id required")
-        gold, items = await self._repo.get_inventory(player_id)
+        balances, items = await self._repo.get_inventory(player_id)
         if self._cfg.capacity <= 0:
-            return gold, items, 0, []
+            return balances, items, 0, []
         instances = await self._repo.list_instances(player_id)
-        return gold, items, self._cfg.capacity, instances
+        return balances, items, self._cfg.capacity, instances
 
     async def check_items_owned(self, player_id: int, item_config_ids) -> list[int]:  # noqa: ANN001
         """批量查询玩家持有情况,返回入参集合中**确实持有**的子集(去重,升序)。
@@ -176,7 +184,7 @@ class InventoryUsecase:
                 raise errcode.PandoraError(errcode.ErrInvalidArg, "item_config_id required")
             want.add(cid)
 
-        _gold, items = await self._repo.get_inventory(player_id)
+        _balances, items = await self._repo.get_inventory(player_id)
         owned = {it.item_config_id for it in items if it.count > 0 and it.item_config_id in want}
 
         # 未启用实例背包时不读 player_item_instance(与 get_inventory_full 同一条件)。
@@ -225,17 +233,51 @@ class InventoryUsecase:
     # ── 堆叠道具:发放 / 使用 / 丢弃 / 出售 ────────────────────────────────
 
     async def grant_items(
-        self, player_id: int, items: list[ItemGrant], gold: int, idempotency_key: str
-    ) -> int:
-        """幂等发放道具 + 货币(系统驱动,idempotency_key 防重复入账)。返回发放后 gold。"""
+        self, player_id: int, items: list[ItemGrant], currencies, idempotency_key: str
+    ) -> dict[int, int]:  # noqa: ANN001
+        """幂等发放道具 + 多币种货币(系统驱动,idempotency_key 防重复入账)。
+
+        返回发放后**全部币种**余额。
+
+        ★ currencies 的校验刻意逐条做,而不是"总额不为负"一刀切。
+          旧实现写的是 `if gold < 0`;协议改成 uint64 后,Go 侧那句会**恒为 false**
+          (编译器与 linter 都不报),等于闸门被静默拆掉。Python 侧则相反 ——
+          它不会恒为 false,而是**根本拦不住**:上游若真传了负数,dict 里就是负数,
+          一路写进 UNSIGNED 列被截断。所以正确形态是在**类型边界**校验
+          (service 层 balances_from_proto 判币种/正数/重复),内层改判
+          "是否为 0 / 是否超单笔上限",并在 currency.add_currency_tx 再加一道显式负数闸。
+        """
+        currencies = dict(currencies or {})
         if player_id == 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "player_id required")
         if not idempotency_key:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "idempotency_key required")
-        if not items and gold == 0:
+        if not items and not currencies:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "nothing to grant")
-        if gold < 0:
-            raise errcode.PandoraError(errcode.ErrInvalidArg, "gold must not be negative")
+        for kind, amount in currencies.items():
+            ccy.validate_currency_kind(kind)
+            if amount == 0:
+                raise errcode.PandoraError(
+                    errcode.ErrInvalidArg,
+                    "grant amount must be positive: kind=%d",
+                    int(kind),
+                )
+            if amount < 0:
+                # Go 侧 uint64 让这条不可能;Python 必须显式拒(见上方 docstring)。
+                raise errcode.PandoraError(
+                    errcode.ErrInvalidArg,
+                    "grant amount must be positive: kind=%d",
+                    int(kind),
+                )
+            if amount > self._max_currency_per_grant():
+                # 单笔发放上限(§9.6 五要件④ 额度):防止上游算错把天文数字灌进经济体。
+                raise errcode.PandoraError(
+                    errcode.ErrInvalidArg,
+                    "grant amount exceeds per-call limit: kind=%d amount=%d limit=%d",
+                    int(kind),
+                    amount,
+                    self._max_currency_per_grant(),
+                )
         for it in items:
             if it.item_config_id == 0:
                 raise errcode.PandoraError(errcode.ErrInvalidArg, "item_config_id required")
@@ -256,18 +298,20 @@ class InventoryUsecase:
                         "equipment item %d must use GrantInstances",
                         it.item_config_id,
                     )
-        detail = f"grant items={len(items)} gold={gold}"
-        new_gold, already = await self._repo.grant_items(
-            player_id, items, gold, idempotency_key, detail
+        # detail 格式与多币种改造前**逐字节一致**(`gold=%d`):它是人读审计串,
+        # 两栈流水混看时格式必须同源;金币之外的币种由 result_currency_delta 列承担。
+        detail = f"grant items={len(items)} gold={ccy.balances_get(currencies, ccy.CURRENCY_GOLD)}"
+        new_balances, already = await self._repo.grant_items(
+            player_id, items, currencies, idempotency_key, detail
         )
         if already:
             plog.get().info(
                 "grant_items_idempotent_hit",
                 player_id=player_id,
                 idempotency_key=idempotency_key,
-                gold=new_gold,
+                gold=ccy.balances_get(new_balances, ccy.CURRENCY_GOLD),
             )
-        return new_gold
+        return new_balances
 
     async def use_item(
         self, player_id: int, item_config_id: int, count: int, idempotency_key: str
@@ -401,10 +445,10 @@ class InventoryUsecase:
 
     async def sell_item(
         self, player_id: int, item_config_id: int, count: int, idempotency_key: str
-    ) -> tuple[int, int]:
-        """出售道具换金币。返回 (剩余数量, 出售后 gold)。
+    ) -> SaleOutcome:
+        """出售道具换货币(币种由 sell_currency_kind 配置,留空 = 金币)。
 
-        ★ 溢出的处理很绕但必须照抄:单价×数量溢出时 gold 置 0 交给 repo,
+        ★ 溢出的处理很绕但必须照抄:单价×数量溢出时 amount 置 0 交给 repo,
           repo 会以 ErrInventoryNotSellable 拒;此时 biz 把它**改写成 ErrInvalidArg**。
           直接在 biz 拒掉的话,同 key 的重试就拿不到 repo 的幂等回放
           —— 而首次请求可能已经成功过。
@@ -417,21 +461,27 @@ class InventoryUsecase:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "count must be positive")
         if not idempotency_key:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "idempotency_key required")
+        kind = self._sell_currency_kind()
         definition = self._item_definition(item_config_id)
-        gold = 0
+        amount = 0
         overflow = False
         if definition is not None and not definition.equipment and definition.sell_unit_price > 0:
-            gold, ok = safe_mul_int64(definition.sell_unit_price, count)
-            overflow = not ok or gold <= 0
+            amount, ok = ccy.safe_mul_currency(definition.sell_unit_price, count)
+            overflow = not ok or amount == 0
             if overflow:
-                gold = 0
-        detail = f"sell item={item_config_id} count={count} gold={gold}"
+                amount = 0
+        # detail 格式保持与多币种改造前**逐字节一致**(`gold=%d`):升级前写下的流水行靠
+        # repo_sql._legacy_sale_ledger_matches 解析这个格式判定"是否同一次出售",
+        # 格式一变,老玩家用老 key 重试就会被误判成 ErrInventoryIdempotencyConflict。
+        detail = f"sell item={item_config_id} count={count} gold={amount}"
         try:
-            remaining, new_gold, already = await self._repo.sell_item(
-                player_id, item_config_id, count, gold, idempotency_key, detail
+            outcome, already = await self._repo.sell_item(
+                player_id, item_config_id, count, kind, amount, idempotency_key, detail
             )
         except errcode.PandoraError as exc:
             if overflow and exc.code == errcode.ErrInventoryNotSellable:
+                # 溢出与"本来就不可出售"在 repo 里都表现为 amount==0;这里用调用侧记下的
+                # overflow 标志把它翻回更准确的错误码,免得策划以为是自己没配售价。
                 raise errcode.PandoraError(
                     errcode.ErrInvalidArg,
                     "sell amount overflow item=%d price=%d count=%d",
@@ -446,10 +496,10 @@ class InventoryUsecase:
                 player_id=player_id,
                 idempotency_key=idempotency_key,
                 item=item_config_id,
-                remaining=remaining,
-                gold=new_gold,
+                remaining=outcome.remaining,
+                earned=outcome.earned,
             )
-        return remaining, new_gold
+        return outcome
 
     @staticmethod
     def _require_stack_op_args(
@@ -651,11 +701,11 @@ class InventoryUsecase:
 
     async def sell_instance(
         self, player_id: int, instance_id: int, item_config_id: int, idempotency_key: str
-    ) -> int:
-        """原子出售唯一装备实例。返回出售后 gold。
+    ) -> SaleOutcome:
+        """原子出售唯一装备实例。
 
         ★ 即使热更后配置已删 / 禁售也要进 repo:同 key 的首次成功结果必须从 ledger 回放。
-          gold=0 的首次请求由 repo 在 claim 后回滚为 NotSellable,不会建脏流水。
+          amount=0 的首次请求由 repo 在 claim 后回滚为 NotSellable,不会建脏流水。
         """
         if player_id == 0 or instance_id == 0 or item_config_id == 0:
             raise errcode.PandoraError(
@@ -663,17 +713,19 @@ class InventoryUsecase:
             )
         if not idempotency_key:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "idempotency_key required")
+        kind = self._sell_currency_kind()
         definition = self._item_definition(item_config_id)
-        gold = 0
+        amount = 0
         if (
             definition is not None
             and (self._catalog is None or definition.equipment)
             and definition.sell_unit_price > 0
         ):
-            gold = definition.sell_unit_price
-        detail = f"sell instance={instance_id} item={item_config_id} gold={gold}"
-        new_gold, already = await self._repo.sell_instance(
-            player_id, instance_id, item_config_id, gold, idempotency_key, detail
+            amount = definition.sell_unit_price
+        # detail 格式保持与多币种改造前逐字节一致(`gold=%d`),理由见 sell_item。
+        detail = f"sell instance={instance_id} item={item_config_id} gold={amount}"
+        outcome, already = await self._repo.sell_instance(
+            player_id, instance_id, item_config_id, kind, amount, idempotency_key, detail
         )
         if already:
             plog.get().info(
@@ -681,9 +733,10 @@ class InventoryUsecase:
                 player_id=player_id,
                 instance_id=instance_id,
                 idempotency_key=idempotency_key,
-                gold=new_gold,
+                earned=outcome.earned,
+                balances=ccy.describe_balances(outcome.balances),
             )
-        return new_gold
+        return outcome
 
     # ── 结算 ──────────────────────────────────────────────────────────────
 
@@ -696,12 +749,13 @@ class InventoryUsecase:
         buy_order_id: int,
         item_config_id: int,
         quantity: int,
+        kind: int,
         unit_price: int,
     ) -> None:
         """原子结算一笔拍卖成交(幂等键基于 match_id)。"""
         # 入参校验 / 溢出守卫 / 幂等键格式复用 settle.py(与 auction 服务共用同一份口径,
         # 不在这里再抄一遍 —— 抄一遍就多一个会漂移的真相)。
-        total_gold = settle_mod.validate_auction_settle(
+        total_amount = settle_mod.validate_auction_settle(
             match_id=match_id,
             seller_id=seller_id,
             buyer_id=buyer_id,
@@ -709,10 +763,11 @@ class InventoryUsecase:
             buy_order_id=buy_order_id,
             item_config_id=item_config_id,
             quantity=quantity,
+            kind=kind,
             unit_price=unit_price,
         )
         idempotency_key = settle_mod.auction_settle_key(match_id)
-        detail = settle_mod.auction_settle_detail(match_id, item_config_id, quantity, total_gold)
+        detail = settle_mod.auction_settle_detail(match_id, item_config_id, quantity, total_amount)
         already = await self._repo.settle_auction_match(
             match_id,
             seller_id,
@@ -721,7 +776,8 @@ class InventoryUsecase:
             buy_order_id,
             item_config_id,
             quantity,
-            total_gold,
+            kind,
+            total_amount,
             idempotency_key,
             detail,
         )
@@ -733,7 +789,7 @@ class InventoryUsecase:
                 buyer_id=buyer_id,
                 item=item_config_id,
                 qty=quantity,
-                gold=total_gold,
+                gold=total_amount,
             )
 
     async def settle_player_trade(
@@ -743,6 +799,7 @@ class InventoryUsecase:
         buyer_id: int,
         seller_items: list[ItemGrant],
         buyer_items: list[ItemGrant],
+        kind: int,
         price: int,
     ) -> None:
         """原子结算一笔玩家间点对点交易(幂等键基于 order_id)。
@@ -755,6 +812,7 @@ class InventoryUsecase:
             buyer_id=buyer_id,
             seller_items=seller_items,
             buyer_items=buyer_items,
+            kind=kind,
             price=price,
         )
         idempotency_key = settle_mod.trade_settle_key(order_id)
@@ -768,6 +826,7 @@ class InventoryUsecase:
             buyer_id,
             seller_items,
             buyer_items,
+            kind,
             price,
             idempotency_key,
             detail,
@@ -790,24 +849,28 @@ class InventoryUsecase:
         side: int,
         item_config_id: int,
         quantity: int,
+        currency_kind: int,
         unit_price: int,
     ) -> None:
-        """挂单冻结资产。SELL 冻道具,BUY 冻 quantity×unit_price 金币。"""
+        """挂单冻结资产。SELL 冻道具,BUY 冻 quantity×unit_price 个 currency_kind 货币。"""
         if player_id == 0 or order_id == 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "player_id / order_id required")
         if item_config_id == 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "item_config_id required")
         if quantity <= 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "quantity must be positive")
+        # unit_price 在协议里已是 uint64,`== 0` 即完整校验;Python 无类型保护,
+        # 仍显式写 `<= 0` 拒负数(负单价 × 正数量 = 负总价,会把扣钱变成加钱)。
         if unit_price <= 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "unit_price must be positive")
-        frozen_gold = 0
+        frozen_amount = 0
         if side == ESCROW_SIDE_SELL:
             kind = EscrowKind.ITEM
         elif side == ESCROW_SIDE_BUY:
-            kind = EscrowKind.GOLD
-            frozen_gold, ok = safe_mul_int64(unit_price, quantity)
-            if not ok or frozen_gold <= 0:
+            kind = EscrowKind.CURRENCY
+            ccy.validate_currency_kind(currency_kind)
+            frozen_amount, ok = ccy.safe_mul_currency(unit_price, quantity)
+            if not ok or frozen_amount == 0:
                 raise errcode.PandoraError(
                     errcode.ErrInvalidArg,
                     "freeze amount overflow order=%d price=%d qty=%d",
@@ -818,7 +881,7 @@ class InventoryUsecase:
         else:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "unknown escrow side %d", side)
         already = await self._repo.freeze_for_order(
-            player_id, order_id, kind, item_config_id, quantity, frozen_gold
+            player_id, order_id, kind, item_config_id, quantity, currency_kind, frozen_amount
         )
         if already:
             plog.get().info(
@@ -837,35 +900,39 @@ class InventoryUsecase:
         side: int,
         item_config_id: int,
         remaining_quantity: int,
+        currency_kind: int,
         unit_price: int,
     ) -> None:
         """为旧版本已进入订单状态机、但可能没成功冻结资产的订单补齐 escrow。
 
-        ★ 入参是 **uint64**(proto 里就是 uint64),必须先卡进 int64 再往下走:
-          列是 BIGINT,超过 int64 的值写进去要么报错要么变成负数。
+        ★ 数量仍走**有符号** int64(CLAUDE.md §5.12 例外:quantity 一族参与减法,
+          不随货币一起改无符号),所以这里只钳数量,**不再钳价格** ——
+          价格从入口到落库全程无符号语义,没有任何一处强转回 int64。
+          旧实现同时钳了两者;若只删闸不删强转,超过 MaxInt64 的价格会被转成负数,
+          一路穿到扣款处让 `have < n` 恒 false,把扣钱变成加钱(测绘报告 R5)。
         """
         if player_id == 0 or order_id == 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "player_id / order_id required")
         if item_config_id == 0:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "item_config_id required")
-        if remaining_quantity == 0 or unit_price == 0:
+        if remaining_quantity <= 0 or unit_price <= 0:
             raise errcode.PandoraError(
                 errcode.ErrInvalidArg, "remaining_quantity / unit_price must be positive"
             )
         max_int64 = (1 << 63) - 1
-        if remaining_quantity > max_int64 or unit_price > max_int64:
+        if remaining_quantity > max_int64:
             raise errcode.PandoraError(
                 errcode.ErrInvalidArg,
-                "ensure escrow amount exceeds int64 order=%d remaining=%d price=%d",
+                "ensure escrow quantity exceeds int64 order=%d remaining=%d",
                 order_id,
                 remaining_quantity,
-                unit_price,
             )
         if side == ESCROW_SIDE_SELL:
             kind = EscrowKind.ITEM
         elif side == ESCROW_SIDE_BUY:
-            kind = EscrowKind.GOLD
-            _total, ok = safe_mul_int64(unit_price, remaining_quantity)
+            kind = EscrowKind.CURRENCY
+            ccy.validate_currency_kind(currency_kind)
+            _total, ok = ccy.safe_mul_currency(unit_price, remaining_quantity)
             if not ok:
                 raise errcode.PandoraError(
                     errcode.ErrInvalidArg,
@@ -877,7 +944,13 @@ class InventoryUsecase:
         else:
             raise errcode.PandoraError(errcode.ErrInvalidArg, "unknown escrow side %d", side)
         already = await self._repo.ensure_auction_escrow(
-            player_id, order_id, kind, item_config_id, remaining_quantity, unit_price
+            player_id,
+            order_id,
+            kind,
+            item_config_id,
+            remaining_quantity,
+            currency_kind,
+            unit_price,
         )
         if already:
             plog.get().info(

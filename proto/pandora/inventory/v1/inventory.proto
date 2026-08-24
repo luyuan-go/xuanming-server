@@ -1,9 +1,10 @@
 // Pandora InventoryService 协议(背包,W5 ③ 2026-06-18)。
 //
 // 职责(docs/design/go-services.md §2.9 economy 域):
-//   - 玩家货币(金币)余额读写
+//   - 玩家**多币种**货币余额读写(CurrencyKind × uint64,按 (player_id, kind) 存)
 //   - 背包道具持有(按 item_config_id 堆叠计数)
-//   - 大厅态道具使用(开箱 / 经验书 / 消耗品)与出售换金币
+//   - 大厅态道具使用(开箱 / 经验书 / 消耗品)与出售换货币
+//   - NPC 商店服务端权威买卖(GetShop / PurchaseShopItem)
 //
 // 边界(docs/design/ds-arch.md §0.1):
 //   - 战斗内即时用道具 / 出装 / 购买道具 = UE GAS(GameplayEffect),不经 gRPC;
@@ -17,6 +18,7 @@ syntax = "proto3";
 package pandora.inventory.v1;
 
 import "pandora/common/v1/errcode.proto";
+import "pandora/common/v1/currency.proto";
 import "pandora/bag/v1/bag.proto";
 
 service InventoryService {
@@ -37,7 +39,10 @@ service InventoryService {
   // phase0 DS 本地 Guid 不是 inventory instance_id，实例只能回大厅走 DiscardInstance。
   rpc DiscardBattleItem(DiscardBattleItemRequest) returns (DiscardBattleItemResponse);
 
-  // SellItem 出售道具换金币(原子扣道具 + 加金币)。
+  // SellItem 出售可堆叠道具换货币(原子扣道具 + 加货币)。
+  // 单价来自道具表 sell_price;结算币种取服务端配置 `currency.sell_kind`(默认金币)。
+  // 刻意**不**给道具表加"出售币种"列:当前没有"卖某道具得钻石"的确认需求,
+  // 加列要动策划源表且属预设性复杂化(§15.3);真有需求时再加列,接口不用改。
   rpc SellItem(SellItemRequest) returns (SellItemResponse);
 
   // DiscardItem 丢弃可堆叠道具(客户端 RPC,以调用者身份为准)。
@@ -68,9 +73,35 @@ service InventoryService {
   // 目标格越界(>= capacity)/ 已被占用 → 拒。纯大厅整理操作,不影响属性。
   rpc MoveInstance(MoveInstanceRequest) returns (MoveInstanceResponse);
 
-  // SellInstance 出售唯一装备实例换金币(客户端 RPC,以调用者身份为准)。
-  // 绑定实例拒绝；删除实例与金币入账、ledger 幂等流水在同一事务。
+  // SellInstance 出售唯一装备实例换货币(客户端 RPC,以调用者身份为准)。
+  // 绑定实例拒绝；删除实例与货币入账、ledger 幂等流水在同一事务。
   rpc SellInstance(SellInstanceRequest) returns (SellInstanceResponse);
+
+  // ── NPC 商店(服务端权威买卖,2026-08-22)──
+  //
+  // 背景:主城 NPC 商店此前完全是客户端本地模拟(UE `AMyEntityPlayerController::BuyShopItem`
+  // 用本地 `SimulatedGold` 扣钱、`UMyBagComponent::AddItem` 直接入包),既不落库也不可信,
+  // 与不变量 §9.6「派生数值一律服务端计算」冲突。本组 RPC 把商店搬到服务端权威。
+  //
+  // 价目表来自配置表 `商店/d_商店.xlsx` → `pandora.config.v1.ShopTableData`,
+  // 与关卡 / 道具表同一条热更流水线(§9.15);客户端**不得**上报价格,只报"买哪个、买几份"。
+
+  // GetShop 读某个商店的权威价目表(客户端 RPC;只读,不鉴权到具体玩家资产)。
+  // 客户端用它渲染商品列表与单价——展示口径与扣费口径因此同源,不会漂移(§17.3)。
+  // 商店不存在 / 未配置 → ERR_INVALID_ARG,客户端据此隐藏商店页签。
+  rpc GetShop(GetShopRequest) returns (GetShopResponse);
+
+  // PurchaseShopItem 向 NPC 商店购买道具(客户端 RPC,以调用者身份为准)。
+  //
+  // 服务端权威链:读商店表定价 → 校验该商店确实在售该道具 → 溢出安全算总价 →
+  // 同一 MySQL 本地事务里【扣货币 + 入包(堆叠计数或生成装备实例) + 写 ledger 幂等流水】。
+  // 客户端传来的任何价格都不被信任;count 只是"买几份",单价与每份数量以表为准。
+  //
+  // 幂等键 = idempotency_key(客户端生成,绑定 shop_id+item_config_id+count 指纹):
+  // 响应丢失重试不会重复扣费、不会重复入包(§9.7)。
+  // 余额不足 → ERR_INVENTORY_INSUFFICIENT;不在售 → ERR_INVENTORY_NOT_PURCHASABLE;
+  // 装备实例背包满 → ERR_INVENTORY_CAPACITY_FULL(此时整笔回滚,不扣钱)。
+  rpc PurchaseShopItem(PurchaseShopItemRequest) returns (PurchaseShopItemResponse);
 
   // FreezeForOrder 拍卖挂单冻结资产(系统接口,仅后端内部直连):
   //   卖单(SELL):把 quantity 个 item_config_id 从活跃背包移入托管(escrow),挂单期间不可被别处消耗;
@@ -167,11 +198,11 @@ service InventoryService {
   rpc CheckInstancesOwned(CheckInstancesOwnedRequest) returns (CheckInstancesOwnedResponse);
 }
 
-// EscrowSide 冻结方向(对齐 auction OrderSide:SELL=1 冻道具 / BUY=2 冻金币)。
+// EscrowSide 冻结方向(对齐 auction OrderSide:SELL=1 冻道具 / BUY=2 冻货币)。
 enum EscrowSide {
   ESCROW_SIDE_UNSPECIFIED = 0;
   ESCROW_SIDE_SELL        = 1;  // 卖单:冻结道具
-  ESCROW_SIDE_BUY         = 2;  // 买单:冻结金币
+  ESCROW_SIDE_BUY         = 2;  // 买单:冻结货币(币种由 currency_kind 指定)
 }
 
 // ItemStack 是背包里某配置道具的持有堆叠(客户端可见结构)。
@@ -187,19 +218,20 @@ message ItemGrant {
   int64  count          = 2;
 }
 
-// CurrencyKind 货币类型(枚举底层 int32,§13;不属于 ID 规则)。
-enum CurrencyKind {
-  CURRENCY_KIND_UNSPECIFIED = 0;
-  CURRENCY_KIND_GOLD        = 1;  // 金币(出售道具 / 大厅经济主货币)
-}
+// 货币结构(CurrencyKind / CurrencyAmount / CurrencyBalancesStorageRecord)统一定义在
+// pandora/common/v1/currency.proto —— 配置表(商店定价)与经济域协议共用同一份币种词汇,
+// 避免 config 反向依赖业务域。本文件只引用,不再自定义。
 
 // Inventory 是玩家背包快照(客户端可见结构)。
 message Inventory {
   uint64 player_id = 1;
-  int64  gold      = 2;  // 金币余额
+  reserved 2;                        // 原 int64 gold 单币种余额,已被 currencies 取代
+  reserved "gold";
   repeated ItemStack items = 3;
   int32  capacity  = 4;              // 背包格子容量(装备实例上限;<=0 表示未启用实例背包)
   repeated ItemInstance instances = 5;  // 装备类实例(每件唯一 + 鉴定后随机属性)
+  // 全部币种余额(按 kind 升序,只含非零项;空 = 该玩家所有币种均为 0)。
+  repeated pandora.common.v1.CurrencyAmount currencies = 6;
 }
 
 // ItemAttribute 是装备实例鉴定后的一条随机属性(attr_id 属性配置 ID,§12;value 数值)。
@@ -248,13 +280,20 @@ message GetInventoryResponse {
 message GrantItemsRequest {
   uint64 player_id       = 1;
   repeated ItemGrant items = 2;  // 每条 count 须 > 0
-  int64  gold            = 3;    // 同时发放金币(>=0)
+  reserved 3;                    // 原 int64 gold 单币种发放,已被 currencies 取代
+  reserved "gold";
   string idempotency_key = 4;
+  // 同时发放的货币(每条 amount 须 > 0,kind 不得重复且不得为 UNSPECIFIED)。
+  // 可空 = 纯道具发放;items 与 currencies 同时为空 → ERR_INVALID_ARG。
+  repeated pandora.common.v1.CurrencyAmount currencies = 5;
 }
 
 message GrantItemsResponse {
   pandora.common.v1.ErrCode code = 1;
-  int64 gold = 2;  // 发放后金币余额
+  reserved 2;                    // 原 int64 gold,已被 currencies 取代
+  reserved "gold";
+  // 发放后玩家全部币种余额(按 kind 升序,只含非零项)。
+  repeated pandora.common.v1.CurrencyAmount currencies = 3;
 }
 
 // CheckItemsOwnedRequest 批量拥有权查询(系统接口)。
@@ -340,7 +379,12 @@ message SellItemRequest {
 message SellItemResponse {
   pandora.common.v1.ErrCode code = 1;
   int64 remaining = 2;  // 出售后该道具剩余数量
-  int64 gold      = 3;  // 出售后金币余额
+  reserved 3;           // 原 int64 gold,已被 balance / earned 取代
+  reserved "gold";
+  // 出售后该币种余额(kind = 本次结算币种)。
+  pandora.common.v1.CurrencyAmount balance = 4;
+  // 本次出售实际获得(幂等重放返回首次执行的入账额,不是 0;UI 用它提示"获得 X")。
+  pandora.common.v1.CurrencyAmount earned  = 5;
 }
 
 message DiscardItemRequest {
@@ -364,9 +408,11 @@ message SettleAuctionMatchRequest {
   uint64 buyer_id       = 3;  // 买家 player_id(付金币 / 收道具)
   uint32 item_config_id = 4;  // 成交道具配置 ID(uint32,§12)
   int64  quantity       = 5;  // 成交数量(> 0)
-  int64  unit_price     = 6;  // 成交单价金币(> 0,被动挂单价)
+  uint64 unit_price     = 6;  // 成交单价(> 0,被动挂单价;非负金额按 §5.12 用 uint64)
   uint64 sell_order_id  = 7;  // 卖单 order_id(定位卖家道具 escrow)
-  uint64 buy_order_id   = 8;  // 买单 order_id(定位买家金币 escrow)
+  uint64 buy_order_id   = 8;  // 买单 order_id(定位买家货币 escrow)
+  // 结算币种(必填,不得为 UNSPECIFIED);与买单 escrow 冻结时的币种必须一致,否则整笔拒。
+  pandora.common.v1.CurrencyKind currency_kind = 9;
 }
 
 message SettleAuctionMatchResponse {
@@ -380,8 +426,11 @@ message SettlePlayerTradeRequest {
   uint64 seller_id    = 2;  // 卖家 player_id(交 seller_items,收 buyer_items + price)
   uint64 buyer_id     = 3;  // 买家 player_id(交 buyer_items + price,收 seller_items)
   repeated ItemGrant seller_items = 4;  // 卖家交付给买家的道具(每条 count > 0)
-  repeated ItemGrant buyer_items  = 5;  // 买家交付给卖家的道具(可空 = 纯金币购买)
-  int64  price        = 6;  // 买家付卖家的金币(>= 0)
+  repeated ItemGrant buyer_items  = 5;  // 买家交付给卖家的道具(可空 = 纯货币购买)
+  reserved 6;                           // 原 int64 price 单币种,已被 price_amount 取代
+  reserved "price";
+  // 买家付卖家的货币(amount 可为 0 = 纯物物交换;amount > 0 时 kind 不得为 UNSPECIFIED)。
+  pandora.common.v1.CurrencyAmount price_amount = 7;
 }
 
 message SettlePlayerTradeResponse {
@@ -393,10 +442,12 @@ message SettlePlayerTradeResponse {
 message FreezeForOrderRequest {
   uint64     player_id      = 1;  // 挂单玩家 player_id
   uint64     order_id       = 2;  // 挂单 order_id(冻结幂等键 + escrow 键)
-  EscrowSide side           = 3;  // SELL=冻道具 / BUY=冻金币
+  EscrowSide side           = 3;  // SELL=冻道具 / BUY=冻货币
   uint32     item_config_id = 4;  // 道具配置 ID(uint32,§12)
   int64      quantity       = 5;  // 挂单数量(> 0)
-  int64      unit_price     = 6;  // 挂单单价金币(> 0;BUY 冻 quantity*unit_price)
+  uint64     unit_price     = 6;  // 挂单单价(> 0;BUY 冻 quantity*unit_price,§5.12 非负用 uint64)
+  // 冻结币种(BUY 必填;SELL 冻的是道具,本字段忽略)。
+  pandora.common.v1.CurrencyKind currency_kind = 7;
 }
 
 message FreezeForOrderResponse {
@@ -409,10 +460,12 @@ message FreezeForOrderResponse {
 message EnsureAuctionEscrowRequest {
   uint64     player_id          = 1;  // 挂单玩家 player_id
   uint64     order_id           = 2;  // 挂单 order_id(escrow 唯一键)
-  EscrowSide side               = 3;  // SELL=确保剩余道具托管 / BUY=确保剩余金币托管
+  EscrowSide side               = 3;  // SELL=确保剩余道具托管 / BUY=确保剩余货币托管
   uint32     item_config_id     = 4;  // 订单不可变道具配置 ID
   uint64     remaining_quantity = 5;  // 尚未成交的剩余数量(> 0)
-  uint64     unit_price         = 6;  // 订单单价金币(> 0;BUY 至少托管 remaining*price)
+  uint64     unit_price         = 6;  // 订单单价(> 0;BUY 至少托管 remaining*price)
+  // 托管币种(BUY 必填;与已有 active escrow 的币种不符时严格拒,不得静默改币种)。
+  pandora.common.v1.CurrencyKind currency_kind    = 7;
 }
 
 message EnsureAuctionEscrowResponse {
@@ -485,7 +538,62 @@ message SellInstanceRequest {
 
 message SellInstanceResponse {
   pandora.common.v1.ErrCode code = 1;
-  int64 gold = 2;  // 出售后金币余额
+  reserved 2;      // 原 int64 gold,已被 balance / earned 取代
+  reserved "gold";
+  // 出售后该币种余额(kind = 本次结算币种)。
+  pandora.common.v1.CurrencyAmount balance = 3;
+  // 本次出售实际获得(幂等重放返回首次执行的入账额)。
+  pandora.common.v1.CurrencyAmount earned  = 4;
+}
+
+// ── NPC 商店消息(2026-08-22)──
+
+// GetShopRequest 读商店价目表。shop_id 是配置表商店 ID(uint32,§5.6)。
+message GetShopRequest {
+  uint32 shop_id = 1;
+}
+
+// ShopEntry 是商店里的一档商品(客户端可见结构)。
+//
+// 一次购买 = 买 count_per_unit 个 item_config_id,付 unit_price 个 currency_kind;
+// 买 N 份就是 N 倍。把"每份数量"独立成列是为了表达"10 个一组的药水包"这类打包售卖,
+// 而不是让客户端自己乘。
+message ShopEntry {
+  uint32       item_config_id  = 1;
+  uint32       count_per_unit  = 2;  // 每份发放数量(>= 1)
+  pandora.common.v1.CurrencyKind currency_kind   = 3;  // 计价币种
+  uint64       unit_price      = 4;  // 每份单价(> 0)
+  uint32       sort_order      = 5;  // 展示排序(小的在前)
+}
+
+message GetShopResponse {
+  pandora.common.v1.ErrCode code = 1;
+  uint32 shop_id = 2;
+  // 该商店在售商品(按 sort_order,再按 item_config_id 升序)。
+  repeated ShopEntry entries = 3;
+}
+
+// PurchaseShopItemRequest NPC 商店购买(客户端 RPC,以 Envoy 注入身份为准)。
+//
+// **刻意不含价格字段**:价格是权威数据,客户端只表达"买哪个、买几份"(§17.2)。
+message PurchaseShopItemRequest {
+  uint64 player_id       = 1;
+  uint32 shop_id         = 2;
+  uint32 item_config_id  = 3;
+  uint32 unit_count      = 4;  // 购买份数(> 0,服务端另有单次上限)
+  string idempotency_key = 5;
+}
+
+message PurchaseShopItemResponse {
+  pandora.common.v1.ErrCode code = 1;
+  // 扣费后该币种余额。
+  pandora.common.v1.CurrencyAmount balance = 2;
+  // 本次实际扣费(幂等重放返回首次执行的扣费额,不是 0)。
+  pandora.common.v1.CurrencyAmount cost    = 3;
+  // 本次实际入包的可堆叠道具(非装备商品走这里)。
+  repeated ItemGrant granted_items = 4;
+  // 本次实际入包的装备实例(装备类商品每份生成一件独立未鉴定实例)。
+  repeated ItemInstance granted_instances = 5;
 }
 
 // ── 邮件 transfer 附件实例托管消息(2026-07-22)──

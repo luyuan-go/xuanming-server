@@ -254,7 +254,22 @@ func (l *LocalHubFleetProvider) buildArgs() []string {
 	if l.mapURL != "" {
 		args = append(args, l.mapURL)
 	}
-	args = append(args, "-server", "-log", fmt.Sprintf("-port=%d", l.cfg.Port))
+	// ★ 用 -stdout 而**不是** -log:`-log` 会给 DS 开一个真的 Windows 控制台窗口,而
+	// Windows 控制台默认开着「快速编辑」—— 只要有人在那个黑窗口里点一下或选中文字,
+	// WriteConsole 就一直阻塞,把**整个游戏线程**冻住。
+	//
+	// 2026-08-23 实测(cdb 非侵入抓栈,游戏线程):
+	//	FWindowsConsoleOutputDevice::Serialize   ← 阻塞在这
+	//	  ← UE::Logging::Private::BasicLog
+	//	  ← UIpNetDriver::TrackAndLogNewIP       ← 第一个客户端连入时打的那行
+	//	  ← UIpNetDriver::TickDispatch ← UWorld::Tick ← FEngineLoop::Tick
+	// 现象:DS accept 连接后 CPU 归零、心跳停止、日志一行不出、进程仍 Responding;
+	// 客户端 20s 收不到任何回包 → ConnectionTimeout 退回登录界面。
+	// 一次误点就能让整个大厅永久不可进(§9.20 不得让玩家进不去场景)。
+	//
+	// -stdout 让日志走标准输出(本类已把 stdout 重定向到 log_dir 下的文件),不再创建
+	// 控制台窗口;-FullStdOutLogOutput 保证全量输出。Python 侧同改,两栈不分叉。
+	args = append(args, "-server", "-stdout", "-FullStdOutLogOutput", fmt.Sprintf("-port=%d", l.cfg.Port))
 	// editor 形态额外关掉「缺 streaming level package 就踢人」:未 cook 的 editor DS 与 PIE
 	// 客户端对 World Partition runtime cell 的命名天然对不上,不关掉就是秒级无限重连
 	// (完整成因、引擎出处与作用域理由见 conf.EditorLauncherCVarArg 声明处)。

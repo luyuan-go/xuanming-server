@@ -276,13 +276,22 @@ class KeyOrderedProducer:
         if conf.retry_backoff_ms > 0:
             kw["retry_backoff_ms"] = conf.retry_backoff_ms
         if conf.dial_timeout_ms > 0:
-            kw["request_timeout_ms"] = conf.dial_timeout_ms
+            # Go 的 Net.DialTimeout 是**建连**上界,对应 kafka-python 的 bootstrap_timeout_ms。
+            # 原先映射到 request_timeout_ms 是错位的:那管的是单次请求,不是建连;
+            # 而且会被下面的读写超时覆写 —— 于是 dial_timeout 配了等于没配,
+            # 正是本函数 docstring 反复强调要消灭的"配了不生效且不报错"。
+            kw["bootstrap_timeout_ms"] = conf.dial_timeout_ms
         # Go 的 buildProducerConfig 把这两个分别设进 Net.ReadTimeout / Net.WriteTimeout
-        # (producer.go:65-70)。kafka-python 只有一个 socket 级超时,取两者中**更大**的
+        # (producer.go:65-70)。kafka-python **没有** socket 级读写超时:3.0.11 的
+        # KafkaProducer.DEFAULT_CONFIG 里根本没有 socket_timeout_ms,传进去 KafkaProducer
+        # 直接抛 "Unrecognized configs" —— 2026-08-22 实测 team / matchmaker /
+        # matchmaker_pve / push / player_locator 五个服务因此**启动即退**(producer 是
+        # 强依赖),hub_allocator / ds_allocator 则退化成静默丢消息。
+        # 语义最接近的是 request_timeout_ms(单次请求的等待上界),取两者中**更大**的
         # 那个 —— 取小的会让写大批次时莫名超时,而 Go 侧同一份配置不会。
         sock = max(conf.read_timeout_ms, conf.write_timeout_ms)
         if sock > 0:
-            kw["socket_timeout_ms"] = sock
+            kw["request_timeout_ms"] = sock
         self._producer = KafkaProducer(**kw)
 
     # ── 单条发送 ──────────────────────────────────────────────────────────

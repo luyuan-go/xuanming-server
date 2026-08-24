@@ -17,6 +17,14 @@
       "count": 1
     },
     {
+      "id": 102,
+      "remark": "5*1箭头",
+      "fx": "/Game/Fx/SkillRangeLocator/NS_Decal_Arrow.NS_Decal_Arrow",
+      "length": 500,
+      "width": 100,
+      "count": 1
+    },
+    {
       "id": 106,
       "remark": "Crunch技能1",
       "fx": "/Game/Fx/SkillRangeLocator/NS_Decal_Arrow.NS_Decal_Arrow",

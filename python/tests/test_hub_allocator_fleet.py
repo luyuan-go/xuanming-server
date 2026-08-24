@@ -1017,7 +1017,7 @@ async def test_local_extra_env_cannot_override_reserved_keys(tmp_path) -> None:
 
 
 def test_local_build_args_order(tmp_path) -> None:
-    """UE 命令行顺序:`[.uproject] 关卡URL -server -log -port=N [CVar] extra_args`。
+    """UE 命令行顺序:`[.uproject] 关卡URL -server -stdout -FullStdOutLogOutput -port=N [CVar] extra_args`。
 
     为什么重要:UE 的 `LaunchSetGameName` 只把命令行里**第一个**不以 `-` 开头的 token
     当工程 / 关卡。`.uproject` 排在关卡 URL 之后就会被当成关卡名解析失败,
@@ -1025,12 +1025,18 @@ def test_local_build_args_order(tmp_path) -> None:
 
     ★ 变异:local_fleet.py `_build_args` 里把 `.uproject` 的 append 挪到 map_url 之后;
       或把 `args.append(hconf.EDITOR_LAUNCHER_CVAR_ARG)` 挪到 `args.extend(extra_args)` 之后。
+
+    ★ **不能改回 `-log`**:那会给 DS 开一个真控制台窗口,Windows 快速编辑模式下被点
+      一下 WriteConsole 就阻塞,整个游戏线程冻死(2026-08-23 cdb 抓栈实证:
+      FWindowsConsoleOutputDevice::Serialize ← UIpNetDriver::TrackAndLogNewIP
+      ← TickDispatch ← FEngineLoop::Tick),表现是大厅 accept 后再无回包、玩家永远进不去。
     """
     packaged = LF.LocalHubFleetProvider(_local_cfg(tmp_path, extra_args=["-nosound"]))
     assert packaged._build_args() == [  # noqa: SLF001 —— 命令行就是被测的进程级契约
         "/Game/Maps/Hub?MaxPlayers=500",
         "-server",
-        "-log",
+        "-stdout",
+        "-FullStdOutLogOutput",
         "-port=7777",
         "-nosound",
     ]
@@ -1053,9 +1059,9 @@ def test_local_build_args_order(tmp_path) -> None:
     args = editor._build_args()  # noqa: SLF001
     assert args[0] == str(uproject)  # .uproject 必须在最前
     assert args[1] == "/Game/Maps/Hub?MaxPlayers=500"
-    assert args[2:5] == ["-server", "-log", "-port=7777"]
-    assert args[5] == hconf.EDITOR_LAUNCHER_CVAR_ARG  # CVar 在 extra_args 之前
-    assert args[6] == "-nosound"
+    assert args[2:6] == ["-server", "-stdout", "-FullStdOutLogOutput", "-port=7777"]
+    assert args[6] == hconf.EDITOR_LAUNCHER_CVAR_ARG  # CVar 在 extra_args 之前
+    assert args[7] == "-nosound"
     # CVar 必须是单个 token(含空格 / 引号会被 UE 拆成两个参数,静默失效)。
     assert not any(ch in hconf.EDITOR_LAUNCHER_CVAR_ARG for ch in (" ", "\t", '"', "'"))
     assert "net.SkipMissingLevelDisconnect=1" in hconf.EDITOR_LAUNCHER_CVAR_ARG

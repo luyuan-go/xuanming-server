@@ -556,7 +556,12 @@ func (l *LocalGameServerAllocator) buildArgs(port int, mapURL string) []string {
 	if mapURL != "" {
 		args = append(args, mapURL)
 	}
-	args = append(args, "-server", "-log", fmt.Sprintf("-port=%d", port))
+	// ★ 用 -stdout 而**不是** -log,原因与 hub_allocator/internal/biz/local_fleet.go 同一条:
+	// `-log` 开的 Windows 控制台在快速编辑模式下被点一下,WriteConsole 阻塞 → 游戏线程冻死
+	// (cdb 抓栈实证:FWindowsConsoleOutputDevice::Serialize ← UIpNetDriver::TrackAndLogNewIP
+	// ← TickDispatch ← FEngineLoop::Tick)。战斗 DS 冻死比大厅更糟:一局人全卡在里面且不结算。
+	// stdout 已由本类重定向到 log_dir;-FullStdOutLogOutput 保证全量。Python 侧同改。
+	args = append(args, "-server", "-stdout", "-FullStdOutLogOutput", fmt.Sprintf("-port=%d", port))
 	// editor 形态额外关掉「缺 streaming level package 就踢人」:未 cook 的 editor DS 与 PIE
 	// 客户端对 World Partition runtime cell 的命名天然对不上,不关掉就是秒级无限重连
 	// (完整成因、引擎出处与作用域理由见 conf.EditorLauncherCVarArg 声明处)。

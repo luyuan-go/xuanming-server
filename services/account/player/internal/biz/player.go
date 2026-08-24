@@ -62,6 +62,12 @@ type PlayerUsecase struct {
 	// nil = 专精表未加载 → SetTalents fail-closed 拒绝。
 	talentRules talentRuleSource
 
+	// attrPointRules 提供属性加点表判定(AllocateAttributePoints 的属性点键白名单)。
+	// nil / 空集 = 属性加点效果表尚未发布 → 保持上线前的宽松口径(收任何非空键),
+	// 不 fail-closed:整批缺表时把加点整条路径拒掉会让老客户端连点都加不了,
+	// 与 talent_effect 缺表不拒同一处置(战斗数值权威本就不在这里,§9.6)。
+	attrPointRules attrPointRuleSource
+
 	// instanceOwnership 精确校验玩家是否持有指定装备实例(SetEquipment/GetLoadout)。
 	// 生产实现是 inventory.CheckInstancesOwned 的 gRPC 客户端;nil = 未接线 → fail-closed 拒绝。
 	instanceOwnership InstanceOwnershipChecker
@@ -78,12 +84,14 @@ func (u *PlayerUsecase) SetConfigTables(store *configtable.Store) {
 		u.expLevels = nil
 		u.itemRules = nil
 		u.talentRules = nil
+		u.attrPointRules = nil
 		u.skillCardRules = nil
 		return
 	}
 	u.expLevels = configTableExperienceLevels{store: store}
 	u.itemRules = configTableItemRules{store: store}
 	u.talentRules = configTableTalentRules{store: store}
+	u.attrPointRules = configTableAttrPointRules{store: store}
 	u.skillCardRules = configTableSkillCardRules{store: store}
 }
 
@@ -159,6 +167,42 @@ func (s configTableTalentRules) ValidateAllocation(levels map[uint32]uint32) (ma
 		return nil, 0, errcode.New(errcode.ErrInternal, "talent table unavailable")
 	}
 	return tables.Talent.ValidateAllocation(levels)
+}
+
+// attrPointRuleSource 是 AllocateAttributePoints 需要的属性点表判定
+// (生产实现读 configtable 原子快照)。
+//
+// 只回答「有哪几条属性点」:属性点没有主表,权威就是属性加点效果表里出现过的
+// attr_point_key 集合(z_属性加点_效果.xlsx)。表里没有的键在 DS 上换不出任何战斗数值,
+// 加了点等于把点数永久沉没(只能洗点找回),必须在写入边界挡住。
+//
+// 返回空集 = 表尚未发布,调用方保持宽松口径(见 PlayerUsecase.attrPointRules 注释)。
+type attrPointRuleSource interface {
+	AllocatableKeys() map[string]struct{}
+}
+
+type configTableAttrPointRules struct {
+	store *configtable.Store
+}
+
+// AllocatableKeys 每次调用取一份当前快照:表热更是整批原子切换,单次校验内不会跨版本。
+func (s configTableAttrPointRules) AllocatableKeys() map[string]struct{} {
+	if s.store == nil {
+		return nil
+	}
+	tables := s.store.Tables()
+	if tables == nil || tables.AttrPointEffect == nil {
+		return nil
+	}
+	keys := tables.AttrPointEffect.AttrPointKeys()
+	if len(keys) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		set[k] = struct{}{}
+	}
+	return set
 }
 
 // skillCardRuleSource 是技能卡培养 / 更换需要的配置表判定(生产实现读 configtable 原子快照)。
@@ -627,11 +671,22 @@ func (u *PlayerUsecase) AllocateAttributePoints(ctx context.Context, playerID ui
 	//     (player_attributes.points / unspent_attr_points 均为 INT,上界 MaxInt32)。
 	// 用 int64 累加并在每步与上界比较,单值 <= MaxInt32,累加前必然 < 2*MaxInt32,不会 int64 溢出。
 	// 这里只堵「请求级」越界(总和 / 单键增量),列「当前值 + 增量」越界由 repo 在事务内权威兜底。
+	//
+	// 另外校验 attr_key 属于权威属性点集合(z_属性加点_效果.xlsx):表里没有的键在 DS 上
+	// 换不出任何战斗数值,加了点就是把点数永久沉没(只能洗点找回),而且从协议上看
+	// 完全成功。表尚未发布时 allocatable 为空,保持上线前的宽松口径。
+	allocatable := u.allocatableAttrKeys()
 	perKey := make(map[string]int64, len(allocs))
 	var sum int64
 	for _, a := range allocs {
 		if a.Key == "" {
 			return 0, errcode.New(errcode.ErrInvalidArg, "attr_key must not be empty")
+		}
+		if allocatable != nil {
+			if _, ok := allocatable[a.Key]; !ok {
+				return 0, errcode.New(errcode.ErrInvalidArg,
+					"unknown attr_key %q (可加点属性由 角色/z_属性加点_效果.xlsx 定义)", a.Key)
+			}
 		}
 		if a.Points <= 0 {
 			return 0, errcode.New(errcode.ErrInvalidArg, "points must be positive: %s", a.Key)
@@ -650,6 +705,14 @@ func (u *PlayerUsecase) AllocateAttributePoints(ctx context.Context, playerID ui
 		return 0, err
 	}
 	return u.repo.AllocateAttributePoints(ctx, playerID, allocs)
+}
+
+// allocatableAttrKeys 取权威属性点键集合;nil = 表未接线 / 未发布(调用方不收紧)。
+func (u *PlayerUsecase) allocatableAttrKeys() map[string]struct{} {
+	if u.attrPointRules == nil {
+		return nil
+	}
+	return u.attrPointRules.AllocatableKeys()
 }
 
 // ResetAttributes 洗点(已分配点全退回可分配点)。

@@ -534,3 +534,39 @@ async def test_pandora_error_order_state_is_declared_and_defaulted() -> None:
     assert err.order_state == 0, "没初始化的话读侧就只能退回 getattr + 默认值"
     with pytest.raises(AttributeError):
         _ = err.oder_state  # 读侧拼错 → 当场炸
+
+
+# ── 价格上界闸(2026-08-22 货币无符号化)────────────────────────────────────────
+
+
+async def test_create_order_price_upper_bound(rdb) -> None:
+    """价格闸从"下界防负数"改成"上界防天文数字"后的回归。
+
+    为什么必须有这条:price 是 proto 的 uint64,旧写法 `price < 0` **恒为 False**,
+    Python 连类型报错都不会有,闸门被静默拆掉也没有任何测试会红。
+    与 Go 侧 TestCreateOrder_PriceUpperBound 逐项对齐,钉死三件事:
+
+      ① 恰好等于上限 → 放行(闸是 `>` 不是 `>=`,别把合法边界值也拒了);
+      ② 超过上限 → ErrInvalidArg,且**零副作用**(不落订单、不占配额);
+      ③ 一个 price=-1 的老客户端请求在 uint64 里解成 MaxUint64 → 必须被同一道闸挡下,
+         而不是一路落 Redis 再送进 SettlePlayerTrade。
+    """
+    max_price = 1_000_000_000
+
+    # ① 边界值放行
+    _repo, uc = await _make(rdb)
+    order_id = await uc.create_order(1001, 2002, _items((5001, 1)), [], max_price)
+    assert order_id != 0
+
+    # ② 超上限拒绝且零副作用
+    repo2, uc2 = await _make(rdb)
+    with pytest.raises(errcode.PandoraError) as ei:
+        await uc2.create_order(1003, 2004, _items((5001, 1)), [], max_price + 1)
+    assert ei.value.code == errcode.ErrInvalidArg
+    assert await repo2.list_player_order_ids(1003) == []
+
+    # ③ 负价在 uint64 里解成天文数字也必须拒
+    _repo3, uc3 = await _make(rdb)
+    with pytest.raises(errcode.PandoraError) as ei3:
+        await uc3.create_order(1005, 2006, _items((5001, 1)), [], (1 << 64) - 1)
+    assert ei3.value.code == errcode.ErrInvalidArg

@@ -119,7 +119,12 @@ async def main():
         base_resp = await st.ListHubs(hpb.ListHubsRequest())
         for h in base_resp.hubs:
             _baseline[h.hub_pod_name] = h.player_count
-        print(f"--- 00 基线分片数={len(base_resp.hubs)} "
+        # ★ 分片**条数**和 player_count 一样是跨运行共享的(规矩②),而且这里更隐蔽:
+        # mock provider 按 region **懒种**分片,先跑的那一侧会把 cn-east / no-such-region
+        # 种出来,后跑的一侧基线就凭空多 6 条。实测(2026-08-22)Python 先跑=3、Go 后跑=9,
+        # 唯一的一行 diff 就是它 —— 纯运行次序,与实现无关。
+        # 所以绝对条数不进 diff;分片集合本身在场景 11 / 36 逐条比对,一条都没少验。
+        print(f"--- 00 基线已采集(条数跨运行共享,不进 diff) "
               f"code={ec.ErrCode.Name(base_resp.code)}")
 
         A = hpb.AssignHubRequest

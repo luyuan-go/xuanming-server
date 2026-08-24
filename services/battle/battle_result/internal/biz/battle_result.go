@@ -88,7 +88,10 @@ type TerminalReleaseRelay interface {
 // (at-least-once,配合 GrantInstances 幂等键去重)。实现可为 nil:inventory_addr 未配
 // → 不启动掉落发布器,掉落出箱积压不丢(等 inventory 地址配好重启后补发)。
 type InstanceGranter interface {
-	GrantItems(ctx context.Context, playerID uint64, items []data.StackGrant, idempotencyKey string) error
+	// GrantItems 同时发放可堆叠道具与金币(goldAmount=0 表示纯道具)。
+	// 两者合并成一次调用是刻意的:共用同一幂等键与同一 MySQL 事务,
+	// 不会出现"道具到了钱没到"的半成功。
+	GrantItems(ctx context.Context, playerID uint64, items []data.StackGrant, goldAmount uint64, idempotencyKey string) error
 	GrantInstances(ctx context.Context, playerID uint64, itemConfigIDs []uint32, idempotencyKey string) error
 	ConsumeBattleItem(ctx context.Context, playerID uint64, itemConfigID uint32, count int64, idempotencyKey string) error
 	DiscardBattleItem(ctx context.Context, playerID uint64, itemConfigID uint32, count int64, idempotencyKey string) error
@@ -492,6 +495,14 @@ func (u *BattleResultUsecase) reportResult(ctx context.Context, result *battlev1
 		return false, err
 	}
 
+	// DS 上报的金币先就地钳到服务端上限,**再**落战绩与出箱(§9.6 数值不信 DS)。
+	//
+	// 必须在这里钳、且钳完写回 result:battle_player_stats 与钱包发放读的是同一份 stats,
+	// 若只在出箱侧钳,战绩表会记着"本局 999 亿金币"而钱包只加了 100 万 —— 玩家看战报会
+	// 认为系统吞了收益,客服无从解释。另外 gold 已是 uint64,高位置 1 的值直接进
+	// database/sql 会被 driver 拒(uint64 out of range),钳一次同时解决这个问题。
+	u.clampReportedGold(ctx, result)
+
 	// 战斗装备掉落出箱(W5 ④):正常结算才发放;ABANDONED(DS 崩溃补偿)不产出掉落。
 	// DS 上报的 dropped_item_config_ids 按 drop 白名单过滤(DS 不可信),与落库同事务提交。
 	var dropOutbox []data.DropOutboxRecord
@@ -803,12 +814,47 @@ func (u *BattleResultUsecase) buildOutbox(result *battlev1.BattleResult, abandon
 // 无任何白名单内掉落的玩家不产出出箱行。
 // ctx 必须是**请求 ctx**(不是 context.Background):本函数的两条告警是「异常/恶意 DS 上报」
 // 信号,必须能按 trace_id 关联回具体 ReportResult 调用链(不变量 §9.8 所有写都要带 trace_id)。
+// clampReportedGold 把 DS 上报的每玩家金币就地钳到服务端上限(§9.6 数值不信 DS)。
+//
+// **就地改写 result** 是刻意的:战绩落库与钱包发放读的是同一份 stats,钳一次让两者永远一致。
+// 超限只截断不拒整场 —— 战绩落库失败会连带段位、任务、掉落一起丢,代价远大于少发点钱;
+// 但每次截断都留 Warn,异常 DS 照样可发现。
+func (u *BattleResultUsecase) clampReportedGold(ctx context.Context, result *battlev1.BattleResult) {
+	maxGold := u.cfg.MaxBattleGoldPerPlayer()
+	for _, s := range result.GetStats() {
+		if s == nil || s.GetGold() <= maxGold {
+			continue
+		}
+		plog.With(ctx).Warnw("msg", "battle_gold_truncated",
+			"match_id", result.GetMatchId(), "player_id", s.GetPlayerId(),
+			"reported", s.GetGold(), "kept", maxGold,
+			"hint", "DS 上报金币超服务端上限(配置错误或越权上报)")
+		s.Gold = maxGold
+	}
+}
+
 func (u *BattleResultUsecase) buildDropOutbox(ctx context.Context, result *battlev1.BattleResult) []data.DropOutboxRecord {
 	maxDrops := u.cfg.MaxDropsPerPlayer()
 	recs := make([]data.DropOutboxRecord, 0, len(result.GetStats()))
 	for _, s := range result.GetStats() {
+		// 本局金币收益(2026-08-22 补齐)。
+		//
+		// 此前 PlayerStats.gold 只被写进 battle_player_stats 战绩表,**从来没有发放到玩家钱包** ——
+		// 全仓没有任何一处把它送进 inventory,战后的"获得 N 金币"是纯展示。
+		// 现在让它搭既有的战后发放出箱:同一套幂等键、同一套重试、同一套审计,
+		// 不另起一条"金币专用发放链"(§15.2 最少复杂度)。
+		//
+		// 值已由 clampReportedGold 钳过上限,这里直接用。
+		goldGranted := s.GetGold()
+
 		reported := s.GetDroppedItemConfigIds()
 		if len(reported) == 0 {
+			// 没掉落但有金币:仍要出一条只带货币的出箱行,否则金币照旧发不出去。
+			if goldGranted > 0 {
+				recs = append(recs, data.DropOutboxRecord{
+					PlayerID: s.GetPlayerId(), CurrencyAmount: goldGranted,
+				})
+			}
 			continue
 		}
 		capHint := len(reported)
@@ -859,11 +905,18 @@ func (u *BattleResultUsecase) buildDropOutbox(ctx context.Context, result *battl
 				"reported", len(reported),
 				"distinct_item_ids", len(filteredIDs), "sample_item_config_id", sampleFilteredID,
 				"hint", "item/drop 表漏配该 ID(改表)或 DS 上报未授权掉落(安全信号)")
+			// 掉落全被过滤不代表金币也该丢:两者是独立的收益来源。
+			if goldGranted > 0 {
+				recs = append(recs, data.DropOutboxRecord{
+					PlayerID: s.GetPlayerId(), CurrencyAmount: goldGranted,
+				})
+			}
 			continue
 		}
 		recs = append(recs, data.DropOutboxRecord{
 			PlayerID: s.GetPlayerId(), ItemConfigIDs: allowed,
 			StackItemConfigIDs: stacks, InstanceItemConfigIDs: instances,
+			CurrencyAmount: goldGranted,
 		})
 	}
 	return recs
@@ -1318,7 +1371,7 @@ func (u *BattleResultUsecase) deliverDropRecord(ctx context.Context, r data.Drop
 		}
 	}
 	instances := r.InstanceItemConfigIDs
-	if len(stacks) == 0 && len(instances) == 0 {
+	if len(stacks) == 0 && len(instances) == 0 && r.CurrencyAmount == 0 {
 		return errcode.New(errcode.ErrInvalidState, "drop outbox row has no frozen route id=%d", r.ID)
 	}
 	baseKey := dropIdempotencyKey(r.MatchID, r.PlayerID)
@@ -1326,8 +1379,10 @@ func (u *BattleResultUsecase) deliverDropRecord(ctx context.Context, r data.Drop
 	if len(stacks) > 0 && len(instances) > 0 {
 		stackKey, instanceKey = baseKey+":stack", baseKey+":instance"
 	}
-	if len(stacks) > 0 {
-		if err := u.granter.GrantItems(ctx, r.PlayerID, stacks, stackKey); err != nil {
+	// 金币与可堆叠道具走同一次 GrantItems:两者共用一个幂等键、一个事务,
+	// 不会出现"道具到了钱没到"。纯金币行(无掉落)也走这条路径。
+	if len(stacks) > 0 || r.CurrencyAmount > 0 {
+		if err := u.granter.GrantItems(ctx, r.PlayerID, stacks, r.CurrencyAmount, stackKey); err != nil {
 			return err
 		}
 	}

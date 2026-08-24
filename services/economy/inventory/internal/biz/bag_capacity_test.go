@@ -8,9 +8,10 @@ import (
 	"github.com/luyuancpp/pandora/pkg/errcode"
 
 	"github.com/luyuancpp/pandora/services/economy/inventory/internal/conf"
+	"github.com/luyuancpp/pandora/services/economy/inventory/internal/data"
 )
 
-func newCapacityUsecaseForTest(gold int64) (*BagUsecase, *fakeBagRepo, *fakeCapacityCharger) {
+func newCapacityUsecaseForTest(gold uint64) (*BagUsecase, *fakeBagRepo, *fakeCapacityCharger) {
 	repo := &fakeBagRepo{}
 	cfg := conf.BagConf{
 		SectionCapacities: []conf.BagSectionCapacityRule{{BagType: 0, Capacity: 100}, {BagType: 1, Capacity: 10}},
@@ -35,15 +36,22 @@ func TestPurchaseCapacityHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("第一档购买: %v", err)
 	}
-	if res.Purchases != 1 || res.Extra != 10 || res.EffectiveCapacity != 110 || res.GoldCost != 100 || res.GoldRemaining != 900 {
+	if res.Purchases != 1 || res.Extra != 10 || res.EffectiveCapacity != 110 || res.Cost != 100 || res.Balance != 900 {
 		t.Fatalf("第一档结果不符: %+v", res)
+	}
+	// 币种必须显式回报:格容扣费当前恒金币,静默回退成 0(UNSPECIFIED)会让下行无法渲染。
+	if res.CurrencyKind != data.CurrencyGold {
+		t.Fatalf("第一档币种应为金币: %v", res.CurrencyKind)
 	}
 	res, err = uc.PurchaseCapacity(ctx, 7, 1, 0, DSCallerIdentity{})
 	if err != nil {
 		t.Fatalf("第二档购买: %v", err)
 	}
-	if res.Purchases != 2 || res.Extra != 20 || res.EffectiveCapacity != 120 || res.GoldCost != 200 || res.GoldRemaining != 700 {
+	if res.Purchases != 2 || res.Extra != 20 || res.EffectiveCapacity != 120 || res.Cost != 200 || res.Balance != 700 {
 		t.Fatalf("第二档结果不符: %+v", res)
+	}
+	if res.CurrencyKind != data.CurrencyGold {
+		t.Fatalf("第二档币种应为金币: %v", res.CurrencyKind)
 	}
 	if charger.charges != 2 {
 		t.Fatalf("应恰好扣费两次: %d", charger.charges)
@@ -71,8 +79,16 @@ func TestPurchaseCapacityCrashBetweenStepsConverges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("崩溃后重试应收敛: %v", err)
 	}
-	if res.Purchases != 1 || res.Extra != 10 || res.GoldCost != 0 {
+	// Cost=0 是 CapacityPurchaseResult 的**既定语义**(bag.go:`if !already { res.Cost = charged }`,
+	// 类型注释写明"幂等重放返回当前状态,Cost=0"),不是漏改:
+	// ChargeBagCapacity 只回 (already, remainingBalance),data 层没把首次扣费额回放出来。
+	// 与 SellItem.Earned(靠 ledger.result_currency_delta 回放同一金额)口径不同,见报告。
+	if res.Purchases != 1 || res.Extra != 10 || res.Cost != 0 {
 		t.Fatalf("重试应补落位且零扣费: %+v", res)
+	}
+	// 余额快照必须仍是首次扣费后的值(900),不能因为回放就丢成 0。
+	if res.Balance != 900 {
+		t.Fatalf("重试应回放首次扣费后的余额: %+v", res)
 	}
 	if repo.capPurchases[0] != 1 {
 		t.Fatalf("落位未补齐: %+v", repo.capPurchases)

@@ -275,6 +275,24 @@ class AllocatorService(dsgrpc.DSAllocatorServiceServicer):
         except asyncio.CancelledError:
             # ★ 必须紧邻宽 except 之上:取消是停机/客户端断连的控制流,不是"分配失败"。
             #   吞掉它会让 graceful shutdown 卡在一个已经没人要的分配上。
+            #   但**日志要照打**:Go 侧 ctx 取消只是一个 err,照样落 battle_allocate_rejected;
+            #   Python 少这一条,运维按 hint 里那条链上溯时就断在这儿(§11.3 判据 5)。
+            #   只补日志,不构造响应 —— 调用方已经走了,响应给谁都没有。
+            plog.get().warning(
+                "battle_allocate_rejected",
+                reason=REASON_USECASE_FAILED,
+                match_id=match_id,
+                code=commonpb.ERR_UNKNOWN,
+                players=len(request.player_ids),
+                map_id=request.map_id,
+                game_mode=request.game_mode,
+                elapsed_ms=_elapsed_ms(started_at),
+                err="cancelled",
+                hint=(
+                    "调用方取消/停机:pod 与 warming 镜像由 detached 补偿回收"
+                    "(cleanup_allocated_battle.*_cancelled)"
+                ),
+            )
             raise
         except BaseException as exc:  # noqa: BLE001
             code = _to_proto_code(exc)

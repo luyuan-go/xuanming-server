@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS `battle_drop_outbox` (
     `item_config_ids` VARCHAR(512)     NOT NULL COMMENT 'CSV of dropped item_config_id, e.g. 5001,5002',
     `stack_item_config_ids`    VARCHAR(512) NOT NULL DEFAULT '' COMMENT '首次入箱时冻结的可堆叠路由;发布重试不得按热配置重算',
     `instance_item_config_ids` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '首次入箱时冻结的装备实例路由;发布重试不得按热配置重算',
+    `currency_amount`          BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '本局该玩家金币收益(首次入箱时已过服务端上限闸冻结;0=无收益);与堆叠道具共用同一次 GrantItems 与同一幂等键',
     `created_at_ms`   BIGINT           NOT NULL DEFAULT 0,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_match_player` (`match_id`, `player_id`)

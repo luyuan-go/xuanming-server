@@ -961,7 +961,8 @@ func (u *BattleResultUsecase) processProgressRecord(ctx context.Context, r data.
 		}
 		key := progressIdempotencyKey(r.MatchID, r.Seq, r.PlayerID, "stack")
 		idempotencyKey = key
-		if err := u.granter.GrantItems(ctx, r.PlayerID, stacks, key); err != nil {
+		// 实时进度通道只发道具,金币走结算出箱(战斗中不即时到账)。
+		if err := u.granter.GrantItems(ctx, r.PlayerID, stacks, 0, key); err != nil {
 			return nil, err
 		}
 	case data.ProgressConsumeStack, data.ProgressDiscardStack:

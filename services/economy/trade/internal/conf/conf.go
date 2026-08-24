@@ -31,6 +31,13 @@ type TradeConf struct {
 	// MaxItemsPerOrder 单订单最大物品条目数(默认 20)。
 	MaxItemsPerOrder int `yaml:"max_items_per_order,omitempty" json:"max_items_per_order,omitempty"`
 
+	// MaxTradePrice 单笔交易金额上限(默认 1_000_000_000,与拍卖 MaxPrice 同量级)。
+	//
+	// 2026-08-22 货币无符号化时补:此前 trade 只有 `price < 0` 一道闸,**没有任何上界**。
+	// price 改 uint64 后那道闸恒为 false,等于完全没有校验 —— 一个 price=-1 的旧请求
+	// 会被解成 1.8e19 并直接落 Redis、再送 inventory 结算。上界闸是这条链唯一的防线。
+	MaxTradePrice uint64 `yaml:"max_trade_price,omitempty" json:"max_trade_price,omitempty"`
+
 	// RateQuotaPerMin 下单/撤单的 per-player 每分钟频率配额(anti-abuse §6 第 6 项;
 	// 默认 20;负值 = 关闭)。与 MaxOrdersPerPlayer 总量闸正交:总量限「同时挂多少」,
 	// 本值限「刷多快」,挡「下单-撤单-再下单」的托管写 + 流水行放大循环。窗口固定 1 分钟。
@@ -72,6 +79,10 @@ func (c *Config) Defaults() {
 	}
 	if c.Trade.MaxOrdersPerPlayer <= 0 {
 		c.Trade.MaxOrdersPerPlayer = 200
+	}
+	// 0 = 未配置 → 取默认。刻意**不**把 0 当成"不限价":一个漏配的字段不该等于拆掉唯一的价格防线。
+	if c.Trade.MaxTradePrice == 0 {
+		c.Trade.MaxTradePrice = 1_000_000_000
 	}
 	if c.Server.Grpc.Addr == "" {
 		c.Server.Grpc.Addr = ":20012"

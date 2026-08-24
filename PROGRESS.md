@@ -3959,3 +3959,278 @@ Python 迁移线(分支 `python-migration`)此前在 `PROGRESS.md` 零记录,补
   失败测试 `-count=10`、`go vet ./...` 全绿。验证未启停真实服务；尚未执行完整策划 CMD、冷启动计时或
   玩家登录 E2E，不能把原 35.63 秒样本或虚拟时钟数字冒充新现场成绩。详见
   `docs/ops/性能优化-策划一键启动-20260820.md` §9。
+
+## 2026-08-22 属性加点接入战斗(z_属性加点_效果.xlsx)
+
+- **口径**:属性点(力量/体质/敏捷/智力/精神)此前只存点数、不产生任何战斗数值。新增配置表
+  `角色/z_属性加点_效果.xlsx` → `configtable/dist/attr_point_effect.json`,一行 =「某条属性点每加
+  一点,给哪个 GAS 战斗属性加多少」。走与专精效果 / 技能卡效果**完全同一条路径**:服务端只下发
+  分配事实(player.v1 GetLoadout 的 `AttributeAllocation`),DS 查表自行换算(§9.6 数值权威在客户端)。
+- **只映射战斗已有的属性**:出厂配置只落在当前真有消费方的属性上(Atk / MaxHp / Defense /
+  MoveSpeedRate / CritChance / SkillDamageRate / SkillHealRate)。HitChance / DodgeChance /
+  AtkSpeedRate 仍无任何消费方,刻意不配。属性键白名单复用
+  `pkg/configtable/combat_attr_key.go`(与专精 / 技能卡同一份,§9.22)。
+- **本表同时是「有哪几条属性点」的权威**:`AllocateAttributePoints` 按表里的 `attr_point_key`
+  集合拒未知键 —— 表里没有的键加了点永远换不成战斗数值,等于把点数永久沉没(只能洗点找回),
+  而协议上看完全成功。整批缺表时不收紧(过渡态,与 talent_effect 缺表不拒同一处置)。
+  属性点键强制 `[a-z0-9_]`:落库列是 `utf8mb4_0900_ai_ci`(大小写不敏感),大小写混用会互相串行。
+- **DS 侧**:`FPandoraDSCallResult::LoadoutAttributes` 透传 → `AMyEntityPlayerState::AttrPoints`
+  → `UMyEntityAttrSet::ApplyAttrPointBonuses`(Init / GetLoadout 迟到回包 / 升级重基三条路径都按
+  增量幂等施加)。落地器抽成共享件 `UMyAttrBonusStatics::ApplyBonuses`(原
+  `UMyTalentEffectStatics::ApplyBonuses` 迁入),专精 / 属性加点 / 技能卡三条养成线共用一份增量语义。
+- **配表纪律**:生命类加成一律配 `MaxHp` 而不是 `Hp` —— `Hp` 是当前值,写基值会被 `CheckClampAttr`
+  按 MaxHp 钳掉,表现为"加了体质血量纹丝不动"。
+- **验证**:`go test ./pkg/configtable/... ./services/account/player/...` 全绿(新增
+  `attr_point_effect_test.go` 6 例 + `attr_point_rules_test.go` 2 例);导表批次
+  v20260822003 已产出。UE 侧新增 3 个自动化用例(`MyAttrPointEffectTests.cpp`),**UE 编译与运行
+  由用户执行**。客户端 `cfgattrpointeffect.uasset` 需首次用 `tools/scripts/attr_point_effect_csv.ps1`
+  生成 CSV 后在编辑器里导入(资产名必须全小写)。
+
+## 2026-08-22 装备基础属性接入战斗与背包(装备属性表.xlsx)
+
+- **口径**:策划表 `道具/装备属性表.xlsx` 给 120 件装备(10066..10185)各配 6 个百分比
+  (HP / 伤害 / 治疗 / 暴击 / 技能 / 控场),穿上后同时产生**实际战斗效果**与**背包信息展示**。
+  与鉴定词条互补:词条是 per-instance 随机 roll 走协议下发,基础属性是 per-config 纯配置、
+  **proto 与 RPC 零改动**,DS 与客户端各自查 `CfgEquipAttr` 表(与专精 / 技能卡 / 属性加点同一范式,§9.6)。
+  完整决策见 [`docs/design/decision-equip-base-attributes.md`](./docs/design/decision-equip-base-attributes.md)。
+- **两种百分比口径(刻意不统一)**:HP / 伤害 是**基础值百分比**,乘角色等级表裸体值换成绝对增量
+  (MaxHp / Atk);暴击 / 治疗 / 技能 / 控场 是**效果百分比**,直接加算到
+  CritChance / SkillHealRate / SkillDamageRate / SkillControlRate。基准取等级表裸值而不是 ASC 当前值,
+  否则第二件装备会按被放大后的基数再加一次(复利)。多件装备同一项**加算**不是乘算。
+- **UE 新增 4 个 GAS 属性**:`MaxHp`(复制,COND_None)/ `SkillDamageRate` / `SkillHealRate` /
+  `SkillControlRate`。`MaxHp` 是前置改造 —— 原先 `Hp` 被钳到配表 `CfgRoleLv->Hp`,且钳制挂在
+  `PreAttributeChange` + `PreAttributeBaseChange` 两个 hook 上,**任何加到 Hp 上的持久加成都会被
+  静默钳回裸表值**。血条 / 铭牌 / 队伍面板 / 选中目标面板 / 道具百分比回血五处原先各自直读配表值,
+  统一改走 `UMyAttrStatics::ResolveEntityMaxHp`(优先 GAS MaxHp,配表只作回退)。
+- **三个新消费点**:技能伤害在 `UMyAtkHitExeCalc::CalcDamage` 放大整段技能伤害;技能治疗在
+  `UMyEntityAttrSet::PreGameplayEffectExecute` 放大加算型正向 Hp 修改(道具回血走
+  `ApplyModToAttribute` 不经该回调,天然不吃——道具不是技能);控场时长在 `UMyBuffDurMmc` 只放大
+  `UMyBuffStatics::IsControlBuff` 判真的 Buff。控场判定从技能 Tips 的私有辅助收口成共享件,
+  Tips 与时长加成共用一份判据。
+- **暴击补进伤害公式**:`暴击倍率 = 1 + CritDamage`。CritChance/CritDamage 长期只被捕获不被消费
+  (公式注释写了「× 暴击倍率」但代码里没有)。⚠️ **遗留配表缺口**:`j_角色等级.xlsx` 的「暴击伤害」列
+  全表 30 行都是 0,所以暴击现在触发了也不产生额外伤害 —— 这是数据缺口不是代码缺口,平衡数值不由程序编造;
+  代码侧加了一条只报一次的 Warning 把静默变成可见,策划填上该列(1.0 = 双倍)即刻生效。
+- **挂在已收敛的可见装备上**:基础属性不进「Bag type 2 / GetLoadout fallback」那两条互斥词条路径,
+  而是挂 `UMyEquipmentVisualComponent::Equipment` —— 那是 `ReconcileEquipmentSources` 二选一之后的
+  那一份,天然不可能双计。两条路径的增量结构体合并成同一个 `FMyEquipGameplayDeltas`,
+  避免"新增属性只改了其中一条路径"(重放链最容易漏且不报错的地方)。
+- **服务端登记但不消费**:新增 `proto/pandora/config/v1/equipment_attr.proto`
+  (`excel_data_start_row = 3`,本表版式与 d_道具.xlsx 的第 4 行不同)。登记目的只有加载期挡漂移:
+  `ValidateEquipmentAttrCrossTables` 要求装备ID 存在于道具表且是装备、`装备部位`/`品质` 与道具表逐行一致
+  (由 inventory 的整批门禁注册);名称/图标/描述只查非空,不为纯文案改动卡住服务启动。
+  「每件装备都必须有属性行」不成立——道具表 151 件装备里有 31 件老装备刻意没有基础属性。
+- **验证**:`go test ./pkg/configtable/... ` 与 `./services/economy/inventory/...` 全绿
+  (新增 `equipment_attr_test.go` 4 组 / 11 例 + `realdist_test.go` 真实产物断言);
+  导表批次已产出 `configtable/dist/equipment_attr.json`(120 行);客户端导表器实跑产出
+  `Tool/Table/Cs/Temp/CfgEquipAttr.json`(120 行,证明 3 行表头版式能被 C# 导表器正确跳过)。
+  UE 侧新增 5 个自动化用例(`PandoraTests/Private/GAS/MyEquipAttrTests.cpp`),
+  **UE 编译与运行由用户执行**;`cfgequipattr.uasset` 需先用
+  `tools/scripts/equip_attr_csv.ps1` 出 CSV 再在编辑器 Import(资产名必须全小写)。
+
+## 2026-08-22 通用多币种货币系统 + NPC 商店服务端化 + 战后金币闭环 [proto]
+
+设计与决策见 [`docs/design/currency-and-shop.md`](./docs/design/currency-and-shop.md)。
+**本批含 breaking proto 变更**(首次生产上线日期仍 `未填写`,按 §3.1 走整批刷新闭环)。
+
+- **单币种 gold → 通用多币种(值 uint64)**:新增 `proto/pandora/common/v1/currency.proto`
+  (`CurrencyKind{GOLD=1,DIAMOND=2,HONOR=3}` / `CurrencyAmount{kind,uint64 amount}` /
+  `CurrencyBalancesStorageRecord`)。放 common 而不是 inventory,是为了让配置表(商店定价)
+  不必反向 import 业务域协议。**加一种货币 = 多写一个枚举值**,不加列、不加表、不改接口。
+  新表 `player_wallet` PK `(player_id, currency_kind)`、`amount BIGINT UNSIGNED`;
+  旧 `player_currency` 留只读存量待 contract。
+- **为什么能改无符号**:§5.12 例外②「参与减法可能下溢」的前提**不成立** —— 余额三个减法点
+  全是「FOR UPDATE 锁行 → 先比较 → 再相减」。代价是补三条硬纪律:SQL 里不出现 `amount - ?`
+  (UNSIGNED 列上负结果在非严格 sql_mode 会**静默截断成 0**,等于把扣款失败变成余额清零)、
+  加法过 `MaxCurrencyAmount=2^62` 上限闸(越界返 `ERR_INVENTORY_CURRENCY_OVERFLOW=7020`)、
+  乘法走溢出安全乘。
+- **⚠️ 无符号下恒假的旧校验(编译器与 go vet 都不报)**:`if gold < 0` / `if price <= 0` 这类判断
+  在无符号类型下恒 false 或退化成 `== 0`,等于闸门被静默拆掉。逐个重判后发现
+  **trade 服务此前根本没有价格上限**(只有一句 `price < 0`),一个 `price=-1` 的旧请求在 uint64 下
+  解成 1.8e19 且无一层能拒 —— 新增 `conf.MaxTradePrice`(默认 1e9,漏配取默认而**不是**不限价)。
+  `EnsureAuctionEscrow` 的 int64 钳位与强转**一起删**:只删其一会让超 MaxInt64 的价格转成负数,
+  穿到扣款处让 `have < n` 恒 false,把扣钱变成加钱。
+- **拍卖撮合引擎的 price 刻意保持 int64**:订单簿用 ZSET score 表达价格优先级,买盘靠
+  `-float64(price)` 编成负分才能升序取到最高价(§5.12 例外①)。符号转换只在
+  `service/auction.go priceToInternal` 一个入口,且先判上界。`quantity` 一族同样不动
+  (`Remaining()` 是撮合循环与终态判定的共同分母,回绕会让订单永远 PARTIAL、escrow 永不释放)。
+- **幂等流水补两列**:`result_currencies`(多币种余额快照)与 `result_currency_delta`(本次变动额)。
+  后者是为了让出售/购买能回"本次获得 X / 花费 Y"且**幂等重放返回首次执行的金额而不是 0** ——
+  只存余额快照的话重放时算不出当初那一笔。`result_gold` 保留只读兜底(pb 二进制无法用 SQL 从整数转换,
+  存量行没法就地转换),等 90 天保留期清完再 contract 删列。
+  **幂等指纹在纯金币时仍生成旧格式** `|gold=<n>`,只有出现非金币币种才换新格式:
+  否则存量流水行同 key 重试会被判 `ErrInventoryIdempotencyConflict` —— 那是反作弊信号,
+  不该被"我升级了协议"占用。
+- **战后金币此前从未进过钱包**:`PlayerStats.gold` 只写 `battle_player_stats` 战绩表,
+  全仓没有任何一处把它送进 inventory。修法是搭既有的战后发放出箱
+  (`battle_drop_outbox` 加 `currency_amount` 列),与可堆叠道具**合并成一次 GrantItems**
+  (共用幂等键与事务,不会"道具到了钱没到")。DS 不可信:上报值先过
+  `MaxBattleGoldPerPlayer`(默认 100 万)就地钳位并**写回 result**,让战绩表与钱包读到同一个数;
+  超限截断 + `battle_gold_truncated` Warn,不拒整场(战绩落库失败会连带段位/任务/掉落一起丢)。
+- **NPC 商店从客户端本地模拟改成服务端权威**:新增 `GetShop` / `PurchaseShopItem` 两个客户端 RPC,
+  新增配置表 `商店/d_商店.xlsx` → `dist/shop.json`(12 行,两个商店)。
+  **`PurchaseShopItemRequest` 刻意不含价格字段** —— 定价是权威数据(§17.2)。
+  扣币 + 入包(堆叠计数或生成装备实例)在同一个 MySQL 事务里完成;装备购买**不复用 GrantInstances**
+  (那会让扣钱与发货落在两个事务,中间崩溃 = 钱扣了货没到),而是内联复用同一套格子分配。
+- **🔴 旧商店买价 == 卖价是无限刷钱**:旧客户端商店直接拿道具表 `SellPrice`(**回收价**)当买入价。
+  本地模拟阶段只是数值不合理;一旦买和卖都变成服务端权威,它就是一条严格闭合的刷钱循环。
+  新商店表把买入价与回收价彻底分离(当前统一取回收价 4 倍)。
+- **UE 侧 uint64 的承载**:UHT **拒绝蓝图可见的 uint64**(`UhtUInt64Property` 未声明
+  `IsMemberSupportedByBlueprint`,USTRUCT/UCLASS/UFUNCTION 三处都是硬 LogError)。
+  沿用既有 player_id 方案分层承载:wire 层(纯 POD)用真 uint64,蓝图视图层用 `int64` +
+  `// proto uint64` 注释(服务端把单币种余额钳在 2^62,恒 < int64 max)。
+  `FPandoraInventory.Currencies` 是权威字段,`Gold` 是它在金币上的**只读投影**,
+  由解码层一并算出,不会出现"数组更新了但顶部金币条没更"。
+- **出售链补齐**:出售响应新增 `earned`(本次收入),UI 从"出售成功,余额 X"改成
+  "获得 N 金币,余额 X";`Btn_Sell` 补进运行时兜底按钮列表 —— 它此前是 `BindWidgetOptional`
+  且**不在**兜底补建清单里,换一张没画该按钮的蓝图会让出售入口静默消失。
+- **验证**:`buf lint` OK;`proto_gen.ps1` 与 `-Cpp` 均已跑通并提交生成物;
+  **go.work 全部模块 `go build ./...` 全绿**;导表流水线自动接住新表并生成
+  `pkg/configtable/shop_table.gen.go` + `dist/shop.json`(批次 v20260822002)。
+- **仍需用户执行**:① UE 编译与运行验证(§11.6 UE 编译由用户执行);
+  ② 跑 `tools/migrate` 应用 `pandora_trade/000005` 与 `pandora_battle/000011`;
+  ③ 新增的 `Pandora-Client-SVN/Table/道具/d_商店.xlsx` 需要 svn add 并按需调整定价;
+  ④ 客户端仓库 `PandoraBackendTypes.h` 原为混合行尾(1052 CRLF / 43 LF),本次编辑后
+  整篇归一为 CRLF,SVN diff 会多出这 43 行的行尾变更 —— 属噪声,不影响内容。
+- **续(同日,等技能卡/MaxHp 那批收尾后补)**:`MaxHp` 上限**上调时当前血不跟随**这半边补上了
+  (下降压血那半边并发批次已做)。判定抽成纯函数
+  `UMyEntityAttrSet::ResolveHpAfterMaxHpChange`,规则是**满血保持满血**:
+  上限降了且当前血超出 → 压到新上限;上限升了且此前正好满血 → 抬到新满值;**不满血刻意不跟随**。
+  三条约束只能同时满足于这一条规则 —— 不抬血则属性加点「体质」/ 装备 HP% / 专精的生命上限
+  在进场时表现为"出生就缺一块血"(3600/3850,持久加成都是 Init 之后经 GetLoadout 才落到
+  MaxHp 上的);无条件抬血则"残血卸下再装回加生命的装备"= 白嫖治疗。
+  另加 `OldMaxHp <= 0` 不跟随的护栏(那是"上限还不知道",放行会把 0 血实体拉成满血)。
+  UE 侧新增 4 个自动化用例(`MyMaxHpFollowTests.cpp`)逐格钉死该矩阵。
+
+### 同批次对抗复核修复(2026-08-23)
+
+改完后跑了一轮独立复核(机械对拍 + `go/types` 分析器,不是靠 grep),抓到两条真缺陷:
+
+- **🔴 P1(本批次引入,已修 + 已补回归)**:`auction/internal/data/settlement_client.go` 的
+  `EnsureAuctionEscrow` 请求**漏填 `CurrencyKind`**,而同文件另外三个构造点都填了。
+  inventory 对未知币种一律 fail-closed(不回退金币),所以 BUY 侧补冻会**恒返 ERR_INVALID_ARG**。
+  这条路径只在"旧订单缺 escrow 需要补冻"时才走,平时不触发,能潜伏很久。
+  **测试为什么全绿**:auction 既有的 `trackLedger` 假实现挂在 `biz.SettlementLedger` 接口边界上,
+  位于出错的请求构造**之上**,永远碰不到。新增 `settlement_client_test.go` 把假实现下沉到
+  gRPC client 层,断言 Freeze/Ensure/Settle 三个请求的币种都非 UNSPECIFIED;
+  **已实测:去掉修复该用例变红,恢复后变绿**。
+- **🔴 P1(Python 移植层)**:`python/.../trade/biz.py` 只搬了"要作废的那一半" ——
+  保留了 `price < 0` 却没搬替代品,`TradeConf` 里**根本没有 `max_trade_price` 字段**。
+  已补上界闸 + 默认值 + 回归用例(对齐 Go 的 `TestCreateOrder_PriceUpperBound`)。
+  ⚠️ 注意与 Go 不同:**Python 下界闸必须保留** —— Go 的 price 是 uint64 所以 `< 0` 恒假可删,
+  但 Python 没有类型保护,biz 能被进程内调用方传进真负数(既有用例正是这么测的)。
+- **探针加宽**:守"钱包不许 SQL 自减"的机械检查原先只扫 `currency.py` 一个模块,
+  将来谁在 `repo.py` 写一句钱包自减就抓不到。已改成扫整个 inventory 包,
+  并**用植入违规自测过**(植入→红,还原→绿)。第一次改写时 perl 没匹配上、探针其实没加宽,
+  是自测把这个假动作抓出来的。
+- **指纹跨语言对拍**:Go 与 Python 的幂等指纹用 25 组输入机械对拍,**逐字节一致**
+  (含纯金币旧格式兼容分支、`grant_empty` 与 `grant_goldzero` 同 hex 等边界)。
+- **无符号恒假判断复扫**:用基于 `go/types` 的分析器(先植入假 bug 自证有效)扫全部 32 个
+  workspace module,四个货币模块 + pkg + proto **零命中**;另扫 uint64→有符号窄化 4 处,
+  逐个确认都有显式上界闸。
+
+**验证**:`go vet` + `go test` 五个模块(inventory / auction / trade / battle_result / pkg)全绿;
+Python 焦点用例 959 项全绿,全量 5057 项通过、3 项失败。
+**3 项失败均与本批次无关且本批次未改动其文件**:`test_bbr.py`(busy-spin 把 CPU EMA 顶过 200,
+本机跑出 195,负载敏感)、`test_etcdleader.py` 两项(与焦点测试并发抢 CPU 所致,单独重跑即过);
+`auction` 的 `TestRedisMarketLocker_*` 同类时序抖动,单独与整包各重跑均绿。
+
+## 2026-08-23 补齐「暴击伤害」列(j_角色等级.xlsx)
+
+- **背景**:上一条把这一列写成"全表 30 行都是 0"是**不准确的** —— 实际是 1011 冰法·新 与
+  1013 冰法2号 已填 `1`、1014 悟空显式填 0、其余 28 行**留空**(导出后才变成 0)。真实状态是
+  "两个英雄能暴、其余暴了没伤害"的不一致,不是整列空白。
+- **改动**:按表内已有先例统一 —— **所有 `entity_type=1`(玩家英雄)的 14 行 `暴击伤害 = 1`**
+  (暴击打双倍)。取 1 是因为 1011/1013 那两行是策划自己填的,项目内已有口径优先于外部惯例。
+- **怪物与 NPC 刻意保持空白**(2/3/2001..2101/6001/3001 雅典娜):它们的「暴击率」全表为 0
+  且没有装备,`CritDamage` 永远不会被消费,填了只是噪音。**本次改表对怪物战斗数值零影响**;
+  真要给怪物暴击应当先配「暴击率」再配这一列。
+- **改表手法**(xlsx 有批注 / 外部链接 / calcChain,openpyxl 保存会丢批注与外部链接):
+  只替换 zip 里的 `xl/worksheets/sheet1.xml`,其余 16 个条目逐字节原样搬运,改完用 sha256
+  逐条目比对确认只有 sheet1.xml 变化。原件备份在 scratchpad;误改用 `svn revert` 即可回退。
+- **验证**:服务端导表批次 v20260823001,`dist/role_level.json` 14 行 `crit_damage=1`、
+  怪物行无该字段;客户端导表器实跑产出 `Temp/CfgRoleLv.json` 同样 14 行 `CritDamage=1`、
+  怪物 0。`go test ./pkg/configtable/... ./services/economy/inventory/...` 全绿。
+- 代码侧那条只报一次的 Warning(`[暴击] 触发暴击但暴击伤害=0`)保留为防回退哨兵:
+  将来谁清空这一列、或给怪物配了暴击率却没配暴击伤害,会立刻在日志里可见。
+
+### 商店反套利闸(2026-08-23,当场抓出自己的定价 bug)
+
+- **新增加载期闸门** `configtable.ValidateShopCrossTables`:商店买入价必须**严格高于**
+  道具表回收总价(`unit_price > count_per_unit × item.sell_price`),挂进 inventory 的整批门禁。
+  只对金币计价生效(非金币与金币回收不可比,跨币种是汇率问题不归这条管)。
+- **为什么必须在加载期**:购买期挡只会让个别商品报错,配错的表照样上线 ——
+  而刷钱的正是那些"没报错"的档。加载期整批拒则保留上一份正确配置继续服务(§9.15)。
+- **为什么必须有这条**:这个失败模式**没有任何运行期信号**。每一笔买卖单独看都合法、
+  都成功、都记流水,异常只体现在总量上,靠日志和监控都发现不了。
+- **闸门上线即生效**:我第一版样例定价里,肾上腺素针(10009)回收价 220、买入价填了 200 ——
+  买进立刻卖出净赚 20,严格闭合的刷钱循环。原因是只核了前两个道具的回收价、其余按印象填。
+  已按真实回收价统一改成 4 倍(军用绷带 100→180、急救喷剂 140→360、肾上腺素针 200→880),
+  重新导表批次 v20260823002。
+- **同一闸门又抓出第二个**:压缩口粮(10001)在商店 1 里被我配了两档(单买 + 10 个装),
+  而购买请求只带 `item_config_id`、没有档位标识 —— 服务端分不清要买哪档,
+  `ShopEntryOf` 只能 fail-closed,结果是**这个道具永远买不了**,而表面上看表是"配了的"。
+  已把"同商店同道具不得配多档"一并加进 `ValidateShopCrossTables`,并删掉那一档
+  (打包商品必须用独立道具 ID)。批次 v20260823003,shop 12 → 11 行。
+- **回归两层**:①`realdist_test.go` 用**真实 dist 产物**断言当前数据干净(11 档全过);
+  ②`shop_test.go` 用合成数据证明**闸门本身有效**(等价/低价/漏乘每份数量/重复档 各一例,
+  外加"非金币跳过""不同商店同道具放行"两条反向用例)。
+  真表测试证明不了闸门有效,合成测试证明不了线上数据干净,两者缺一不可。
+
+### UE 编译验证(2026-08-23,首次真编译)
+
+此前 UE 侧只做过人工复查。这次真跑 `Build.bat PandoraEditor Win64 Development`,抓到三类问题:
+
+- **我的(已修)**:`PandoraInventoryClient.cpp` 三处 `OnDone(...)` 早退调用没跟上新签名
+  (error C2064)。教训:改委托签名时,`XxxResult.Broadcast(...)` 与紧邻的
+  `if (OnDone) OnDone(...)` 是**两个独立调用点**,我改了前者漏了后者 ——
+  而它们就挨着,肉眼复查时极易当成一处。修完 `PandoraInventoryClient.cpp` 编译通过,
+  `UnrealEditor-Pandora.dll` / `UnrealEditor-PandoraEditor.dll` **均链接成功**。
+- **并行工作的(已修,已在提交里标明)**:
+  ① `MyEntityPlayerController.cpp:193` 用了 `UEnhancedInputComponent::BindKey` ——
+  UE 5.8 把 BindKey / BindAction(FName) / BindAxis 这族 legacy 绑定**全部 `= delete`**
+  (受 `ENHANCED_INPUT_ALLOW_LEGACY_BINDING` 保护),且删除重载会**遮蔽基类同名函数**,
+  所以经 `UEnhancedInputComponent*` 调用必命中已删版本(C2280)。基类
+  `UInputComponent::BindKey` 完好,改成 `static_cast<UInputComponent*>(...)->BindKey(...)` 即可。
+  ② `PandoraTests` 链接缺两个符号:`UMyEntityAttrSet` 漏 `PANDORA_API`(基类
+  `UMyEntityAttrSetBase` 有、派生类没有),`PandoraTests.Build.cs` 漏 `MyPandoraCore`
+  模块依赖(Cfg 行基类 `FCfgTableRow` 住在该插件模块)。两者都是新加测试跨 DLL 引用时才暴露。
+- **结果**:修完上述三处后 `Build.bat PandoraEditor Win64 Development` **`Result: Succeeded`**,
+  0 error 0 warning,38 个动作全完成,`UnrealEditor-Pandora.dll` /
+  `UnrealEditor-PandoraEditor.dll` / `UnrealEditor-PandoraTests.dll` 均链接产出
+  (439s)。至此货币 / 出售 / NPC 商店的 UE 侧改动**已由真实编译器验证**,
+  不再只是人工复查。
+- **UE 自动化测试**(顺带跑,`UnrealEditor-Cmd -ExecCmds="Automation RunTests Pandora;Quit"`):
+  **216 通过 / 16 失败**。16 条**均不归本批次**,判据是文件归属而不是"看着不像":
+  ① `MyInteractActionPolicyTest.cpp` 在 SVN 里是 `?`(并行工作**新加**的测试,自己红);
+  ② `PandoraBackendSubsystemTests.cpp` 与被测的 `PandoraBackendSubsystem.cpp` **都是未改动**
+  → 本批次之前就红;③ `Bag.PreserveGuidCapacity` 对应的 `MyBagComponent.cpp` 改动内容是
+  装备属性 / GAS(`MyEquipAttrStatics`),与货币无关;④ 其余 12 条的被测对象都不在本批次改动清单里。
+  **覆盖本批次改动范围的用例全部通过**:`Bag.ActionPolicy.Equipment` /
+  `.InventoryConsumable`(出售可用性策略)、`Bag.ItemAction.LobbyStack` / `.LobbyInstance`
+  (出售与使用动作路径)、`Bag.Lobby.IdempotencyFingerprintCache`(幂等键)、`.InstanceAttributes`。
+  ⚠️ 未做的事:没有回到改动前的构建实跑一遍做前后对比,所以"这 16 条本来就红"是**归属推断**
+  (文件未被本批次触碰),不是实测对比。
+- **顺带补上一个编译查不出的部署缺口**:Istio 客户端授权白名单是**逐方法枚举**的,
+  新增的 `GetShop` / `PurchaseShopItem` 不在其中 —— Envoy 侧有前缀兜底路由所以本地 dev 正常,
+  但上线到网格环境后商店会被直接拒。已加进 `inventory-mesh/{enforce,observe}/authorization-policy.yaml`。
+
+## 2026-08-23 装备属性的复制口径收紧:只发给自己,别人那边保持原样
+
+- **用户口径**:「我只说我们装备的属性」「不要变人家原来的东西」—— 装备属性是新增能力,
+  不能因此改变别的客户端上任何既有表现。
+- **`MaxHp` 由 `COND_None` 改为 `COND_ReplayOrOwner`**(同 `MoveSpeedRate` 的既有先例)。
+  别的客户端收不到该属性,`UMyAttrStatics::ResolveEntityMaxHp` 回退 `CfgRoleLv->Hp` ——
+  正是本属性存在之前的行为,逐字节一致。怪物/NPC 的 ASC 无 owner 连接,对所有人都不发,同样保持原状。
+  **代价(已向用户说明并由用户拍板)**:队友穿加生命装备时,你看到的他的血条分母仍是配表裸值,条会填不满;
+  战斗裁决不受影响(伤害与死亡判定全在权威端,那里恒有真值)。
+- **`MaxHp` 声明位置移到 `AtkSpeedRate` 之后**。复制句柄(RepIndex)按**属性声明顺序**编号,
+  原先插在 `Hp` 与 `Shield` 之间会让 `Shield`/`MoveSpeedRate`/`AtkSpeedRate` 的既有句柄整体后移一格 ——
+  那是在动既有属性。追加到末尾后既有句柄一个不动,新属性拿最后一个号。
+  ⚠️ 这**不能**省掉协议版本隔离:旧客户端根本没有这一条,收到该句柄仍解析不了,
+  `PandoraNetProtocolVersion` 仍是 12(Pandora.cpp 的版本 12 注释已按新形态改写)。
+- 另外 3 个新属性 `SkillDamageRate` / `SkillHealRate` / `SkillControlRate` **完全不复制**,
+  只在权威端参与裁决,连自己的客户端都收不到。装备 6 列里因此只有 HP 这一列的结果会过网络,且只到自己。
+- **零变化验证**:改动对"没穿新装备的人"逐条为 no-op —— MaxHp 初值 = CfgRoleLv->Hp 上限相同;
+  CritChance 全表为 0 故暴击永不触发;三个 Rate 裸体值为 0 故乘 1 / 早退;控场判定与结构体合并是纯搬运。
+  逐条对照表见 `docs/design/decision-equip-base-attributes.md`。

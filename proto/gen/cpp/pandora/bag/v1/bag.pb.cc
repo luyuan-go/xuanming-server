@@ -216,184 +216,6 @@ const ::_pbi::ClassData* SaveCheckpointResponse_get_class_data() {
 }
 }  // namespace
 #endif  // PROTOBUF_CUSTOM_VTABLE
-class PurchaseCapacityResponse::_Internal {
- public:
-  using HasBits = decltype(::std::declval<PurchaseCapacityResponse>()._impl_._has_bits_);
-  static constexpr ::int32_t kHasBitsOffset =
-      8 * PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_._has_bits_);
-};
-
-constexpr PurchaseCapacityResponse::ParseTableT_ PurchaseCapacityResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
-  return ParseTableT_{
-    {
-      PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_._has_bits_),
-      0, // no _extensions_
-      6, 56,  // max_field_number, fast_idx_mask
-      offsetof(ParseTableT_, field_lookup_table),
-      4294967232,  // skipmap
-      offsetof(ParseTableT_, field_entries),
-      6,  // num_field_entries
-      0,  // num_aux_entries
-      offsetof(ParseTableT_, field_names),  // no aux_entries
-      class_data,
-      nullptr,  // post_loop_handler
-      ::_pbi::TcParser::GenericFallback,  // fallback
-      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
-      ::_pbi::TcParser::GetTable<::pandora::bag::v1::PurchaseCapacityResponse>(),  // to_prefetch
-      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
-    }, {{
-      {::_pbi::TcParser::MiniParse, {}},
-      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseCapacityResponse, _impl_.code_), 0>(),
-       {8, 0, 0,
-        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.code_)}},
-      // uint32 purchases = 2 [json_name = "purchases"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseCapacityResponse, _impl_.purchases_), 1>(),
-       {16, 1, 0,
-        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.purchases_)}},
-      // uint32 extra = 3 [json_name = "extra"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseCapacityResponse, _impl_.extra_), 2>(),
-       {24, 2, 0,
-        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.extra_)}},
-      // uint32 effective_capacity = 4 [json_name = "effectiveCapacity"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseCapacityResponse, _impl_.effective_capacity_), 3>(),
-       {32, 3, 0,
-        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.effective_capacity_)}},
-      // int64 gold_cost = 5 [json_name = "goldCost"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(PurchaseCapacityResponse, _impl_.gold_cost_), 4>(),
-       {40, 4, 0,
-        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.gold_cost_)}},
-      // int64 gold_remaining = 6 [json_name = "goldRemaining"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(PurchaseCapacityResponse, _impl_.gold_remaining_), 5>(),
-       {48, 5, 0,
-        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.gold_remaining_)}},
-      {::_pbi::TcParser::MiniParse, {}},
-    }}, {{
-      65535, 65535
-    }}, {{
-      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.code_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
-      // uint32 purchases = 2 [json_name = "purchases"];
-      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.purchases_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
-      // uint32 extra = 3 [json_name = "extra"];
-      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.extra_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
-      // uint32 effective_capacity = 4 [json_name = "effectiveCapacity"];
-      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.effective_capacity_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
-      // int64 gold_cost = 5 [json_name = "goldCost"];
-      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.gold_cost_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-      // int64 gold_remaining = 6 [json_name = "goldRemaining"];
-      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.gold_remaining_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-    }},
-    // no aux_entries
-    {{
-    }},
-  };
-}
-
-
-inline constexpr PurchaseCapacityResponse::Impl_::Impl_(
-    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
-    ::_pbi::ConstantInitialized) noexcept
-      : _cached_size_{0},
-        code_{static_cast< ::pandora::common::v1::ErrCode >(0)},
-        purchases_{0u},
-        extra_{0u},
-        effective_capacity_{0u},
-        gold_cost_{::int64_t{0}},
-        gold_remaining_{::int64_t{0}} {}
-
-template <typename>
-constexpr PurchaseCapacityResponse::PurchaseCapacityResponse(::_pbi::ConstantInitialized,
-                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
-    : ::google::protobuf::Message(
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-          class_data
-#endif  // PROTOBUF_CUSTOM_VTABLE
-          ),
-      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
-}
-inline void* PROTOBUF_NONNULL PurchaseCapacityResponse::PlacementNew_(
-    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
-  return ::new (mem) PurchaseCapacityResponse(arena);
-}
-constexpr auto PurchaseCapacityResponse::InternalNewImpl_() {
-  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(PurchaseCapacityResponse), alignof(PurchaseCapacityResponse));
-}
-constexpr auto PurchaseCapacityResponse::InternalGenerateClassData_(
-    const MessageLite& prototype,
-    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
-  return ::google::protobuf::internal::ClassDataFull{
-      ::google::protobuf::internal::ClassData{
-          &prototype,
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-          &_table_.header,
-#else
-          tc_table,
-#endif
-          nullptr,  // IsInitialized
-          &PurchaseCapacityResponse::MergeImpl,
-          ::google::protobuf::Message::GetNewImpl<PurchaseCapacityResponse>(),
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-          &PurchaseCapacityResponse::SharedDtor,
-          ::google::protobuf::Message::GetClearImpl<PurchaseCapacityResponse>(), &PurchaseCapacityResponse::ByteSizeLong,
-              &PurchaseCapacityResponse::_InternalSerialize,
-#endif  // PROTOBUF_CUSTOM_VTABLE
-          PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_._cached_size_),
-          false,
-      },
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[17],
-#else   // !PROTOBUF_MESSAGE_GLOBALS
-      &::_pbi::kDescriptorMethods,
-      &descriptor_table_pandora_2fbag_2fv1_2fbag_2eproto,
-      nullptr,  // tracker
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-  };
-}
-struct PurchaseCapacityResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
-  constexpr PurchaseCapacityResponseGlobalsTypeInternal()
-      :
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-        _default(::_pbi::ConstantInitialized{},
-                 PurchaseCapacityResponse_class_data_.base())
-#else   // !PROTOBUF_MESSAGE_GLOBALS
-        MessageGlobalsBase(PurchaseCapacityResponse::InternalGenerateClassData_(
-            _default, &PurchaseCapacityResponse_globals_._table.header)),
-        _default(::_pbi::ConstantInitialized{}, GetClassData()),
-        _table(::_pbi::PrivateAccess::GenerateParseTable<PurchaseCapacityResponse>(
-            GetClassData()))
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-  {
-  }
-  ~PurchaseCapacityResponseGlobalsTypeInternal() {}
-  union {
-    alignas(::_pbi::kMaxMessageAlignment) PurchaseCapacityResponse _default;
-  };
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-  decltype(::_pbi::PrivateAccess::GenerateParseTable<PurchaseCapacityResponse>(
-      ::std::declval<const ::_pbi::ClassData*>())) _table;
-#endif
-};
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-static_assert(PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponseGlobalsTypeInternal, _default) ==
-              ::_pbi::MessageGlobalsBase::OffsetToDefault());
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-
-PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
-    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST PurchaseCapacityResponseGlobalsTypeInternal PurchaseCapacityResponse_globals_
-        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-namespace {
-const ::_pbi::ClassData* PurchaseCapacityResponse_get_class_data() {
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-  return PurchaseCapacityResponse_globals_.GetClassData();
-#else
-  return PurchaseCapacityResponse_class_data_.base();
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-}
-}  // namespace
-#endif  // PROTOBUF_CUSTOM_VTABLE
 class PurchaseCapacityRequest::_Internal {
  public:
   using HasBits = decltype(::std::declval<PurchaseCapacityRequest>()._impl_._has_bits_);
@@ -1291,6 +1113,195 @@ const ::_pbi::ClassData* AppendJournalResponse_get_class_data() {
   return AppendJournalResponse_globals_.GetClassData();
 #else
   return AppendJournalResponse_class_data_.base();
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+}
+}  // namespace
+#endif  // PROTOBUF_CUSTOM_VTABLE
+class PurchaseCapacityResponse::_Internal {
+ public:
+  using HasBits = decltype(::std::declval<PurchaseCapacityResponse>()._impl_._has_bits_);
+  static constexpr ::int32_t kHasBitsOffset =
+      8 * PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_._has_bits_);
+};
+
+constexpr PurchaseCapacityResponse::ParseTableT_ PurchaseCapacityResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
+  return ParseTableT_{
+    {
+      PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_._has_bits_),
+      0, // no _extensions_
+      8, 56,  // max_field_number, fast_idx_mask
+      offsetof(ParseTableT_, field_lookup_table),
+      4294967088,  // skipmap
+      offsetof(ParseTableT_, field_entries),
+      6,  // num_field_entries
+      2,  // num_aux_entries
+      offsetof(ParseTableT_, aux_entries),
+      class_data,
+      nullptr,  // post_loop_handler
+      ::_pbi::TcParser::GenericFallback,  // fallback
+      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
+      ::_pbi::TcParser::GetTable<::pandora::bag::v1::PurchaseCapacityResponse>(),  // to_prefetch
+      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
+    }, {{
+      // .pandora.common.v1.CurrencyAmount balance = 8 [json_name = "balance"];
+      {::_pbi::TcParser::FastMtS1,
+       {66, 1, 1,
+        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.balance_)}},
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseCapacityResponse, _impl_.code_), 2>(),
+       {8, 2, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.code_)}},
+      // uint32 purchases = 2 [json_name = "purchases"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseCapacityResponse, _impl_.purchases_), 3>(),
+       {16, 3, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.purchases_)}},
+      // uint32 extra = 3 [json_name = "extra"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseCapacityResponse, _impl_.extra_), 4>(),
+       {24, 4, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.extra_)}},
+      // uint32 effective_capacity = 4 [json_name = "effectiveCapacity"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseCapacityResponse, _impl_.effective_capacity_), 5>(),
+       {32, 5, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.effective_capacity_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.CurrencyAmount cost = 7 [json_name = "cost"];
+      {::_pbi::TcParser::FastMtS1,
+       {58, 0, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.cost_)}},
+    }}, {{
+      65535, 65535
+    }}, {{
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.code_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      // uint32 purchases = 2 [json_name = "purchases"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.purchases_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // uint32 extra = 3 [json_name = "extra"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.extra_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // uint32 effective_capacity = 4 [json_name = "effectiveCapacity"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.effective_capacity_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // .pandora.common.v1.CurrencyAmount cost = 7 [json_name = "cost"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.cost_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kMessage | ::_fl::kTvTable)},
+      // .pandora.common.v1.CurrencyAmount balance = 8 [json_name = "balance"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.balance_), _Internal::kHasBitsOffset + 1, 1, (0 | ::_fl::kFcOptional | ::_fl::kMessage | ::_fl::kTvTable)},
+    }},
+    {{
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
+    }},
+    {{
+    }},
+  };
+}
+
+
+inline constexpr PurchaseCapacityResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    ::_pbi::ConstantInitialized) noexcept
+      : _cached_size_{0},
+        cost_{nullptr},
+        balance_{nullptr},
+        code_{static_cast< ::pandora::common::v1::ErrCode >(0)},
+        purchases_{0u},
+        extra_{0u},
+        effective_capacity_{0u} {}
+
+template <typename>
+constexpr PurchaseCapacityResponse::PurchaseCapacityResponse(::_pbi::ConstantInitialized,
+                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
+    : ::google::protobuf::Message(
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          class_data
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          ),
+      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
+}
+inline void* PROTOBUF_NONNULL PurchaseCapacityResponse::PlacementNew_(
+    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
+  return ::new (mem) PurchaseCapacityResponse(arena);
+}
+constexpr auto PurchaseCapacityResponse::InternalNewImpl_() {
+  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(PurchaseCapacityResponse), alignof(PurchaseCapacityResponse));
+}
+constexpr auto PurchaseCapacityResponse::InternalGenerateClassData_(
+    const MessageLite& prototype,
+    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
+  return ::google::protobuf::internal::ClassDataFull{
+      ::google::protobuf::internal::ClassData{
+          &prototype,
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+          &_table_.header,
+#else
+          tc_table,
+#endif
+          nullptr,  // IsInitialized
+          &PurchaseCapacityResponse::MergeImpl,
+          ::google::protobuf::Message::GetNewImpl<PurchaseCapacityResponse>(),
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          &PurchaseCapacityResponse::SharedDtor,
+          ::google::protobuf::Message::GetClearImpl<PurchaseCapacityResponse>(), &PurchaseCapacityResponse::ByteSizeLong,
+              &PurchaseCapacityResponse::_InternalSerialize,
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_._cached_size_),
+          false,
+      },
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+      &file_reflection_data[17],
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+      &::_pbi::kDescriptorMethods,
+      &descriptor_table_pandora_2fbag_2fv1_2fbag_2eproto,
+      nullptr,  // tracker
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  };
+}
+struct PurchaseCapacityResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
+  constexpr PurchaseCapacityResponseGlobalsTypeInternal()
+      :
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+        _default(::_pbi::ConstantInitialized{},
+                 PurchaseCapacityResponse_class_data_.base())
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+        MessageGlobalsBase(PurchaseCapacityResponse::InternalGenerateClassData_(
+            _default, &PurchaseCapacityResponse_globals_._table.header)),
+        _default(::_pbi::ConstantInitialized{}, GetClassData()),
+        _table(::_pbi::PrivateAccess::GenerateParseTable<PurchaseCapacityResponse>(
+            GetClassData()))
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  {
+  }
+  ~PurchaseCapacityResponseGlobalsTypeInternal() {}
+  union {
+    alignas(::_pbi::kMaxMessageAlignment) PurchaseCapacityResponse _default;
+  };
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  decltype(::_pbi::PrivateAccess::GenerateParseTable<PurchaseCapacityResponse>(
+      ::std::declval<const ::_pbi::ClassData*>())) _table;
+#endif
+};
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+static_assert(PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponseGlobalsTypeInternal, _default) ==
+              ::_pbi::MessageGlobalsBase::OffsetToDefault());
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
+    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST PurchaseCapacityResponseGlobalsTypeInternal PurchaseCapacityResponse_globals_
+        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+namespace {
+const ::_pbi::ClassData* PurchaseCapacityResponse_get_class_data() {
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  return PurchaseCapacityResponse_globals_.GetClassData();
+#else
+  return PurchaseCapacityResponse_class_data_.base();
 #endif  // PROTOBUF_MESSAGE_GLOBALS
 }
 }  // namespace
@@ -3553,14 +3564,14 @@ const ::uint32_t
         PROTOBUF_FIELD_OFFSET(::pandora::bag::v1::PurchaseCapacityResponse, _impl_.purchases_),
         PROTOBUF_FIELD_OFFSET(::pandora::bag::v1::PurchaseCapacityResponse, _impl_.extra_),
         PROTOBUF_FIELD_OFFSET(::pandora::bag::v1::PurchaseCapacityResponse, _impl_.effective_capacity_),
-        PROTOBUF_FIELD_OFFSET(::pandora::bag::v1::PurchaseCapacityResponse, _impl_.gold_cost_),
-        PROTOBUF_FIELD_OFFSET(::pandora::bag::v1::PurchaseCapacityResponse, _impl_.gold_remaining_),
-        0,
-        1,
+        PROTOBUF_FIELD_OFFSET(::pandora::bag::v1::PurchaseCapacityResponse, _impl_.cost_),
+        PROTOBUF_FIELD_OFFSET(::pandora::bag::v1::PurchaseCapacityResponse, _impl_.balance_),
         2,
         3,
         4,
         5,
+        0,
+        1,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::bag::v1::GetSectionsRequest, _impl_._has_bits_),
         5, // hasbit index offset
@@ -3626,110 +3637,114 @@ static const ::_pbi::MessageGlobalsBase* PROTOBUF_NONNULL const
 const char descriptor_table_protodef_pandora_2fbag_2fv1_2fbag_2eproto[] ABSL_ATTRIBUTE_SECTION_VARIABLE(
     protodesc_cold) = {
     "\n\030pandora/bag/v1/bag.proto\022\016pandora.bag."
-    "v1\032\037pandora/common/v1/errcode.proto\"A\n\020B"
-    "agItemAttribute\022\027\n\007attr_id\030\001 \001(\rR\006attrId"
-    "\022\024\n\005value\030\002 \001(\003R\005value\"\322\001\n\007BagItem\022$\n\016it"
-    "em_config_id\030\001 \001(\rR\014itemConfigId\022\024\n\005coun"
-    "t\030\002 \001(\rR\005count\022\022\n\004slot\030\003 \001(\rR\004slot\022\037\n\013in"
-    "stance_id\030\004 \001(\004R\ninstanceId\022\036\n\nidentifie"
-    "d\030\005 \001(\010R\nidentified\0226\n\005attrs\030\006 \003(\0132 .pan"
-    "dora.bag.v1.BagItemAttributeR\005attrs\"\222\001\n\n"
-    "BagSection\022\031\n\010bag_type\030\001 \001(\rR\007bagType\022\036\n"
-    "\ngeneration\030\002 \001(\004R\ngeneration\022\032\n\010capacit"
-    "y\030\003 \001(\rR\010capacity\022-\n\005items\030\004 \003(\0132\027.pando"
-    "ra.bag.v1.BagItemR\005items\"J\n\020BagStorageRe"
-    "cord\0226\n\010sections\030\001 \003(\0132\032.pandora.bag.v1."
-    "BagSectionR\010sections\">\n\rPickupGrantOp\022-\n"
-    "\005items\030\001 \003(\0132\027.pandora.bag.v1.BagItemR\005i"
-    "tems\"r\n\013MailClaimOp\022\027\n\007mail_id\030\001 \001(\004R\006ma"
-    "ilId\022\033\n\tclaim_key\030\002 \001(\tR\010claimKey\022-\n\005ite"
-    "ms\030\003 \003(\0132\027.pandora.bag.v1.BagItemR\005items"
-    "\"\200\001\n\nTransferOp\022\036\n\013to_bag_type\030\001 \001(\rR\tto"
-    "BagType\022#\n\rto_generation\030\002 \001(\004R\014toGenera"
-    "tion\022-\n\005items\030\003 \003(\0132\027.pandora.bag.v1.Bag"
-    "ItemR\005items\"\340\001\n\tConsumeOp\022<\n\rconsume_ite"
-    "ms\030\001 \003(\0132\027.pandora.bag.v1.BagItemR\014consu"
-    "meItems\022(\n\020produce_bag_type\030\002 \001(\rR\016produ"
-    "ceBagType\022-\n\022produce_generation\030\003 \001(\004R\021p"
-    "roduceGeneration\022<\n\rproduce_items\030\004 \003(\0132"
-    "\027.pandora.bag.v1.BagItemR\014produceItems\"\244"
-    "\003\n\017BagJournalEntry\022\037\n\013journal_seq\030\001 \001(\004R"
-    "\njournalSeq\022\031\n\010bag_type\030\002 \001(\rR\007bagType\022\036"
-    "\n\ngeneration\030\003 \001(\004R\ngeneration\022\'\n\017idempo"
-    "tency_key\030\004 \001(\tR\016idempotencyKey\022\023\n\005ts_ms"
-    "\030\005 \001(\003R\004tsMs\022B\n\014pickup_grant\030\n \001(\0132\035.pan"
-    "dora.bag.v1.PickupGrantOpH\000R\013pickupGrant"
-    "\022<\n\nmail_claim\030\013 \001(\0132\033.pandora.bag.v1.Ma"
-    "ilClaimOpH\000R\tmailClaim\0228\n\010transfer\030\014 \001(\013"
-    "2\032.pandora.bag.v1.TransferOpH\000R\010transfer"
-    "\0225\n\007consume\030\r \001(\0132\031.pandora.bag.v1.Consu"
-    "meOpH\000R\007consumeB\004\n\002op\"N\n\016LoadBagRequest\022"
-    "\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\037\n\013owner_ep"
-    "och\030\002 \001(\004R\nownerEpoch\"M\n\024BagEffectiveCap"
-    "acity\022\031\n\010bag_type\030\001 \001(\rR\007bagType\022\032\n\010capa"
-    "city\030\002 \001(\rR\010capacity\"\267\002\n\017LoadBagResponse"
+    "v1\032\037pandora/common/v1/errcode.proto\032 pan"
+    "dora/common/v1/currency.proto\"A\n\020BagItem"
+    "Attribute\022\027\n\007attr_id\030\001 \001(\rR\006attrId\022\024\n\005va"
+    "lue\030\002 \001(\003R\005value\"\322\001\n\007BagItem\022$\n\016item_con"
+    "fig_id\030\001 \001(\rR\014itemConfigId\022\024\n\005count\030\002 \001("
+    "\rR\005count\022\022\n\004slot\030\003 \001(\rR\004slot\022\037\n\013instance"
+    "_id\030\004 \001(\004R\ninstanceId\022\036\n\nidentified\030\005 \001("
+    "\010R\nidentified\0226\n\005attrs\030\006 \003(\0132 .pandora.b"
+    "ag.v1.BagItemAttributeR\005attrs\"\222\001\n\nBagSec"
+    "tion\022\031\n\010bag_type\030\001 \001(\rR\007bagType\022\036\n\ngener"
+    "ation\030\002 \001(\004R\ngeneration\022\032\n\010capacity\030\003 \001("
+    "\rR\010capacity\022-\n\005items\030\004 \003(\0132\027.pandora.bag"
+    ".v1.BagItemR\005items\"J\n\020BagStorageRecord\0226"
+    "\n\010sections\030\001 \003(\0132\032.pandora.bag.v1.BagSec"
+    "tionR\010sections\">\n\rPickupGrantOp\022-\n\005items"
+    "\030\001 \003(\0132\027.pandora.bag.v1.BagItemR\005items\"r"
+    "\n\013MailClaimOp\022\027\n\007mail_id\030\001 \001(\004R\006mailId\022\033"
+    "\n\tclaim_key\030\002 \001(\tR\010claimKey\022-\n\005items\030\003 \003"
+    "(\0132\027.pandora.bag.v1.BagItemR\005items\"\200\001\n\nT"
+    "ransferOp\022\036\n\013to_bag_type\030\001 \001(\rR\ttoBagTyp"
+    "e\022#\n\rto_generation\030\002 \001(\004R\014toGeneration\022-"
+    "\n\005items\030\003 \003(\0132\027.pandora.bag.v1.BagItemR\005"
+    "items\"\340\001\n\tConsumeOp\022<\n\rconsume_items\030\001 \003"
+    "(\0132\027.pandora.bag.v1.BagItemR\014consumeItem"
+    "s\022(\n\020produce_bag_type\030\002 \001(\rR\016produceBagT"
+    "ype\022-\n\022produce_generation\030\003 \001(\004R\021produce"
+    "Generation\022<\n\rproduce_items\030\004 \003(\0132\027.pand"
+    "ora.bag.v1.BagItemR\014produceItems\"\244\003\n\017Bag"
+    "JournalEntry\022\037\n\013journal_seq\030\001 \001(\004R\njourn"
+    "alSeq\022\031\n\010bag_type\030\002 \001(\rR\007bagType\022\036\n\ngene"
+    "ration\030\003 \001(\004R\ngeneration\022\'\n\017idempotency_"
+    "key\030\004 \001(\tR\016idempotencyKey\022\023\n\005ts_ms\030\005 \001(\003"
+    "R\004tsMs\022B\n\014pickup_grant\030\n \001(\0132\035.pandora.b"
+    "ag.v1.PickupGrantOpH\000R\013pickupGrant\022<\n\nma"
+    "il_claim\030\013 \001(\0132\033.pandora.bag.v1.MailClai"
+    "mOpH\000R\tmailClaim\0228\n\010transfer\030\014 \001(\0132\032.pan"
+    "dora.bag.v1.TransferOpH\000R\010transfer\0225\n\007co"
+    "nsume\030\r \001(\0132\031.pandora.bag.v1.ConsumeOpH\000"
+    "R\007consumeB\004\n\002op\"N\n\016LoadBagRequest\022\033\n\tpla"
+    "yer_id\030\001 \001(\004R\010playerId\022\037\n\013owner_epoch\030\002 "
+    "\001(\004R\nownerEpoch\"M\n\024BagEffectiveCapacity\022"
+    "\031\n\010bag_type\030\001 \001(\rR\007bagType\022\032\n\010capacity\030\002"
+    " \001(\rR\010capacity\"\267\002\n\017LoadBagResponse\022.\n\004co"
+    "de\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004co"
+    "de\022<\n\010snapshot\030\002 \001(\0132 .pandora.bag.v1.Ba"
+    "gStorageRecordR\010snapshot\0223\n\004tail\030\003 \003(\0132\037"
+    ".pandora.bag.v1.BagJournalEntryR\004tail\022(\n"
+    "\020last_journal_seq\030\004 \001(\004R\016lastJournalSeq\022"
+    "W\n\024effective_capacities\030\005 \003(\0132$.pandora."
+    "bag.v1.BagEffectiveCapacityR\023effectiveCa"
+    "pacities\"\217\001\n\024AppendJournalRequest\022\033\n\tpla"
+    "yer_id\030\001 \001(\004R\010playerId\022\037\n\013owner_epoch\030\002 "
+    "\001(\004R\nownerEpoch\0229\n\007entries\030\003 \003(\0132\037.pando"
+    "ra.bag.v1.BagJournalEntryR\007entries\"d\n\025Ap"
+    "pendJournalResponse\022.\n\004code\030\001 \001(\0162\032.pand"
+    "ora.common.v1.ErrCodeR\004code\022\033\n\tacked_seq"
+    "\030\002 \001(\004R\010ackedSeq\"\303\001\n\025SaveCheckpointReque"
+    "st\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\037\n\013owner"
+    "_epoch\030\002 \001(\004R\nownerEpoch\022<\n\010snapshot\030\003 \001"
+    "(\0132 .pandora.bag.v1.BagStorageRecordR\010sn"
+    "apshot\022.\n\023covered_journal_seq\030\004 \001(\004R\021cov"
+    "eredJournalSeq\"H\n\026SaveCheckpointResponse"
     "\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCo"
-    "deR\004code\022<\n\010snapshot\030\002 \001(\0132 .pandora.bag"
-    ".v1.BagStorageRecordR\010snapshot\0223\n\004tail\030\003"
-    " \003(\0132\037.pandora.bag.v1.BagJournalEntryR\004t"
-    "ail\022(\n\020last_journal_seq\030\004 \001(\004R\016lastJourn"
-    "alSeq\022W\n\024effective_capacities\030\005 \003(\0132$.pa"
-    "ndora.bag.v1.BagEffectiveCapacityR\023effec"
-    "tiveCapacities\"\217\001\n\024AppendJournalRequest\022"
-    "\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\037\n\013owner_ep"
-    "och\030\002 \001(\004R\nownerEpoch\0229\n\007entries\030\003 \003(\0132\037"
-    ".pandora.bag.v1.BagJournalEntryR\007entries"
-    "\"d\n\025AppendJournalResponse\022.\n\004code\030\001 \001(\0162"
-    "\032.pandora.common.v1.ErrCodeR\004code\022\033\n\tack"
-    "ed_seq\030\002 \001(\004R\010ackedSeq\"\303\001\n\025SaveCheckpoin"
-    "tRequest\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\037\n"
-    "\013owner_epoch\030\002 \001(\004R\nownerEpoch\022<\n\010snapsh"
-    "ot\030\003 \001(\0132 .pandora.bag.v1.BagStorageReco"
-    "rdR\010snapshot\022.\n\023covered_journal_seq\030\004 \001("
-    "\004R\021coveredJournalSeq\"H\n\026SaveCheckpointRe"
-    "sponse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1"
-    ".ErrCodeR\004code\"r\n\027PurchaseCapacityReques"
-    "t\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\037\n\013owner_"
-    "epoch\030\002 \001(\004R\nownerEpoch\022\031\n\010bag_type\030\003 \001("
-    "\rR\007bagType\"\361\001\n\030PurchaseCapacityResponse\022"
-    ".\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCod"
-    "eR\004code\022\034\n\tpurchases\030\002 \001(\rR\tpurchases\022\024\n"
-    "\005extra\030\003 \001(\rR\005extra\022-\n\022effective_capacit"
-    "y\030\004 \001(\rR\021effectiveCapacity\022\033\n\tgold_cost\030"
-    "\005 \001(\003R\010goldCost\022%\n\016gold_remaining\030\006 \001(\003R"
-    "\rgoldRemaining\"N\n\022GetSectionsRequest\022\033\n\t"
-    "player_id\030\001 \001(\004R\010playerId\022\033\n\tbag_types\030\002"
-    " \003(\rR\010bagTypes\"}\n\023GetSectionsResponse\022.\n"
-    "\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR"
-    "\004code\0226\n\010sections\030\002 \003(\0132\032.pandora.bag.v1"
-    ".BagSectionR\010sections2\326\003\n\nBagService\022J\n\007"
-    "LoadBag\022\036.pandora.bag.v1.LoadBagRequest\032"
-    "\037.pandora.bag.v1.LoadBagResponse\022\\\n\rAppe"
-    "ndJournal\022$.pandora.bag.v1.AppendJournal"
-    "Request\032%.pandora.bag.v1.AppendJournalRe"
-    "sponse\022_\n\016SaveCheckpoint\022%.pandora.bag.v"
-    "1.SaveCheckpointRequest\032&.pandora.bag.v1"
-    ".SaveCheckpointResponse\022V\n\013GetSections\022\""
-    ".pandora.bag.v1.GetSectionsRequest\032#.pan"
-    "dora.bag.v1.GetSectionsResponse\022e\n\020Purch"
-    "aseCapacity\022\'.pandora.bag.v1.PurchaseCap"
-    "acityRequest\032(.pandora.bag.v1.PurchaseCa"
-    "pacityResponseb\006proto3"
+    "deR\004code\"r\n\027PurchaseCapacityRequest\022\033\n\tp"
+    "layer_id\030\001 \001(\004R\010playerId\022\037\n\013owner_epoch\030"
+    "\002 \001(\004R\nownerEpoch\022\031\n\010bag_type\030\003 \001(\rR\007bag"
+    "Type\"\310\002\n\030PurchaseCapacityResponse\022.\n\004cod"
+    "e\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004cod"
+    "e\022\034\n\tpurchases\030\002 \001(\rR\tpurchases\022\024\n\005extra"
+    "\030\003 \001(\rR\005extra\022-\n\022effective_capacity\030\004 \001("
+    "\rR\021effectiveCapacity\0225\n\004cost\030\007 \001(\0132!.pan"
+    "dora.common.v1.CurrencyAmountR\004cost\022;\n\007b"
+    "alance\030\010 \001(\0132!.pandora.common.v1.Currenc"
+    "yAmountR\007balanceJ\004\010\005\020\006J\004\010\006\020\007R\tgold_costR"
+    "\016gold_remaining\"N\n\022GetSectionsRequest\022\033\n"
+    "\tplayer_id\030\001 \001(\004R\010playerId\022\033\n\tbag_types\030"
+    "\002 \003(\rR\010bagTypes\"}\n\023GetSectionsResponse\022."
+    "\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCode"
+    "R\004code\0226\n\010sections\030\002 \003(\0132\032.pandora.bag.v"
+    "1.BagSectionR\010sections2\326\003\n\nBagService\022J\n"
+    "\007LoadBag\022\036.pandora.bag.v1.LoadBagRequest"
+    "\032\037.pandora.bag.v1.LoadBagResponse\022\\\n\rApp"
+    "endJournal\022$.pandora.bag.v1.AppendJourna"
+    "lRequest\032%.pandora.bag.v1.AppendJournalR"
+    "esponse\022_\n\016SaveCheckpoint\022%.pandora.bag."
+    "v1.SaveCheckpointRequest\032&.pandora.bag.v"
+    "1.SaveCheckpointResponse\022V\n\013GetSections\022"
+    "\".pandora.bag.v1.GetSectionsRequest\032#.pa"
+    "ndora.bag.v1.GetSectionsResponse\022e\n\020Purc"
+    "haseCapacity\022\'.pandora.bag.v1.PurchaseCa"
+    "pacityRequest\032(.pandora.bag.v1.PurchaseC"
+    "apacityResponseb\006proto3"
 };
 static const ::_pbi::DescriptorTable* PROTOBUF_NONNULL const
-    descriptor_table_pandora_2fbag_2fv1_2fbag_2eproto_deps[1] = {
+    descriptor_table_pandora_2fbag_2fv1_2fbag_2eproto_deps[2] = {
+        &::descriptor_table_pandora_2fcommon_2fv1_2fcurrency_2eproto,
         &::descriptor_table_pandora_2fcommon_2fv1_2ferrcode_2eproto,
 };
 static ::absl::once_flag descriptor_table_pandora_2fbag_2fv1_2fbag_2eproto_once;
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_pandora_2fbag_2fv1_2fbag_2eproto = {
     false,
     false,
-    3582,
+    3703,
     descriptor_table_protodef_pandora_2fbag_2fv1_2fbag_2eproto,
     "pandora/bag/v1/bag.proto",
     &descriptor_table_pandora_2fbag_2fv1_2fbag_2eproto_once,
     descriptor_table_pandora_2fbag_2fv1_2fbag_2eproto_deps,
-    1,
+    2,
     20,
     schemas,
     file_message_globals,
@@ -8612,6 +8627,16 @@ void PurchaseCapacityRequest::InternalSwap(PurchaseCapacityRequest* PROTOBUF_RES
 }
 // ===================================================================
 
+void PurchaseCapacityResponse::clear_cost() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.cost_ != nullptr) _impl_.cost_->Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
+void PurchaseCapacityResponse::clear_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.balance_ != nullptr) _impl_.balance_->Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+}
 PurchaseCapacityResponse::PurchaseCapacityResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
     : ::google::protobuf::Message(arena, PurchaseCapacityResponse_get_class_data()) {
@@ -8621,16 +8646,43 @@ PurchaseCapacityResponse::PurchaseCapacityResponse(::google::protobuf::Arena* PR
   SharedCtor(arena);
   // @@protoc_insertion_point(arena_constructor:pandora.bag.v1.PurchaseCapacityResponse)
 }
+PROTOBUF_NDEBUG_INLINE PurchaseCapacityResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+    [[maybe_unused]] const ::pandora::bag::v1::PurchaseCapacityResponse& from_msg)
+      : _has_bits_{from._has_bits_},
+        _cached_size_{0} {}
+
 PurchaseCapacityResponse::PurchaseCapacityResponse(
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const PurchaseCapacityResponse& from)
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena,
+    const PurchaseCapacityResponse& from)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
-    : ::google::protobuf::Message(arena, PurchaseCapacityResponse_get_class_data()),
+    : ::google::protobuf::Message(arena, PurchaseCapacityResponse_get_class_data()) {
+
 #else   // PROTOBUF_CUSTOM_VTABLE
-    : ::google::protobuf::Message(arena),
+    : ::google::protobuf::Message(arena) {
 #endif  // PROTOBUF_CUSTOM_VTABLE
-      _impl_(from._impl_) {
+  PurchaseCapacityResponse* const _this = this;
+  (void)_this;
   _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
       from._internal_metadata_);
+  new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  ::uint32_t cached_has_bits = _impl_._has_bits_[0];
+  _impl_.cost_ = (CheckHasBit(cached_has_bits, 0x00000001U))
+                ? ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.cost_)
+                : nullptr;
+  _impl_.balance_ = (CheckHasBit(cached_has_bits, 0x00000002U))
+                ? ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.balance_)
+                : nullptr;
+  ::memcpy(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, code_),
+           reinterpret_cast<const char*>(&from._impl_) +
+               offsetof(Impl_, code_),
+           offsetof(Impl_, effective_capacity_) -
+               offsetof(Impl_, code_) +
+               sizeof(Impl_::effective_capacity_));
+
+  // @@protoc_insertion_point(copy_constructor:pandora.bag.v1.PurchaseCapacityResponse)
 }
 PROTOBUF_NDEBUG_INLINE PurchaseCapacityResponse::Impl_::Impl_(
     [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
@@ -8640,11 +8692,11 @@ PROTOBUF_NDEBUG_INLINE PurchaseCapacityResponse::Impl_::Impl_(
 inline void PurchaseCapacityResponse::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   new (&_impl_) Impl_(internal_visibility(), arena);
   ::memset(reinterpret_cast<char*>(&_impl_) +
-               offsetof(Impl_, code_),
+               offsetof(Impl_, cost_),
            0,
-           offsetof(Impl_, gold_remaining_) -
-               offsetof(Impl_, code_) +
-               sizeof(Impl_::gold_remaining_));
+           offsetof(Impl_, effective_capacity_) -
+               offsetof(Impl_, cost_) +
+               sizeof(Impl_::effective_capacity_));
 }
 PurchaseCapacityResponse::~PurchaseCapacityResponse() {
   // @@protoc_insertion_point(destructor:pandora.bag.v1.PurchaseCapacityResponse)
@@ -8657,6 +8709,8 @@ inline void PurchaseCapacityResponse::SharedDtor(MessageLite& self) {
   }
   this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
   ABSL_DCHECK(this_.GetArena() == nullptr);
+  delete this_._impl_.cost_;
+  delete this_._impl_.balance_;
   this_._impl_.~Impl_();
 }
 
@@ -8694,10 +8748,20 @@ PROTOBUF_NOINLINE void PurchaseCapacityResponse::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      ABSL_DCHECK(_impl_.cost_ != nullptr);
+      _impl_.cost_->Clear();
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      ABSL_DCHECK(_impl_.balance_ != nullptr);
+      _impl_.balance_->Clear();
+    }
+  }
+  if (BatchCheckHasBit(cached_has_bits, 0x0000003cU)) {
     ::memset(&_impl_.code_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.gold_remaining_) -
-        reinterpret_cast<char*>(&_impl_.code_)) + sizeof(_impl_.gold_remaining_));
+        reinterpret_cast<char*>(&_impl_.effective_capacity_) -
+        reinterpret_cast<char*>(&_impl_.code_)) + sizeof(_impl_.effective_capacity_));
   }
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
@@ -8723,7 +8787,7 @@ PROTOBUF_NOINLINE void PurchaseCapacityResponse::Clear() {
 
   cached_has_bits = this_._impl_._has_bits_[0];
   // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
     if (this_._internal_code() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteEnumToArray(
@@ -8732,7 +8796,7 @@ PROTOBUF_NOINLINE void PurchaseCapacityResponse::Clear() {
   }
 
   // uint32 purchases = 2 [json_name = "purchases"];
-  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
     if (this_._internal_purchases() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
@@ -8741,7 +8805,7 @@ PROTOBUF_NOINLINE void PurchaseCapacityResponse::Clear() {
   }
 
   // uint32 extra = 3 [json_name = "extra"];
-  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
     if (this_._internal_extra() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
@@ -8750,7 +8814,7 @@ PROTOBUF_NOINLINE void PurchaseCapacityResponse::Clear() {
   }
 
   // uint32 effective_capacity = 4 [json_name = "effectiveCapacity"];
-  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
     if (this_._internal_effective_capacity() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
@@ -8758,22 +8822,18 @@ PROTOBUF_NOINLINE void PurchaseCapacityResponse::Clear() {
     }
   }
 
-  // int64 gold_cost = 5 [json_name = "goldCost"];
-  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
-    if (this_._internal_gold_cost() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<5>(
-              stream, this_._internal_gold_cost(), target);
-    }
+  // .pandora.common.v1.CurrencyAmount cost = 7 [json_name = "cost"];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    target = ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+        7, *this_._impl_.cost_, this_._impl_.cost_->GetCachedSize(), target,
+        stream);
   }
 
-  // int64 gold_remaining = 6 [json_name = "goldRemaining"];
-  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
-    if (this_._internal_gold_remaining() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<6>(
-              stream, this_._internal_gold_remaining(), target);
-    }
+  // .pandora.common.v1.CurrencyAmount balance = 8 [json_name = "balance"];
+  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    target = ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+        8, *this_._impl_.balance_, this_._impl_.balance_->GetCachedSize(), target,
+        stream);
   }
 
   if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
@@ -8802,46 +8862,42 @@ PROTOBUF_NOINLINE void PurchaseCapacityResponse::Clear() {
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
   if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
-    // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+    // .pandora.common.v1.CurrencyAmount cost = 7 [json_name = "cost"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      total_size += 1 +
+                    ::google::protobuf::internal::WireFormatLite::MessageSize(*this_._impl_.cost_);
+    }
+    // .pandora.common.v1.CurrencyAmount balance = 8 [json_name = "balance"];
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      total_size += 1 +
+                    ::google::protobuf::internal::WireFormatLite::MessageSize(*this_._impl_.balance_);
+    }
+    // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (this_._internal_code() != 0) {
         total_size += 1 +
                       ::_pbi::WireFormatLite::EnumSize(this_._internal_code());
       }
     }
     // uint32 purchases = 2 [json_name = "purchases"];
-    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (this_._internal_purchases() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
             this_._internal_purchases());
       }
     }
     // uint32 extra = 3 [json_name = "extra"];
-    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (this_._internal_extra() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
             this_._internal_extra());
       }
     }
     // uint32 effective_capacity = 4 [json_name = "effectiveCapacity"];
-    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (this_._internal_effective_capacity() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
             this_._internal_effective_capacity());
-      }
-    }
-    // int64 gold_cost = 5 [json_name = "goldCost"];
-    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
-      if (this_._internal_gold_cost() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
-            this_._internal_gold_cost());
-      }
-    }
-    // int64 gold_remaining = 6 [json_name = "goldRemaining"];
-    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
-      if (this_._internal_gold_remaining() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
-            this_._internal_gold_remaining());
       }
     }
   }
@@ -8856,6 +8912,7 @@ void PurchaseCapacityResponse::MergeImpl(::google::protobuf::MessageLite& to_msg
   if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
     from.CheckHasBitConsistency();
   }
+  ::google::protobuf::Arena* arena = _this->GetArena();
   // @@protoc_insertion_point(class_specific_merge_from_start:pandora.bag.v1.PurchaseCapacityResponse)
   ABSL_DCHECK_NE(&from, _this);
   ::uint32_t cached_has_bits = 0;
@@ -8864,33 +8921,39 @@ void PurchaseCapacityResponse::MergeImpl(::google::protobuf::MessageLite& to_msg
   cached_has_bits = from._impl_._has_bits_[0];
   if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      ABSL_DCHECK(from._impl_.cost_ != nullptr);
+      if (_this->_impl_.cost_ == nullptr) {
+        _this->_impl_.cost_ = ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.cost_);
+      } else {
+        _this->_impl_.cost_->MergeFrom(*from._impl_.cost_);
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      ABSL_DCHECK(from._impl_.balance_ != nullptr);
+      if (_this->_impl_.balance_ == nullptr) {
+        _this->_impl_.balance_ = ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.balance_);
+      } else {
+        _this->_impl_.balance_->MergeFrom(*from._impl_.balance_);
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (from._internal_code() != 0) {
         _this->_impl_.code_ = from._impl_.code_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (from._internal_purchases() != 0) {
         _this->_impl_.purchases_ = from._impl_.purchases_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (from._internal_extra() != 0) {
         _this->_impl_.extra_ = from._impl_.extra_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (from._internal_effective_capacity() != 0) {
         _this->_impl_.effective_capacity_ = from._impl_.effective_capacity_;
-      }
-    }
-    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
-      if (from._internal_gold_cost() != 0) {
-        _this->_impl_.gold_cost_ = from._impl_.gold_cost_;
-      }
-    }
-    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
-      if (from._internal_gold_remaining() != 0) {
-        _this->_impl_.gold_remaining_ = from._impl_.gold_remaining_;
       }
     }
   }
@@ -8912,11 +8975,11 @@ void PurchaseCapacityResponse::InternalSwap(PurchaseCapacityResponse* PROTOBUF_R
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.gold_remaining_)
-      + sizeof(PurchaseCapacityResponse::_impl_.gold_remaining_)
-      - PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.code_)>(
-          reinterpret_cast<char*>(&_impl_.code_),
-          reinterpret_cast<char*>(&other->_impl_.code_));
+      PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.effective_capacity_)
+      + sizeof(PurchaseCapacityResponse::_impl_.effective_capacity_)
+      - PROTOBUF_FIELD_OFFSET(PurchaseCapacityResponse, _impl_.cost_)>(
+          reinterpret_cast<char*>(&_impl_.cost_),
+          reinterpret_cast<char*>(&other->_impl_.cost_));
 }
 
 ::google::protobuf::Metadata PurchaseCapacityResponse::GetMetadata() const {

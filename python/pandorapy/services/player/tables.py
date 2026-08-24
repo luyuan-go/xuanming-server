@@ -1,6 +1,6 @@
 """player 的配置表快照 —— 对应 Go 侧 cmd/player/main.go 里注册的整批校验器 +
-pkg/configtable 的六张表伴生方法(player_level_exp / item / talent / talent_effect /
-skill_card / skill_card_upgrade)。
+pkg/configtable 的七张表伴生方法(player_level_exp / item / talent / talent_effect /
+skill_card / skill_card_upgrade / skill_card_effect)。
 
 ★ 为什么 player 必须**强依赖**配置表(main.py 缺 config_table.dir 直接拒启):
   玩家等级经验曲线的唯一数值源是策划 j_玩家等级经验.xlsx。player 不保留 YAML 兜底曲线
@@ -29,6 +29,7 @@ from google.protobuf import json_format
 from pandora.config.v1 import item_pb2 as _item_pb2
 from pandora.config.v1 import player_level_exp_pb2 as _lvl_pb2
 from pandora.config.v1 import skill_card_pb2 as _card_pb2
+from pandora.config.v1 import skill_card_effect_pb2 as _ceff_pb2
 from pandora.config.v1 import talent_effect_pb2 as _teff_pb2
 from pandora.config.v1 import talent_pb2 as _talent_pb2
 
@@ -56,12 +57,14 @@ MAX_TALENT_COST_PER_LEVEL = 1000
 # 专精效果:单级加成绝对值上限(Go: MaxTalentEffectValuePerLevel)。
 MAX_TALENT_EFFECT_VALUE_PER_LEVEL = 10000
 
-# 专精效果可作用的 GAS 属性名白名单。**权威在客户端** UMyEntityAttrSet;这里是校验用
-# 副本,不是第二份权威 —— 服务端不消费这些数值,但必须在加载期挡住拼错的键:
-# attr_key 写错在 DS 上的表现是"这个天赋点了完全没反应",既不报错也不崩。
-ALLOWED_TALENT_ATTR_KEYS = frozenset(
+# 战斗属性集(专精效果 / 技能卡效果两张表共用的 GAS 属性名白名单;Go: combatAttrKeys)。
+# **权威在客户端** UMyEntityAttrSet;这里是校验用副本,不是第二份权威 ——
+# 服务端不消费这些数值,但必须在加载期挡住拼错的键:attr_key 写错在 DS 上的表现是
+# "这个天赋点了 / 这张卡升了完全没反应",既不报错也不崩。两张表各存一份必然漂移,只留一份。
+COMBAT_ATTR_KEYS = frozenset(
     {
-        "Hp",
+        "Hp",  # 当前血量;加成请配 MaxHp,写 Hp 会被 DS 侧按上限钳掉
+        "MaxHp",
         "Atk",
         "Defense",
         "Shield",
@@ -71,8 +74,14 @@ ALLOWED_TALENT_ATTR_KEYS = frozenset(
         "DodgeChance",
         "MoveSpeedRate",
         "AtkSpeedRate",
+        "SkillDamageRate",
+        "SkillHealRate",
+        "SkillControlRate",
     }
 )
+
+# 技能卡效果:单级加成绝对值上限(Go: MaxSkillCardEffectValuePerLevel)。
+MAX_SKILL_CARD_EFFECT_VALUE_PER_LEVEL = 10000
 
 # 技能卡稀有度(Go: SkillCardRarity*)。决定走哪条升级消耗曲线。
 SKILL_CARD_RARITIES = frozenset({1, 2, 3, 4})
@@ -95,10 +104,15 @@ _TABLE_PROTOS: dict[str, tuple[str, type]] = {
         "pandora.config.v1.SkillCardUpgradeTableData",
         _card_pb2.SkillCardUpgradeTableData,
     ),
+    "skill_card_effect": (
+        "pandora.config.v1.SkillCardEffectTableData",
+        _ceff_pb2.SkillCardEffectTableData,
+    ),
 }
 
-# player 必需的表。talent_effect **刻意不在此列**:效果表为空等于"天赋只存数据不加数值",
-# 是合法的过渡态,不该让 player 起不来(§9.6 数值权威本就不在这里)。
+# player 必需的表。talent_effect / skill_card_effect **刻意不在此列**:效果表为空等于
+# "天赋 / 技能卡只存数据不加数值",是合法的过渡态,不该让 player 起不来
+# (§9.6 数值权威本就不在这里)。
 REQUIRED_TABLES = (
     "player_level_exp",
     "item",
@@ -125,6 +139,10 @@ class Tables:
     skill_cards: dict[int, _card_pb2.SkillCardRow]
     # (rarity, level) → shard_cost
     card_upgrade: dict[tuple[int, int], int]
+    # 技能卡效果行(缺表 = 技能卡只给技能不加数值,是合法过渡态,故给默认空表)。
+    skill_card_effects: list[_ceff_pb2.SkillCardEffectRow] = dataclasses.field(
+        default_factory=list
+    )
 
     # ── 玩家等级经验 ────────────────────────────────────────────────────
 
@@ -297,7 +315,7 @@ def _validate_talent_row(row) -> None:  # noqa: ANN001
 
 def _validate_talent_effect_row(row) -> None:  # noqa: ANN001
     """专精效果逐行校验。attr_key 不在白名单 = 该效果在 DS 上永远不会生效且零报错。"""
-    if row.attr_key not in ALLOWED_TALENT_ATTR_KEYS:
+    if row.attr_key not in COMBAT_ATTR_KEYS:
         raise ConfigTableError(
             f"专精效果行 {int(row.id)}: 属性键(attr_key={row.attr_key!r})不是 UE GAS 属性名,"
             "该效果在 DS 上永远不会生效;合法取值见 MyEntityAttrSet.h"
@@ -309,6 +327,25 @@ def _validate_talent_effect_row(row) -> None:  # noqa: ANN001
         raise ConfigTableError(
             f"专精效果行 {int(row.id)}: 每级数值(value_per_level={value})超出 "
             f"±{MAX_TALENT_EFFECT_VALUE_PER_LEVEL},疑似多打了零"
+        )
+
+
+def _validate_skill_card_effect_row(row) -> None:  # noqa: ANN001
+    """技能卡效果逐行校验。attr_key 不在白名单 = 该效果在 DS 上永远不会生效且零报错。"""
+    if row.attr_key not in COMBAT_ATTR_KEYS:
+        raise ConfigTableError(
+            f"技能卡效果行 {int(row.id)}: 属性键(attr_key={row.attr_key!r})不是战斗属性集里的属性,"
+            "该效果在 DS 上永远不会生效;合法取值见 MyEntityAttrSet.h"
+        )
+    value = float(row.value_per_level)
+    if value == 0:
+        raise ConfigTableError(
+            f"技能卡效果行 {int(row.id)}: 每级数值(value_per_level)为 0,该效果行没有任何作用"
+        )
+    if value > MAX_SKILL_CARD_EFFECT_VALUE_PER_LEVEL or value < -MAX_SKILL_CARD_EFFECT_VALUE_PER_LEVEL:
+        raise ConfigTableError(
+            f"技能卡效果行 {int(row.id)}: 每级数值(value_per_level={value})超出 "
+            f"±{MAX_SKILL_CARD_EFFECT_VALUE_PER_LEVEL},疑似多打了零"
         )
 
 
@@ -451,6 +488,23 @@ def _validate_talent_effects(rows: list) -> None:
         seen[key] = int(row.id)
 
 
+def _validate_skill_card_effects(rows: list) -> None:
+    """同一张技能卡不得对同一属性配多行 —— 重复行不报错,只会让加成翻倍。
+
+    与 _validate_talent_effects 同因:是"数值莫名其妙偏高"这类问题里最难查的来源,
+    必须在加载边界整批拒绝。
+    """
+    seen: dict[tuple[int, str], int] = {}
+    for row in rows:
+        key = (int(row.card_id), row.attr_key)
+        first = seen.get(key)
+        if first is not None:
+            raise ConfigTableError(
+                f"技能卡 {key[0]} 对属性 {key[1]} 配了多行效果(行 {first} 与行 {int(row.id)}),加成会翻倍"
+            )
+        seen[key] = int(row.id)
+
+
 def _validate_card_curves(
     cards: dict[int, object], upgrade_rows: list
 ) -> dict[tuple[int, int], int]:
@@ -564,6 +618,8 @@ def load_tables(
     effect_rows = _load_one(active, manifest, "talent_effect", required=False)
     card_rows = _load_one(active, manifest, "skill_card", required=True)
     upgrade_rows = _load_one(active, manifest, "skill_card_upgrade", required=True)
+    # skill_card_effect 缺表不拒(合法过渡态,与 talent_effect 同一处置)。
+    card_effect_rows = _load_one(active, manifest, "skill_card_effect", required=False)
 
     levels: dict[int, _lvl_pb2.PlayerLevelExpRow] = {}
     for row in level_rows:
@@ -600,6 +656,11 @@ def load_tables(
     for row in upgrade_rows:
         _validate_skill_card_upgrade_row(row)
 
+    card_effects: list[_ceff_pb2.SkillCardEffectRow] = []
+    for row in card_effect_rows or []:
+        _validate_skill_card_effect_row(row)
+        card_effects.append(row)
+
     # ── 整批门禁(启动与热更共用同一入口)─────────────────────────────
     _validate_level_curve(levels)
     if current_max_level and len(levels) < current_max_level:
@@ -609,6 +670,7 @@ def load_tables(
     _validate_talent_tree(talents)
     _validate_talent_effects(effects)
     card_upgrade = _validate_card_curves(cards, upgrade_rows)
+    _validate_skill_card_effects(card_effects)
 
     tables = Tables(
         version=manifest.version,
@@ -619,6 +681,7 @@ def load_tables(
         talent_effects=effects,
         skill_cards=cards,
         card_upgrade=card_upgrade,
+        skill_card_effects=card_effects,
     )
 
     listed = {MANIFEST_FILE_NAME} | {t.file for t in manifest.tables.values()}

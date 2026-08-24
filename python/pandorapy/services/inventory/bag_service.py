@@ -31,6 +31,7 @@ from pandorapy import errcode
 from pandorapy import interceptors as pintercept
 from pandorapy import log as plog
 from pandorapy.services.inventory import bag_biz
+from pandorapy.services.inventory import currency_biz as cbiz
 
 GRPC_SERVICE_FULL_NAME = "pandora.bag.v1.BagService"
 
@@ -210,8 +211,8 @@ class BagService(pbgrpc.BagServiceServicer):
             purchases=res.purchases,
             extra=res.extra,
             effective_capacity=res.effective_capacity,
-            gold_cost=res.gold_cost,
-            gold_remaining=res.gold_remaining,
+            cost=cbiz.currency_amount_proto(res.currency_kind, res.cost),
+            balance=cbiz.currency_amount_proto(res.currency_kind, res.balance),
         )
 
     async def GetSections(  # noqa: N802

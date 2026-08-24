@@ -64,7 +64,7 @@ message PlayerStats {
   int64 damage_dealt  = 7;
   int64 damage_taken  = 8;
   int64 healing       = 9;
-  int64 gold          = 10;
+  uint64 gold         = 10;  // 本局产出金币(§5.12 非负用 uint64;DS 只报事实,发放由后端换算)
   int32 mmr_delta     = 11;  // 段位变化(后端算,DS 不可信)
   // 12-19 reserved
   reserved 12 to 19;

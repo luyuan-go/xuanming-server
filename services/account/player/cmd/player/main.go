@@ -150,6 +150,16 @@ func main() {
 				return err
 			}
 		}
+		// 属性加点效果表(2026-08-22):属性点的战斗加成由它承载,DS 开局按 GetLoadout
+		// 的已分配点查表转属性加成;同时它也是「有哪几条属性点」的权威,
+		// AllocateAttributePoints 按它拒未知键。同一属性点对同一属性配多行会让加成翻倍,
+		// 跨行约束只能在整表校验一次。缺表不拒,与上面 talent_effect 同一处置:
+		// 表未发布 = 加点还没有战斗数值,是合法的过渡态(此时写入边界也不收紧)。
+		if tb.AttrPointEffect != nil {
+			if err := tb.AttrPointEffect.ValidateEffects(); err != nil {
+				return err
+			}
+		}
 		// 技能卡两张表(2026-08-10):UpgradeSkillCard 靠它们判等级上限与每级碎片消耗,
 		// SetSkillSlots 靠卡表判卡是否存在。缺表则这两条写路径只能 fail-closed 拒绝,
 		// 所以在加载边界就拒掉(与上面 item / talent 同一处置)。
@@ -163,6 +173,15 @@ func main() {
 		// 断档的表现是"卡升到某级之后按钮没反应"且不报错,必须在加载期挡住。
 		if err := tb.SkillCardUpgrade.ValidateCurves(tb.SkillCard); err != nil {
 			return err
+		}
+		// 技能卡效果表(2026-08-22):技能卡培养等级的战斗加成由它承载,DS 开局按 GetLoadout
+		// 的卡槽装配查表转属性加成。同一张卡对同一属性配多行会让加成翻倍,跨行约束只能在
+		// 整表校验一次。缺表不拒,与 talent_effect / attr_point_effect 同一处置:
+		// 表未发布 = 技能卡只给技能不加数值,是合法的过渡态(§9.6 数值权威本就不在这里)。
+		if tb.SkillCardEffect != nil {
+			if err := tb.SkillCardEffect.ValidateEffects(); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

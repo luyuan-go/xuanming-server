@@ -95,7 +95,13 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       # 9092 docker 内部网络互访;9093 暴露给 host(go 服务连这个)
       KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9093
+      # EXTERNAL 用 127.0.0.1 而不是 localhost(2026-08-22):本机 IPv6 回环连出被拦
+      # (connect [::1]:9093 直接 WSAEACCES 10013),而 localhost 在 Windows 上**先**解析成
+      # ::1 再回落 127.0.0.1。sarama 会继续试下一个地址所以 Go 侧看不出来;kafka-python
+      # 只认 metadata 里这一条 advertised 地址,于是 team / matchmaker / push 全部卡在
+      # "No node available for metadata refresh",CreateTeam 直接 DEADLINE_EXCEEDED。
+      # 与 *-dev.yaml 里 -NoZenAutoLaunch=127.0.0.1:8558 同因同解:本机 IPv6 回环放行后可还原。
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://127.0.0.1:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1

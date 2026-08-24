@@ -167,8 +167,8 @@ func (s *BagService) PurchaseCapacity(ctx context.Context, req *bagv1.PurchaseCa
 		Purchases:         res.Purchases,
 		Extra:             res.Extra,
 		EffectiveCapacity: res.EffectiveCapacity,
-		GoldCost:          res.GoldCost,
-		GoldRemaining:     res.GoldRemaining,
+		Cost:              biz.CurrencyAmountProto(res.CurrencyKind, res.Cost),
+		Balance:           biz.CurrencyAmountProto(res.CurrencyKind, res.Balance),
 	}, nil
 }
 

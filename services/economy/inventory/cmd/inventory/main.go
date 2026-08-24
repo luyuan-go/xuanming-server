@@ -146,7 +146,11 @@ func main() {
 	// 4. 装配链
 	repo := data.NewMySQLInventoryRepo(db)
 	uc := biz.NewInventoryUsecase(repo, cfg.Inventory)
-	uc.SetItemCatalog(inventoryCatalogFromStore{store: ctStore})
+	invCatalog := inventoryCatalogFromStore{store: ctStore}
+	uc.SetItemCatalog(invCatalog)
+	// 商店定价与道具规则共用同一个 Store 快照:两者必须来自同一批次,
+	// 否则"商店在卖的道具"和"道具表认识的道具"会在热更瞬间短暂分叉。
+	uc.SetShopCatalog(invCatalog)
 
 	// Snowflake(instance_id 生成,W5 ④):仅在启用实例背包(capacity>0)时装配。
 	// node_id_source=static 静态,=etcd 走 etcd 自动抢占,失租自动退出。

@@ -516,6 +516,9 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
         repo = _new_inventory_repo(pool, conn_cfg)
         uc = ibiz.InventoryUsecase(repo, cfg.inventory)
         uc.set_item_catalog(ct_store)
+        # 商店表与道具表同一个 Store(同一原子批次):热更后下一次读商店 / 购买立即生效,
+        # 而且两张表不会各自看到不同批次(购买要同时查商店定价与道具是否装备类)。
+        uc.set_shop_catalog(ct_store)
 
         # ── ⑮⑯ Snowflake(instance_id)——仅在启用实例背包时装配 ──────────
         if cfg.inventory.capacity > 0:

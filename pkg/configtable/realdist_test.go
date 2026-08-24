@@ -116,6 +116,29 @@ func TestLoadRealDistIfPresent(t *testing.T) {
 		t.Fatal("专精 1 点 3 级应能换算出属性加成")
 	}
 
+	// 装备基础属性表(装备属性表.xlsx):与道具表的引用完整性、部位/品质一致性在真实产物上钉住。
+	// 服务端不消费这 6 个百分比,但两张表各写一份「装备部位」,漂移后果是
+	// 「外观按道具表挂载、属性按属性表加成」,客户端对部位不符是静默 fail-closed。
+	if tb.EquipmentAttr == nil || tb.EquipmentAttr.Count() == 0 {
+		t.Fatal("装备基础属性表为空:装备穿上将没有任何基础加成")
+	}
+	if err := ValidateEquipmentAttrCrossTables(tb.EquipmentAttr, tb.Item); err != nil {
+		t.Fatalf("真实装备基础属性表跨表校验不过: %v", err)
+	}
+	// 10066 星火法杖:白色武器,当前表里 HP +7% / 伤害 +19%。策划调表时本断言会一起变,
+	// 它钉的是「六列确实被导进来了」而不是具体平衡数值。
+	if row, ok := tb.EquipmentAttr.ByID(10066); !ok {
+		t.Fatal("装备基础属性表缺 10066")
+	} else if row.GetEquipSlot() != 1 || row.GetHpRate() <= 0 || row.GetDamageRate() <= 0 {
+		t.Fatalf("10066 基础属性异常: slot=%d hp=%v dmg=%v",
+			row.GetEquipSlot(), row.GetHpRate(), row.GetDamageRate())
+	}
+	// 道具表现有装备多于属性表(31 件老装备刻意没有基础属性),这条方向**不**是硬约束,
+	// 但反方向必须成立:属性表里的每一行都在道具表里,已由上面的跨表校验覆盖。
+	if tb.EquipmentAttr.Count() > tb.Item.Count() {
+		t.Fatalf("装备属性行数 %d 超过道具总行数 %d", tb.EquipmentAttr.Count(), tb.Item.Count())
+	}
+
 	// 技能卡两张表(j_技能卡.xlsx / j_技能卡升级.xlsx):曲线断档会让卡升到某级后
 	// 按钮没反应且不报错,必须在真实产物上整表校验。
 	if tb.SkillCard == nil || tb.SkillCard.Count() == 0 {
@@ -135,6 +158,50 @@ func TestLoadRealDistIfPresent(t *testing.T) {
 			}
 		}
 	}
+
+	// 技能卡效果表(j_技能卡_效果.xlsx):与专精效果表同因 —— 效果表缺失会让技能卡
+	// "升了没数值",是静默失败,必须在真实产物上钉住。
+	if tb.SkillCardEffect == nil || tb.SkillCardEffect.Count() == 0 {
+		t.Fatal("技能卡效果表为空:技能卡培养将不产生任何战斗加成")
+	}
+	if err := tb.SkillCardEffect.ValidateEffects(); err != nil {
+		t.Fatalf("真实技能卡效果表校验不过: %v", err)
+	}
+	// 卡 1 装在槽里、1 级(初始等级)就该有加成:等级即倍数,不做 level-1 折算。
+	// 这条同时钉住"1 级卡不是零加成"——按 level-1 算会让所有新卡毫无手感,且不报错。
+	if bonuses := tb.SkillCardEffect.ResolveBonuses(map[uint32]uint32{1: 1}); len(bonuses) == 0 {
+		t.Fatal("技能卡 1 装在槽里(1 级)应能换算出属性加成")
+	}
+	// 生命类加成必须配 MaxHp 而不是 Hp:Hp 是**当前**血量,DS 侧写它的基值会被按 MaxHp
+	// 钳掉,表现为"升了卡血量纹丝不动"且零报错。白名单挡不住这条(两个键都合法),
+	// 只能在真实产物上钉。同一条约束对专精效果表成立,一并覆盖。
+	for name, rows := range map[string][]string{
+		"技能卡效果表": skillCardEffectAttrKeys(tb),
+		"专精效果表":  talentEffectAttrKeys(tb),
+	} {
+		for _, key := range rows {
+			if key == "Hp" {
+				t.Fatalf("%s 配了 Hp:生命类加成必须配 MaxHp,写 Hp 会被上限钳掉且不报错", name)
+			}
+		}
+	}
+}
+
+// skillCardEffectAttrKeys / talentEffectAttrKeys 取两张效果表用到的属性键(仅供上面的断言)。
+func skillCardEffectAttrKeys(tb *Tables) []string {
+	out := make([]string, 0, tb.SkillCardEffect.Count())
+	for _, row := range tb.SkillCardEffect.All() {
+		out = append(out, row.GetAttrKey())
+	}
+	return out
+}
+
+func talentEffectAttrKeys(tb *Tables) []string {
+	out := make([]string, 0, tb.TalentEffect.Count())
+	for _, row := range tb.TalentEffect.All() {
+		out = append(out, row.GetAttrKey())
+	}
+	return out
 }
 
 // TestRealDistMonsterKillExp 用真实 dist 产物钉住怪物击杀经验。
@@ -276,4 +343,32 @@ func TestRealDistBattleLaunchURLs(t *testing.T) {
 			t.Fatalf("非战斗类关卡 %d 不应能拼出启动 URL", id)
 		}
 	}
+}
+
+// TestRealDistShopPricingHasNoArbitrage 拿**真实 dist 产物**跑一遍商店反套利闸。
+//
+// 存在理由:买入价在商店表、回收价在道具表,两张表相互独立,谁都能单独改。
+// 一旦某档买入价 <= 回收总价,玩家「买进 → 立刻卖出」就能刷钱 —— 而买和卖
+// 现在都是服务端权威且都可反复执行,是一条严格闭合的循环。
+//
+// 这个失败模式**没有任何运行期信号**:每一笔买卖单独看都完全合法、都成功、都记流水,
+// 异常只体现在总量上。所以判据必须是"表在产出时就不允许这样配",
+// 而且要用**真实 dist** 而不是造的数据来断言 —— 配错价的后果发生在真表上。
+func TestRealDistShopPricingHasNoArbitrage(t *testing.T) {
+	dist := filepath.Join("..", "..", "configtable", "dist")
+	if _, err := os.Stat(filepath.Join(dist, ManifestFileName)); err != nil {
+		t.Skipf("真实 dist 不存在,跳过: %v", err)
+	}
+	s := NewStore()
+	if _, err := s.Load(dist, 0); err != nil {
+		t.Fatalf("加载真实 dist 失败: %v", err)
+	}
+	tb := s.Tables()
+	if tb.Shop == nil || tb.Shop.Count() == 0 {
+		t.Skip("真实 dist 里没有 shop 表")
+	}
+	if err := ValidateShopCrossTables(tb.Shop, tb.Item); err != nil {
+		t.Fatalf("真实商店表存在套利定价: %v", err)
+	}
+	t.Logf("商店表 %d 档商品全部满足「买入价 > 回收总价」", tb.Shop.Count())
 }

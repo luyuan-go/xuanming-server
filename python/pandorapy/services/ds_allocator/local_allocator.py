@@ -797,7 +797,13 @@ class LocalGameServerAllocator:
             args.append(self._cfg.project_path)
         if map_url != "":
             args.append(map_url)
-        args.extend(["-server", "-log", f"-port={port}"])
+        # ★ 用 -stdout 而**不是** -log,原因与 hub_allocator/local_fleet.py 同一条:
+        #   `-log` 会开一个 Windows 控制台窗口,快速编辑模式下被点一下 WriteConsole 就阻塞,
+        #   整个游戏线程冻死(cdb 抓栈实证:FWindowsConsoleOutputDevice::Serialize ←
+        #   UIpNetDriver::TrackAndLogNewIP ← TickDispatch ← FEngineLoop::Tick)。
+        #   战斗 DS 冻死比大厅更糟:一局人全卡在里面且不会结算。
+        #   stdout 已由本类重定向到 log_dir,-FullStdOutLogOutput 保证全量。
+        args.extend(["-server", "-stdout", "-FullStdOutLogOutput", f"-port={port}"])
         if self._cfg.launcher == dconf.LAUNCHER_EDITOR:
             args.append(dconf.EDITOR_LAUNCHER_CVAR_ARG)
         args.extend(self._cfg.extra_args)

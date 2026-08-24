@@ -119,6 +119,16 @@ PROTOBUF_CONSTINIT ::google::protobuf::internal::ReflectionData
         {&::_pbi::kDescriptorMethods, &::descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto, /* tracker*/ nullptr,},
         // ::pandora::inventory::v1::SellInstanceResponse
         {&::_pbi::kDescriptorMethods, &::descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto, /* tracker*/ nullptr,},
+        // ::pandora::inventory::v1::GetShopRequest
+        {&::_pbi::kDescriptorMethods, &::descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto, /* tracker*/ nullptr,},
+        // ::pandora::inventory::v1::ShopEntry
+        {&::_pbi::kDescriptorMethods, &::descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto, /* tracker*/ nullptr,},
+        // ::pandora::inventory::v1::GetShopResponse
+        {&::_pbi::kDescriptorMethods, &::descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto, /* tracker*/ nullptr,},
+        // ::pandora::inventory::v1::PurchaseShopItemRequest
+        {&::_pbi::kDescriptorMethods, &::descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto, /* tracker*/ nullptr,},
+        // ::pandora::inventory::v1::PurchaseShopItemResponse
+        {&::_pbi::kDescriptorMethods, &::descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto, /* tracker*/ nullptr,},
         // ::pandora::inventory::v1::EscrowOutInstancesRequest
         {&::_pbi::kDescriptorMethods, &::descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto, /* tracker*/ nullptr,},
         // ::pandora::inventory::v1::EscrowOutInstancesResponse
@@ -555,7 +565,7 @@ constexpr auto TransferClaimItem::InternalGenerateClassData_(
           false,
       },
 #ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[47],
+      &file_reflection_data[52],
 #else   // !PROTOBUF_MESSAGE_GLOBALS
       &::_pbi::kDescriptorMethods,
       &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
@@ -602,6 +612,178 @@ const ::_pbi::ClassData* TransferClaimItem_get_class_data() {
   return TransferClaimItem_globals_.GetClassData();
 #else
   return TransferClaimItem_class_data_.base();
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+}
+}  // namespace
+#endif  // PROTOBUF_CUSTOM_VTABLE
+class ShopEntry::_Internal {
+ public:
+  using HasBits = decltype(::std::declval<ShopEntry>()._impl_._has_bits_);
+  static constexpr ::int32_t kHasBitsOffset =
+      8 * PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_._has_bits_);
+};
+
+constexpr ShopEntry::ParseTableT_ ShopEntry::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
+  return ParseTableT_{
+    {
+      PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_._has_bits_),
+      0, // no _extensions_
+      5, 56,  // max_field_number, fast_idx_mask
+      offsetof(ParseTableT_, field_lookup_table),
+      4294967264,  // skipmap
+      offsetof(ParseTableT_, field_entries),
+      5,  // num_field_entries
+      0,  // num_aux_entries
+      offsetof(ParseTableT_, field_names),  // no aux_entries
+      class_data,
+      nullptr,  // post_loop_handler
+      ::_pbi::TcParser::GenericFallback,  // fallback
+      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
+      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::ShopEntry>(),  // to_prefetch
+      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
+    }, {{
+      {::_pbi::TcParser::MiniParse, {}},
+      // uint32 item_config_id = 1 [json_name = "itemConfigId"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(ShopEntry, _impl_.item_config_id_), 0>(),
+       {8, 0, 0,
+        PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.item_config_id_)}},
+      // uint32 count_per_unit = 2 [json_name = "countPerUnit"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(ShopEntry, _impl_.count_per_unit_), 1>(),
+       {16, 1, 0,
+        PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.count_per_unit_)}},
+      // .pandora.common.v1.CurrencyKind currency_kind = 3 [json_name = "currencyKind"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(ShopEntry, _impl_.currency_kind_), 3>(),
+       {24, 3, 0,
+        PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.currency_kind_)}},
+      // uint64 unit_price = 4 [json_name = "unitPrice"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(ShopEntry, _impl_.unit_price_), 2>(),
+       {32, 2, 0,
+        PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.unit_price_)}},
+      // uint32 sort_order = 5 [json_name = "sortOrder"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(ShopEntry, _impl_.sort_order_), 4>(),
+       {40, 4, 0,
+        PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.sort_order_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+    }}, {{
+      65535, 65535
+    }}, {{
+      // uint32 item_config_id = 1 [json_name = "itemConfigId"];
+      {PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.item_config_id_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // uint32 count_per_unit = 2 [json_name = "countPerUnit"];
+      {PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.count_per_unit_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // .pandora.common.v1.CurrencyKind currency_kind = 3 [json_name = "currencyKind"];
+      {PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.currency_kind_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      // uint64 unit_price = 4 [json_name = "unitPrice"];
+      {PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.unit_price_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      // uint32 sort_order = 5 [json_name = "sortOrder"];
+      {PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.sort_order_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+    }},
+    // no aux_entries
+    {{
+    }},
+  };
+}
+
+
+inline constexpr ShopEntry::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    ::_pbi::ConstantInitialized) noexcept
+      : _cached_size_{0},
+        item_config_id_{0u},
+        count_per_unit_{0u},
+        unit_price_{::uint64_t{0u}},
+        currency_kind_{static_cast< ::pandora::common::v1::CurrencyKind >(0)},
+        sort_order_{0u} {}
+
+template <typename>
+constexpr ShopEntry::ShopEntry(::_pbi::ConstantInitialized,
+                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
+    : ::google::protobuf::Message(
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          class_data
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          ),
+      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
+}
+inline void* PROTOBUF_NONNULL ShopEntry::PlacementNew_(
+    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
+  return ::new (mem) ShopEntry(arena);
+}
+constexpr auto ShopEntry::InternalNewImpl_() {
+  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(ShopEntry), alignof(ShopEntry));
+}
+constexpr auto ShopEntry::InternalGenerateClassData_(
+    const MessageLite& prototype,
+    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
+  return ::google::protobuf::internal::ClassDataFull{
+      ::google::protobuf::internal::ClassData{
+          &prototype,
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+          &_table_.header,
+#else
+          tc_table,
+#endif
+          nullptr,  // IsInitialized
+          &ShopEntry::MergeImpl,
+          ::google::protobuf::Message::GetNewImpl<ShopEntry>(),
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          &ShopEntry::SharedDtor,
+          ::google::protobuf::Message::GetClearImpl<ShopEntry>(), &ShopEntry::ByteSizeLong,
+              &ShopEntry::_InternalSerialize,
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_._cached_size_),
+          false,
+      },
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+      &file_reflection_data[46],
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+      &::_pbi::kDescriptorMethods,
+      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
+      nullptr,  // tracker
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  };
+}
+struct ShopEntryGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
+  constexpr ShopEntryGlobalsTypeInternal()
+      :
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+        _default(::_pbi::ConstantInitialized{},
+                 ShopEntry_class_data_.base())
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+        MessageGlobalsBase(ShopEntry::InternalGenerateClassData_(
+            _default, &ShopEntry_globals_._table.header)),
+        _default(::_pbi::ConstantInitialized{}, GetClassData()),
+        _table(::_pbi::PrivateAccess::GenerateParseTable<ShopEntry>(
+            GetClassData()))
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  {
+  }
+  ~ShopEntryGlobalsTypeInternal() {}
+  union {
+    alignas(::_pbi::kMaxMessageAlignment) ShopEntry _default;
+  };
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  decltype(::_pbi::PrivateAccess::GenerateParseTable<ShopEntry>(
+      ::std::declval<const ::_pbi::ClassData*>())) _table;
+#endif
+};
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+static_assert(PROTOBUF_FIELD_OFFSET(ShopEntryGlobalsTypeInternal, _default) ==
+              ::_pbi::MessageGlobalsBase::OffsetToDefault());
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
+    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST ShopEntryGlobalsTypeInternal ShopEntry_globals_
+        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+namespace {
+const ::_pbi::ClassData* ShopEntry_get_class_data() {
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  return ShopEntry_globals_.GetClassData();
+#else
+  return ShopEntry_class_data_.base();
 #endif  // PROTOBUF_MESSAGE_GLOBALS
 }
 }  // namespace
@@ -900,11 +1082,11 @@ constexpr SettleAuctionMatchRequest::ParseTableT_ SettleAuctionMatchRequest::Int
     {
       PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_._has_bits_),
       0, // no _extensions_
-      8, 56,  // max_field_number, fast_idx_mask
+      9, 120,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967040,  // skipmap
+      4294966784,  // skipmap
       offsetof(ParseTableT_, field_entries),
-      8,  // num_field_entries
+      9,  // num_field_entries
       0,  // num_aux_entries
       offsetof(ParseTableT_, field_names),  // no aux_entries
       class_data,
@@ -914,10 +1096,7 @@ constexpr SettleAuctionMatchRequest::ParseTableT_ SettleAuctionMatchRequest::Int
       ::_pbi::TcParser::GetTable<::pandora::inventory::v1::SettleAuctionMatchRequest>(),  // to_prefetch
       #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
     }, {{
-      // uint64 buy_order_id = 8 [json_name = "buyOrderId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettleAuctionMatchRequest, _impl_.buy_order_id_), 6>(),
-       {64, 6, 0,
-        PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.buy_order_id_)}},
+      {::_pbi::TcParser::MiniParse, {}},
       // uint64 match_id = 1 [json_name = "matchId"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettleAuctionMatchRequest, _impl_.match_id_), 0>(),
        {8, 0, 0,
@@ -931,21 +1110,35 @@ constexpr SettleAuctionMatchRequest::ParseTableT_ SettleAuctionMatchRequest::Int
        {24, 2, 0,
         PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.buyer_id_)}},
       // uint32 item_config_id = 4 [json_name = "itemConfigId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(SettleAuctionMatchRequest, _impl_.item_config_id_), 7>(),
-       {32, 7, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(SettleAuctionMatchRequest, _impl_.item_config_id_), 5>(),
+       {32, 5, 0,
         PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.item_config_id_)}},
       // int64 quantity = 5 [json_name = "quantity"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettleAuctionMatchRequest, _impl_.quantity_), 3>(),
        {40, 3, 0,
         PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.quantity_)}},
-      // int64 unit_price = 6 [json_name = "unitPrice"];
+      // uint64 unit_price = 6 [json_name = "unitPrice"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettleAuctionMatchRequest, _impl_.unit_price_), 4>(),
        {48, 4, 0,
         PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.unit_price_)}},
       // uint64 sell_order_id = 7 [json_name = "sellOrderId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettleAuctionMatchRequest, _impl_.sell_order_id_), 5>(),
-       {56, 5, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettleAuctionMatchRequest, _impl_.sell_order_id_), 7>(),
+       {56, 7, 0,
         PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.sell_order_id_)}},
+      // uint64 buy_order_id = 8 [json_name = "buyOrderId"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettleAuctionMatchRequest, _impl_.buy_order_id_), 8>(),
+       {64, 8, 0,
+        PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.buy_order_id_)}},
+      // .pandora.common.v1.CurrencyKind currency_kind = 9 [json_name = "currencyKind"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(SettleAuctionMatchRequest, _impl_.currency_kind_), 6>(),
+       {72, 6, 0,
+        PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.currency_kind_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
     }}, {{
       65535, 65535
     }}, {{
@@ -956,15 +1149,17 @@ constexpr SettleAuctionMatchRequest::ParseTableT_ SettleAuctionMatchRequest::Int
       // uint64 buyer_id = 3 [json_name = "buyerId"];
       {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.buyer_id_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // uint32 item_config_id = 4 [json_name = "itemConfigId"];
-      {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.item_config_id_), _Internal::kHasBitsOffset + 7, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.item_config_id_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
       // int64 quantity = 5 [json_name = "quantity"];
       {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.quantity_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-      // int64 unit_price = 6 [json_name = "unitPrice"];
-      {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.unit_price_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // uint64 unit_price = 6 [json_name = "unitPrice"];
+      {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.unit_price_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // uint64 sell_order_id = 7 [json_name = "sellOrderId"];
-      {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.sell_order_id_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.sell_order_id_), _Internal::kHasBitsOffset + 7, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // uint64 buy_order_id = 8 [json_name = "buyOrderId"];
-      {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.buy_order_id_), _Internal::kHasBitsOffset + 6, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.buy_order_id_), _Internal::kHasBitsOffset + 8, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      // .pandora.common.v1.CurrencyKind currency_kind = 9 [json_name = "currencyKind"];
+      {PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.currency_kind_), _Internal::kHasBitsOffset + 6, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
     }},
     // no aux_entries
     {{
@@ -981,10 +1176,11 @@ inline constexpr SettleAuctionMatchRequest::Impl_::Impl_(
         seller_id_{::uint64_t{0u}},
         buyer_id_{::uint64_t{0u}},
         quantity_{::int64_t{0}},
-        unit_price_{::int64_t{0}},
+        unit_price_{::uint64_t{0u}},
+        item_config_id_{0u},
+        currency_kind_{static_cast< ::pandora::common::v1::CurrencyKind >(0)},
         sell_order_id_{::uint64_t{0u}},
-        buy_order_id_{::uint64_t{0u}},
-        item_config_id_{0u} {}
+        buy_order_id_{::uint64_t{0u}} {}
 
 template <typename>
 constexpr SettleAuctionMatchRequest::SettleAuctionMatchRequest(::_pbi::ConstantInitialized,
@@ -1074,162 +1270,6 @@ const ::_pbi::ClassData* SettleAuctionMatchRequest_get_class_data() {
   return SettleAuctionMatchRequest_globals_.GetClassData();
 #else
   return SettleAuctionMatchRequest_class_data_.base();
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-}
-}  // namespace
-#endif  // PROTOBUF_CUSTOM_VTABLE
-class SellItemResponse::_Internal {
- public:
-  using HasBits = decltype(::std::declval<SellItemResponse>()._impl_._has_bits_);
-  static constexpr ::int32_t kHasBitsOffset =
-      8 * PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_._has_bits_);
-};
-
-constexpr SellItemResponse::ParseTableT_ SellItemResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
-  return ParseTableT_{
-    {
-      PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_._has_bits_),
-      0, // no _extensions_
-      3, 24,  // max_field_number, fast_idx_mask
-      offsetof(ParseTableT_, field_lookup_table),
-      4294967288,  // skipmap
-      offsetof(ParseTableT_, field_entries),
-      3,  // num_field_entries
-      0,  // num_aux_entries
-      offsetof(ParseTableT_, field_names),  // no aux_entries
-      class_data,
-      nullptr,  // post_loop_handler
-      ::_pbi::TcParser::GenericFallback,  // fallback
-      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
-      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::SellItemResponse>(),  // to_prefetch
-      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
-    }, {{
-      {::_pbi::TcParser::MiniParse, {}},
-      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(SellItemResponse, _impl_.code_), 2>(),
-       {8, 2, 0,
-        PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.code_)}},
-      // int64 remaining = 2 [json_name = "remaining"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SellItemResponse, _impl_.remaining_), 0>(),
-       {16, 0, 0,
-        PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.remaining_)}},
-      // int64 gold = 3 [json_name = "gold"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SellItemResponse, _impl_.gold_), 1>(),
-       {24, 1, 0,
-        PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.gold_)}},
-    }}, {{
-      65535, 65535
-    }}, {{
-      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-      {PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.code_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
-      // int64 remaining = 2 [json_name = "remaining"];
-      {PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.remaining_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-      // int64 gold = 3 [json_name = "gold"];
-      {PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.gold_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-    }},
-    // no aux_entries
-    {{
-    }},
-  };
-}
-
-
-inline constexpr SellItemResponse::Impl_::Impl_(
-    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
-    ::_pbi::ConstantInitialized) noexcept
-      : _cached_size_{0},
-        remaining_{::int64_t{0}},
-        gold_{::int64_t{0}},
-        code_{static_cast< ::pandora::common::v1::ErrCode >(0)} {}
-
-template <typename>
-constexpr SellItemResponse::SellItemResponse(::_pbi::ConstantInitialized,
-                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
-    : ::google::protobuf::Message(
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-          class_data
-#endif  // PROTOBUF_CUSTOM_VTABLE
-          ),
-      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
-}
-inline void* PROTOBUF_NONNULL SellItemResponse::PlacementNew_(
-    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
-  return ::new (mem) SellItemResponse(arena);
-}
-constexpr auto SellItemResponse::InternalNewImpl_() {
-  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(SellItemResponse), alignof(SellItemResponse));
-}
-constexpr auto SellItemResponse::InternalGenerateClassData_(
-    const MessageLite& prototype,
-    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
-  return ::google::protobuf::internal::ClassDataFull{
-      ::google::protobuf::internal::ClassData{
-          &prototype,
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-          &_table_.header,
-#else
-          tc_table,
-#endif
-          nullptr,  // IsInitialized
-          &SellItemResponse::MergeImpl,
-          ::google::protobuf::Message::GetNewImpl<SellItemResponse>(),
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-          &SellItemResponse::SharedDtor,
-          ::google::protobuf::Message::GetClearImpl<SellItemResponse>(), &SellItemResponse::ByteSizeLong,
-              &SellItemResponse::_InternalSerialize,
-#endif  // PROTOBUF_CUSTOM_VTABLE
-          PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_._cached_size_),
-          false,
-      },
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[22],
-#else   // !PROTOBUF_MESSAGE_GLOBALS
-      &::_pbi::kDescriptorMethods,
-      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
-      nullptr,  // tracker
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-  };
-}
-struct SellItemResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
-  constexpr SellItemResponseGlobalsTypeInternal()
-      :
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-        _default(::_pbi::ConstantInitialized{},
-                 SellItemResponse_class_data_.base())
-#else   // !PROTOBUF_MESSAGE_GLOBALS
-        MessageGlobalsBase(SellItemResponse::InternalGenerateClassData_(
-            _default, &SellItemResponse_globals_._table.header)),
-        _default(::_pbi::ConstantInitialized{}, GetClassData()),
-        _table(::_pbi::PrivateAccess::GenerateParseTable<SellItemResponse>(
-            GetClassData()))
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-  {
-  }
-  ~SellItemResponseGlobalsTypeInternal() {}
-  union {
-    alignas(::_pbi::kMaxMessageAlignment) SellItemResponse _default;
-  };
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-  decltype(::_pbi::PrivateAccess::GenerateParseTable<SellItemResponse>(
-      ::std::declval<const ::_pbi::ClassData*>())) _table;
-#endif
-};
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-static_assert(PROTOBUF_FIELD_OFFSET(SellItemResponseGlobalsTypeInternal, _default) ==
-              ::_pbi::MessageGlobalsBase::OffsetToDefault());
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-
-PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
-    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST SellItemResponseGlobalsTypeInternal SellItemResponse_globals_
-        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-namespace {
-const ::_pbi::ClassData* SellItemResponse_get_class_data() {
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-  return SellItemResponse_globals_.GetClassData();
-#else
-  return SellItemResponse_class_data_.base();
 #endif  // PROTOBUF_MESSAGE_GLOBALS
 }
 }  // namespace
@@ -1397,154 +1437,6 @@ const ::_pbi::ClassData* SellItemRequest_get_class_data() {
   return SellItemRequest_globals_.GetClassData();
 #else
   return SellItemRequest_class_data_.base();
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-}
-}  // namespace
-#endif  // PROTOBUF_CUSTOM_VTABLE
-class SellInstanceResponse::_Internal {
- public:
-  using HasBits = decltype(::std::declval<SellInstanceResponse>()._impl_._has_bits_);
-  static constexpr ::int32_t kHasBitsOffset =
-      8 * PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_._has_bits_);
-};
-
-constexpr SellInstanceResponse::ParseTableT_ SellInstanceResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
-  return ParseTableT_{
-    {
-      PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_._has_bits_),
-      0, // no _extensions_
-      2, 8,  // max_field_number, fast_idx_mask
-      offsetof(ParseTableT_, field_lookup_table),
-      4294967292,  // skipmap
-      offsetof(ParseTableT_, field_entries),
-      2,  // num_field_entries
-      0,  // num_aux_entries
-      offsetof(ParseTableT_, field_names),  // no aux_entries
-      class_data,
-      nullptr,  // post_loop_handler
-      ::_pbi::TcParser::GenericFallback,  // fallback
-      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
-      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::SellInstanceResponse>(),  // to_prefetch
-      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
-    }, {{
-      // int64 gold = 2 [json_name = "gold"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SellInstanceResponse, _impl_.gold_), 0>(),
-       {16, 0, 0,
-        PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.gold_)}},
-      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(SellInstanceResponse, _impl_.code_), 1>(),
-       {8, 1, 0,
-        PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.code_)}},
-    }}, {{
-      65535, 65535
-    }}, {{
-      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-      {PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.code_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
-      // int64 gold = 2 [json_name = "gold"];
-      {PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.gold_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-    }},
-    // no aux_entries
-    {{
-    }},
-  };
-}
-
-
-inline constexpr SellInstanceResponse::Impl_::Impl_(
-    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
-    ::_pbi::ConstantInitialized) noexcept
-      : _cached_size_{0},
-        gold_{::int64_t{0}},
-        code_{static_cast< ::pandora::common::v1::ErrCode >(0)} {}
-
-template <typename>
-constexpr SellInstanceResponse::SellInstanceResponse(::_pbi::ConstantInitialized,
-                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
-    : ::google::protobuf::Message(
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-          class_data
-#endif  // PROTOBUF_CUSTOM_VTABLE
-          ),
-      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
-}
-inline void* PROTOBUF_NONNULL SellInstanceResponse::PlacementNew_(
-    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
-  return ::new (mem) SellInstanceResponse(arena);
-}
-constexpr auto SellInstanceResponse::InternalNewImpl_() {
-  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(SellInstanceResponse), alignof(SellInstanceResponse));
-}
-constexpr auto SellInstanceResponse::InternalGenerateClassData_(
-    const MessageLite& prototype,
-    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
-  return ::google::protobuf::internal::ClassDataFull{
-      ::google::protobuf::internal::ClassData{
-          &prototype,
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-          &_table_.header,
-#else
-          tc_table,
-#endif
-          nullptr,  // IsInitialized
-          &SellInstanceResponse::MergeImpl,
-          ::google::protobuf::Message::GetNewImpl<SellInstanceResponse>(),
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-          &SellInstanceResponse::SharedDtor,
-          ::google::protobuf::Message::GetClearImpl<SellInstanceResponse>(), &SellInstanceResponse::ByteSizeLong,
-              &SellInstanceResponse::_InternalSerialize,
-#endif  // PROTOBUF_CUSTOM_VTABLE
-          PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_._cached_size_),
-          false,
-      },
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[44],
-#else   // !PROTOBUF_MESSAGE_GLOBALS
-      &::_pbi::kDescriptorMethods,
-      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
-      nullptr,  // tracker
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-  };
-}
-struct SellInstanceResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
-  constexpr SellInstanceResponseGlobalsTypeInternal()
-      :
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-        _default(::_pbi::ConstantInitialized{},
-                 SellInstanceResponse_class_data_.base())
-#else   // !PROTOBUF_MESSAGE_GLOBALS
-        MessageGlobalsBase(SellInstanceResponse::InternalGenerateClassData_(
-            _default, &SellInstanceResponse_globals_._table.header)),
-        _default(::_pbi::ConstantInitialized{}, GetClassData()),
-        _table(::_pbi::PrivateAccess::GenerateParseTable<SellInstanceResponse>(
-            GetClassData()))
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-  {
-  }
-  ~SellInstanceResponseGlobalsTypeInternal() {}
-  union {
-    alignas(::_pbi::kMaxMessageAlignment) SellInstanceResponse _default;
-  };
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-  decltype(::_pbi::PrivateAccess::GenerateParseTable<SellInstanceResponse>(
-      ::std::declval<const ::_pbi::ClassData*>())) _table;
-#endif
-};
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-static_assert(PROTOBUF_FIELD_OFFSET(SellInstanceResponseGlobalsTypeInternal, _default) ==
-              ::_pbi::MessageGlobalsBase::OffsetToDefault());
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-
-PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
-    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST SellInstanceResponseGlobalsTypeInternal SellInstanceResponse_globals_
-        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-namespace {
-const ::_pbi::ClassData* SellInstanceResponse_get_class_data() {
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-  return SellInstanceResponse_globals_.GetClassData();
-#else
-  return SellInstanceResponse_class_data_.base();
 #endif  // PROTOBUF_MESSAGE_GLOBALS
 }
 }  // namespace
@@ -1806,7 +1698,7 @@ constexpr auto ReleaseTransferEscrowResponse::InternalGenerateClassData_(
           false,
       },
 #ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[51],
+      &file_reflection_data[56],
 #else   // !PROTOBUF_MESSAGE_GLOBALS
       &::_pbi::kDescriptorMethods,
       &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
@@ -1952,7 +1844,7 @@ constexpr auto ReleaseTransferEscrowRequest::InternalGenerateClassData_(
           false,
       },
 #ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[50],
+      &file_reflection_data[55],
 #else   // !PROTOBUF_MESSAGE_GLOBALS
       &::_pbi::kDescriptorMethods,
       &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
@@ -2288,6 +2180,183 @@ const ::_pbi::ClassData* ReleaseEscrowRequest_get_class_data() {
   return ReleaseEscrowRequest_globals_.GetClassData();
 #else
   return ReleaseEscrowRequest_class_data_.base();
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+}
+}  // namespace
+#endif  // PROTOBUF_CUSTOM_VTABLE
+class PurchaseShopItemRequest::_Internal {
+ public:
+  using HasBits = decltype(::std::declval<PurchaseShopItemRequest>()._impl_._has_bits_);
+  static constexpr ::int32_t kHasBitsOffset =
+      8 * PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_._has_bits_);
+};
+
+constexpr PurchaseShopItemRequest::ParseTableT_ PurchaseShopItemRequest::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
+  return ParseTableT_{
+    {
+      PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_._has_bits_),
+      0, // no _extensions_
+      5, 56,  // max_field_number, fast_idx_mask
+      offsetof(ParseTableT_, field_lookup_table),
+      4294967264,  // skipmap
+      offsetof(ParseTableT_, field_entries),
+      5,  // num_field_entries
+      0,  // num_aux_entries
+      offsetof(ParseTableT_, field_names),  // no aux_entries
+      class_data,
+      nullptr,  // post_loop_handler
+      ::_pbi::TcParser::GenericFallback,  // fallback
+      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
+      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::PurchaseShopItemRequest>(),  // to_prefetch
+      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
+    }, {{
+      {::_pbi::TcParser::MiniParse, {}},
+      // uint64 player_id = 1 [json_name = "playerId"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(PurchaseShopItemRequest, _impl_.player_id_), 1>(),
+       {8, 1, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.player_id_)}},
+      // uint32 shop_id = 2 [json_name = "shopId"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseShopItemRequest, _impl_.shop_id_), 2>(),
+       {16, 2, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.shop_id_)}},
+      // uint32 item_config_id = 3 [json_name = "itemConfigId"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseShopItemRequest, _impl_.item_config_id_), 3>(),
+       {24, 3, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.item_config_id_)}},
+      // uint32 unit_count = 4 [json_name = "unitCount"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseShopItemRequest, _impl_.unit_count_), 4>(),
+       {32, 4, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.unit_count_)}},
+      // string idempotency_key = 5 [json_name = "idempotencyKey"];
+      {::_pbi::TcParser::FastUS1,
+       {42, 0, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.idempotency_key_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+    }}, {{
+      65535, 65535
+    }}, {{
+      // uint64 player_id = 1 [json_name = "playerId"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.player_id_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      // uint32 shop_id = 2 [json_name = "shopId"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.shop_id_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // uint32 item_config_id = 3 [json_name = "itemConfigId"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.item_config_id_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // uint32 unit_count = 4 [json_name = "unitCount"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.unit_count_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // string idempotency_key = 5 [json_name = "idempotencyKey"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.idempotency_key_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUtf8String | ::_fl::kRepAString)},
+    }},
+    // no aux_entries
+    {{
+      "\54\0\0\0\0\17\0\0"
+      "pandora.inventory.v1.PurchaseShopItemRequest"
+      "idempotency_key"
+    }},
+  };
+}
+
+
+inline constexpr PurchaseShopItemRequest::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    ::_pbi::ConstantInitialized) noexcept
+      : _cached_size_{0},
+        idempotency_key_(
+            &::google::protobuf::internal::fixed_address_empty_string,
+            ::_pbi::ConstantInitialized()),
+        player_id_{::uint64_t{0u}},
+        shop_id_{0u},
+        item_config_id_{0u},
+        unit_count_{0u} {}
+
+template <typename>
+constexpr PurchaseShopItemRequest::PurchaseShopItemRequest(::_pbi::ConstantInitialized,
+                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
+    : ::google::protobuf::Message(
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          class_data
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          ),
+      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
+}
+inline void* PROTOBUF_NONNULL PurchaseShopItemRequest::PlacementNew_(
+    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
+  return ::new (mem) PurchaseShopItemRequest(arena);
+}
+constexpr auto PurchaseShopItemRequest::InternalNewImpl_() {
+  return ::google::protobuf::internal::MessageCreator::CopyInit(sizeof(PurchaseShopItemRequest), alignof(PurchaseShopItemRequest));
+}
+constexpr auto PurchaseShopItemRequest::InternalGenerateClassData_(
+    const MessageLite& prototype,
+    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
+  return ::google::protobuf::internal::ClassDataFull{
+      ::google::protobuf::internal::ClassData{
+          &prototype,
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+          &_table_.header,
+#else
+          tc_table,
+#endif
+          nullptr,  // IsInitialized
+          &PurchaseShopItemRequest::MergeImpl,
+          ::google::protobuf::Message::GetNewImpl<PurchaseShopItemRequest>(),
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          &PurchaseShopItemRequest::SharedDtor,
+          ::google::protobuf::Message::GetClearImpl<PurchaseShopItemRequest>(), &PurchaseShopItemRequest::ByteSizeLong,
+              &PurchaseShopItemRequest::_InternalSerialize,
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_._cached_size_),
+          false,
+      },
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+      &file_reflection_data[48],
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+      &::_pbi::kDescriptorMethods,
+      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
+      nullptr,  // tracker
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  };
+}
+struct PurchaseShopItemRequestGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
+  constexpr PurchaseShopItemRequestGlobalsTypeInternal()
+      :
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+        _default(::_pbi::ConstantInitialized{},
+                 PurchaseShopItemRequest_class_data_.base())
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+        MessageGlobalsBase(PurchaseShopItemRequest::InternalGenerateClassData_(
+            _default, &PurchaseShopItemRequest_globals_._table.header)),
+        _default(::_pbi::ConstantInitialized{}, GetClassData()),
+        _table(::_pbi::PrivateAccess::GenerateParseTable<PurchaseShopItemRequest>(
+            GetClassData()))
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  {
+  }
+  ~PurchaseShopItemRequestGlobalsTypeInternal() {}
+  union {
+    alignas(::_pbi::kMaxMessageAlignment) PurchaseShopItemRequest _default;
+  };
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  decltype(::_pbi::PrivateAccess::GenerateParseTable<PurchaseShopItemRequest>(
+      ::std::declval<const ::_pbi::ClassData*>())) _table;
+#endif
+};
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+static_assert(PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequestGlobalsTypeInternal, _default) ==
+              ::_pbi::MessageGlobalsBase::OffsetToDefault());
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
+    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST PurchaseShopItemRequestGlobalsTypeInternal PurchaseShopItemRequest_globals_
+        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+namespace {
+const ::_pbi::ClassData* PurchaseShopItemRequest_get_class_data() {
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  return PurchaseShopItemRequest_globals_.GetClassData();
+#else
+  return PurchaseShopItemRequest_class_data_.base();
 #endif  // PROTOBUF_MESSAGE_GLOBALS
 }
 }  // namespace
@@ -3329,154 +3398,6 @@ const ::_pbi::ClassData* IdentifyItemRequest_get_class_data() {
 }
 }  // namespace
 #endif  // PROTOBUF_CUSTOM_VTABLE
-class GrantItemsResponse::_Internal {
- public:
-  using HasBits = decltype(::std::declval<GrantItemsResponse>()._impl_._has_bits_);
-  static constexpr ::int32_t kHasBitsOffset =
-      8 * PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_._has_bits_);
-};
-
-constexpr GrantItemsResponse::ParseTableT_ GrantItemsResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
-  return ParseTableT_{
-    {
-      PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_._has_bits_),
-      0, // no _extensions_
-      2, 8,  // max_field_number, fast_idx_mask
-      offsetof(ParseTableT_, field_lookup_table),
-      4294967292,  // skipmap
-      offsetof(ParseTableT_, field_entries),
-      2,  // num_field_entries
-      0,  // num_aux_entries
-      offsetof(ParseTableT_, field_names),  // no aux_entries
-      class_data,
-      nullptr,  // post_loop_handler
-      ::_pbi::TcParser::GenericFallback,  // fallback
-      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
-      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::GrantItemsResponse>(),  // to_prefetch
-      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
-    }, {{
-      // int64 gold = 2 [json_name = "gold"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(GrantItemsResponse, _impl_.gold_), 0>(),
-       {16, 0, 0,
-        PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.gold_)}},
-      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(GrantItemsResponse, _impl_.code_), 1>(),
-       {8, 1, 0,
-        PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.code_)}},
-    }}, {{
-      65535, 65535
-    }}, {{
-      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-      {PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.code_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
-      // int64 gold = 2 [json_name = "gold"];
-      {PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.gold_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-    }},
-    // no aux_entries
-    {{
-    }},
-  };
-}
-
-
-inline constexpr GrantItemsResponse::Impl_::Impl_(
-    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
-    ::_pbi::ConstantInitialized) noexcept
-      : _cached_size_{0},
-        gold_{::int64_t{0}},
-        code_{static_cast< ::pandora::common::v1::ErrCode >(0)} {}
-
-template <typename>
-constexpr GrantItemsResponse::GrantItemsResponse(::_pbi::ConstantInitialized,
-                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
-    : ::google::protobuf::Message(
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-          class_data
-#endif  // PROTOBUF_CUSTOM_VTABLE
-          ),
-      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
-}
-inline void* PROTOBUF_NONNULL GrantItemsResponse::PlacementNew_(
-    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
-  return ::new (mem) GrantItemsResponse(arena);
-}
-constexpr auto GrantItemsResponse::InternalNewImpl_() {
-  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(GrantItemsResponse), alignof(GrantItemsResponse));
-}
-constexpr auto GrantItemsResponse::InternalGenerateClassData_(
-    const MessageLite& prototype,
-    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
-  return ::google::protobuf::internal::ClassDataFull{
-      ::google::protobuf::internal::ClassData{
-          &prototype,
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-          &_table_.header,
-#else
-          tc_table,
-#endif
-          nullptr,  // IsInitialized
-          &GrantItemsResponse::MergeImpl,
-          ::google::protobuf::Message::GetNewImpl<GrantItemsResponse>(),
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-          &GrantItemsResponse::SharedDtor,
-          ::google::protobuf::Message::GetClearImpl<GrantItemsResponse>(), &GrantItemsResponse::ByteSizeLong,
-              &GrantItemsResponse::_InternalSerialize,
-#endif  // PROTOBUF_CUSTOM_VTABLE
-          PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_._cached_size_),
-          false,
-      },
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[9],
-#else   // !PROTOBUF_MESSAGE_GLOBALS
-      &::_pbi::kDescriptorMethods,
-      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
-      nullptr,  // tracker
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-  };
-}
-struct GrantItemsResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
-  constexpr GrantItemsResponseGlobalsTypeInternal()
-      :
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-        _default(::_pbi::ConstantInitialized{},
-                 GrantItemsResponse_class_data_.base())
-#else   // !PROTOBUF_MESSAGE_GLOBALS
-        MessageGlobalsBase(GrantItemsResponse::InternalGenerateClassData_(
-            _default, &GrantItemsResponse_globals_._table.header)),
-        _default(::_pbi::ConstantInitialized{}, GetClassData()),
-        _table(::_pbi::PrivateAccess::GenerateParseTable<GrantItemsResponse>(
-            GetClassData()))
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-  {
-  }
-  ~GrantItemsResponseGlobalsTypeInternal() {}
-  union {
-    alignas(::_pbi::kMaxMessageAlignment) GrantItemsResponse _default;
-  };
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-  decltype(::_pbi::PrivateAccess::GenerateParseTable<GrantItemsResponse>(
-      ::std::declval<const ::_pbi::ClassData*>())) _table;
-#endif
-};
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-static_assert(PROTOBUF_FIELD_OFFSET(GrantItemsResponseGlobalsTypeInternal, _default) ==
-              ::_pbi::MessageGlobalsBase::OffsetToDefault());
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-
-PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
-    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST GrantItemsResponseGlobalsTypeInternal GrantItemsResponse_globals_
-        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-namespace {
-const ::_pbi::ClassData* GrantItemsResponse_get_class_data() {
-#ifdef PROTOBUF_MESSAGE_GLOBALS
-  return GrantItemsResponse_globals_.GetClassData();
-#else
-  return GrantItemsResponse_class_data_.base();
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-}
-}  // namespace
-#endif  // PROTOBUF_CUSTOM_VTABLE
 class GrantInstancesRequest::_Internal {
  public:
   using HasBits = decltype(::std::declval<GrantInstancesRequest>()._impl_._has_bits_);
@@ -3639,6 +3560,147 @@ const ::_pbi::ClassData* GrantInstancesRequest_get_class_data() {
   return GrantInstancesRequest_globals_.GetClassData();
 #else
   return GrantInstancesRequest_class_data_.base();
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+}
+}  // namespace
+#endif  // PROTOBUF_CUSTOM_VTABLE
+class GetShopRequest::_Internal {
+ public:
+  using HasBits = decltype(::std::declval<GetShopRequest>()._impl_._has_bits_);
+  static constexpr ::int32_t kHasBitsOffset =
+      8 * PROTOBUF_FIELD_OFFSET(GetShopRequest, _impl_._has_bits_);
+};
+
+constexpr GetShopRequest::ParseTableT_ GetShopRequest::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
+  return ParseTableT_{
+    {
+      PROTOBUF_FIELD_OFFSET(GetShopRequest, _impl_._has_bits_),
+      0, // no _extensions_
+      1, 0,  // max_field_number, fast_idx_mask
+      offsetof(ParseTableT_, field_lookup_table),
+      4294967294,  // skipmap
+      offsetof(ParseTableT_, field_entries),
+      1,  // num_field_entries
+      0,  // num_aux_entries
+      offsetof(ParseTableT_, field_names),  // no aux_entries
+      class_data,
+      nullptr,  // post_loop_handler
+      ::_pbi::TcParser::GenericFallback,  // fallback
+      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
+      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::GetShopRequest>(),  // to_prefetch
+      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
+    }, {{
+      // uint32 shop_id = 1 [json_name = "shopId"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(GetShopRequest, _impl_.shop_id_), 0>(),
+       {8, 0, 0,
+        PROTOBUF_FIELD_OFFSET(GetShopRequest, _impl_.shop_id_)}},
+    }}, {{
+      65535, 65535
+    }}, {{
+      // uint32 shop_id = 1 [json_name = "shopId"];
+      {PROTOBUF_FIELD_OFFSET(GetShopRequest, _impl_.shop_id_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+    }},
+    // no aux_entries
+    {{
+    }},
+  };
+}
+
+
+inline constexpr GetShopRequest::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    ::_pbi::ConstantInitialized) noexcept
+      : _cached_size_{0},
+        shop_id_{0u} {}
+
+template <typename>
+constexpr GetShopRequest::GetShopRequest(::_pbi::ConstantInitialized,
+                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
+    : ::google::protobuf::Message(
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          class_data
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          ),
+      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
+}
+inline void* PROTOBUF_NONNULL GetShopRequest::PlacementNew_(
+    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
+  return ::new (mem) GetShopRequest(arena);
+}
+constexpr auto GetShopRequest::InternalNewImpl_() {
+  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(GetShopRequest), alignof(GetShopRequest));
+}
+constexpr auto GetShopRequest::InternalGenerateClassData_(
+    const MessageLite& prototype,
+    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
+  return ::google::protobuf::internal::ClassDataFull{
+      ::google::protobuf::internal::ClassData{
+          &prototype,
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+          &_table_.header,
+#else
+          tc_table,
+#endif
+          nullptr,  // IsInitialized
+          &GetShopRequest::MergeImpl,
+          ::google::protobuf::Message::GetNewImpl<GetShopRequest>(),
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          &GetShopRequest::SharedDtor,
+          ::google::protobuf::Message::GetClearImpl<GetShopRequest>(), &GetShopRequest::ByteSizeLong,
+              &GetShopRequest::_InternalSerialize,
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          PROTOBUF_FIELD_OFFSET(GetShopRequest, _impl_._cached_size_),
+          false,
+      },
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+      &file_reflection_data[45],
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+      &::_pbi::kDescriptorMethods,
+      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
+      nullptr,  // tracker
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  };
+}
+struct GetShopRequestGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
+  constexpr GetShopRequestGlobalsTypeInternal()
+      :
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+        _default(::_pbi::ConstantInitialized{},
+                 GetShopRequest_class_data_.base())
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+        MessageGlobalsBase(GetShopRequest::InternalGenerateClassData_(
+            _default, &GetShopRequest_globals_._table.header)),
+        _default(::_pbi::ConstantInitialized{}, GetClassData()),
+        _table(::_pbi::PrivateAccess::GenerateParseTable<GetShopRequest>(
+            GetClassData()))
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  {
+  }
+  ~GetShopRequestGlobalsTypeInternal() {}
+  union {
+    alignas(::_pbi::kMaxMessageAlignment) GetShopRequest _default;
+  };
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  decltype(::_pbi::PrivateAccess::GenerateParseTable<GetShopRequest>(
+      ::std::declval<const ::_pbi::ClassData*>())) _table;
+#endif
+};
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+static_assert(PROTOBUF_FIELD_OFFSET(GetShopRequestGlobalsTypeInternal, _default) ==
+              ::_pbi::MessageGlobalsBase::OffsetToDefault());
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
+    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST GetShopRequestGlobalsTypeInternal GetShopRequest_globals_
+        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+namespace {
+const ::_pbi::ClassData* GetShopRequest_get_class_data() {
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  return GetShopRequest_globals_.GetClassData();
+#else
+  return GetShopRequest_class_data_.base();
 #endif  // PROTOBUF_MESSAGE_GLOBALS
 }
 }  // namespace
@@ -3937,11 +3999,11 @@ constexpr FreezeForOrderRequest::ParseTableT_ FreezeForOrderRequest::InternalGen
     {
       PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_._has_bits_),
       0, // no _extensions_
-      6, 56,  // max_field_number, fast_idx_mask
+      7, 56,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967232,  // skipmap
+      4294967168,  // skipmap
       offsetof(ParseTableT_, field_entries),
-      6,  // num_field_entries
+      7,  // num_field_entries
       0,  // num_aux_entries
       offsetof(ParseTableT_, field_names),  // no aux_entries
       class_data,
@@ -3972,11 +4034,14 @@ constexpr FreezeForOrderRequest::ParseTableT_ FreezeForOrderRequest::InternalGen
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(FreezeForOrderRequest, _impl_.quantity_), 4>(),
        {40, 4, 0,
         PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.quantity_)}},
-      // int64 unit_price = 6 [json_name = "unitPrice"];
+      // uint64 unit_price = 6 [json_name = "unitPrice"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(FreezeForOrderRequest, _impl_.unit_price_), 5>(),
        {48, 5, 0,
         PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.unit_price_)}},
-      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(FreezeForOrderRequest, _impl_.currency_kind_), 6>(),
+       {56, 6, 0,
+        PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.currency_kind_)}},
     }}, {{
       65535, 65535
     }}, {{
@@ -3990,8 +4055,10 @@ constexpr FreezeForOrderRequest::ParseTableT_ FreezeForOrderRequest::InternalGen
       {PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.item_config_id_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
       // int64 quantity = 5 [json_name = "quantity"];
       {PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.quantity_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-      // int64 unit_price = 6 [json_name = "unitPrice"];
-      {PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.unit_price_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // uint64 unit_price = 6 [json_name = "unitPrice"];
+      {PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.unit_price_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+      {PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.currency_kind_), _Internal::kHasBitsOffset + 6, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
     }},
     // no aux_entries
     {{
@@ -4009,7 +4076,8 @@ inline constexpr FreezeForOrderRequest::Impl_::Impl_(
         side_{static_cast< ::pandora::inventory::v1::EscrowSide >(0)},
         item_config_id_{0u},
         quantity_{::int64_t{0}},
-        unit_price_{::int64_t{0}} {}
+        unit_price_{::uint64_t{0u}},
+        currency_kind_{static_cast< ::pandora::common::v1::CurrencyKind >(0)} {}
 
 template <typename>
 constexpr FreezeForOrderRequest::FreezeForOrderRequest(::_pbi::ConstantInitialized,
@@ -4224,7 +4292,7 @@ constexpr auto EscrowOutInstancesRequest::InternalGenerateClassData_(
           false,
       },
 #ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[45],
+      &file_reflection_data[50],
 #else   // !PROTOBUF_MESSAGE_GLOBALS
       &::_pbi::kDescriptorMethods,
       &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
@@ -4428,11 +4496,11 @@ constexpr EnsureAuctionEscrowRequest::ParseTableT_ EnsureAuctionEscrowRequest::I
     {
       PROTOBUF_FIELD_OFFSET(EnsureAuctionEscrowRequest, _impl_._has_bits_),
       0, // no _extensions_
-      6, 56,  // max_field_number, fast_idx_mask
+      7, 56,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967232,  // skipmap
+      4294967168,  // skipmap
       offsetof(ParseTableT_, field_entries),
-      6,  // num_field_entries
+      7,  // num_field_entries
       0,  // num_aux_entries
       offsetof(ParseTableT_, field_names),  // no aux_entries
       class_data,
@@ -4467,7 +4535,10 @@ constexpr EnsureAuctionEscrowRequest::ParseTableT_ EnsureAuctionEscrowRequest::I
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(EnsureAuctionEscrowRequest, _impl_.unit_price_), 5>(),
        {48, 5, 0,
         PROTOBUF_FIELD_OFFSET(EnsureAuctionEscrowRequest, _impl_.unit_price_)}},
-      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(EnsureAuctionEscrowRequest, _impl_.currency_kind_), 6>(),
+       {56, 6, 0,
+        PROTOBUF_FIELD_OFFSET(EnsureAuctionEscrowRequest, _impl_.currency_kind_)}},
     }}, {{
       65535, 65535
     }}, {{
@@ -4483,6 +4554,8 @@ constexpr EnsureAuctionEscrowRequest::ParseTableT_ EnsureAuctionEscrowRequest::I
       {PROTOBUF_FIELD_OFFSET(EnsureAuctionEscrowRequest, _impl_.remaining_quantity_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // uint64 unit_price = 6 [json_name = "unitPrice"];
       {PROTOBUF_FIELD_OFFSET(EnsureAuctionEscrowRequest, _impl_.unit_price_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+      {PROTOBUF_FIELD_OFFSET(EnsureAuctionEscrowRequest, _impl_.currency_kind_), _Internal::kHasBitsOffset + 6, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
     }},
     // no aux_entries
     {{
@@ -4500,7 +4573,8 @@ inline constexpr EnsureAuctionEscrowRequest::Impl_::Impl_(
         side_{static_cast< ::pandora::inventory::v1::EscrowSide >(0)},
         item_config_id_{0u},
         remaining_quantity_{::uint64_t{0u}},
-        unit_price_{::uint64_t{0u}} {}
+        unit_price_{::uint64_t{0u}},
+        currency_kind_{static_cast< ::pandora::common::v1::CurrencyKind >(0)} {}
 
 template <typename>
 constexpr EnsureAuctionEscrowRequest::EnsureAuctionEscrowRequest(::_pbi::ConstantInitialized,
@@ -5603,7 +5677,7 @@ constexpr auto ConsumeTransferEscrowResponse::InternalGenerateClassData_(
           false,
       },
 #ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[53],
+      &file_reflection_data[58],
 #else   // !PROTOBUF_MESSAGE_GLOBALS
       &::_pbi::kDescriptorMethods,
       &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
@@ -5756,7 +5830,7 @@ constexpr auto ConsumeTransferEscrowRequest::InternalGenerateClassData_(
           false,
       },
 #ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[52],
+      &file_reflection_data[57],
 #else   // !PROTOBUF_MESSAGE_GLOBALS
       &::_pbi::kDescriptorMethods,
       &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
@@ -6212,7 +6286,7 @@ constexpr auto ClaimTransferInstancesResponse::InternalGenerateClassData_(
           false,
       },
 #ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[49],
+      &file_reflection_data[54],
 #else   // !PROTOBUF_MESSAGE_GLOBALS
       &::_pbi::kDescriptorMethods,
       &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
@@ -6581,12 +6655,12 @@ constexpr SettlePlayerTradeRequest::ParseTableT_ SettlePlayerTradeRequest::Inter
     {
       PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_._has_bits_),
       0, // no _extensions_
-      6, 56,  // max_field_number, fast_idx_mask
+      7, 56,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967232,  // skipmap
+      4294967200,  // skipmap
       offsetof(ParseTableT_, field_entries),
       6,  // num_field_entries
-      2,  // num_aux_entries
+      3,  // num_aux_entries
       offsetof(ParseTableT_, aux_entries),
       class_data,
       nullptr,  // post_loop_handler
@@ -6597,16 +6671,16 @@ constexpr SettlePlayerTradeRequest::ParseTableT_ SettlePlayerTradeRequest::Inter
     }, {{
       {::_pbi::TcParser::MiniParse, {}},
       // uint64 order_id = 1 [json_name = "orderId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettlePlayerTradeRequest, _impl_.order_id_), 2>(),
-       {8, 2, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettlePlayerTradeRequest, _impl_.order_id_), 3>(),
+       {8, 3, 0,
         PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.order_id_)}},
       // uint64 seller_id = 2 [json_name = "sellerId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettlePlayerTradeRequest, _impl_.seller_id_), 3>(),
-       {16, 3, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettlePlayerTradeRequest, _impl_.seller_id_), 4>(),
+       {16, 4, 0,
         PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.seller_id_)}},
       // uint64 buyer_id = 3 [json_name = "buyerId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettlePlayerTradeRequest, _impl_.buyer_id_), 4>(),
-       {24, 4, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettlePlayerTradeRequest, _impl_.buyer_id_), 5>(),
+       {24, 5, 0,
         PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.buyer_id_)}},
       // repeated .pandora.inventory.v1.ItemGrant seller_items = 4 [json_name = "sellerItems"];
       {::_pbi::TcParser::FastMtR1,
@@ -6616,26 +6690,26 @@ constexpr SettlePlayerTradeRequest::ParseTableT_ SettlePlayerTradeRequest::Inter
       {::_pbi::TcParser::FastMtR1,
        {42, 1, 1,
         PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.buyer_items_)}},
-      // int64 price = 6 [json_name = "price"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SettlePlayerTradeRequest, _impl_.price_), 5>(),
-       {48, 5, 0,
-        PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.price_)}},
       {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.CurrencyAmount price_amount = 7 [json_name = "priceAmount"];
+      {::_pbi::TcParser::FastMtS1,
+       {58, 2, 2,
+        PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.price_amount_)}},
     }}, {{
       65535, 65535
     }}, {{
       // uint64 order_id = 1 [json_name = "orderId"];
-      {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.order_id_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.order_id_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // uint64 seller_id = 2 [json_name = "sellerId"];
-      {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.seller_id_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.seller_id_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // uint64 buyer_id = 3 [json_name = "buyerId"];
-      {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.buyer_id_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.buyer_id_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // repeated .pandora.inventory.v1.ItemGrant seller_items = 4 [json_name = "sellerItems"];
       {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.seller_items_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
       // repeated .pandora.inventory.v1.ItemGrant buyer_items = 5 [json_name = "buyerItems"];
       {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.buyer_items_), _Internal::kHasBitsOffset + 1, 1, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
-      // int64 price = 6 [json_name = "price"];
-      {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.price_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // .pandora.common.v1.CurrencyAmount price_amount = 7 [json_name = "priceAmount"];
+      {PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.price_amount_), _Internal::kHasBitsOffset + 2, 2, (0 | ::_fl::kFcOptional | ::_fl::kMessage | ::_fl::kTvTable)},
     }},
     {{
         #ifndef PROTOBUF_MESSAGE_GLOBALS
@@ -6647,6 +6721,11 @@ constexpr SettlePlayerTradeRequest::ParseTableT_ SettlePlayerTradeRequest::Inter
         {::_pbi::TcParser::GetTable<::pandora::inventory::v1::ItemGrant>()},
         #else
         {::_pbi::FieldAuxMessageGlobals(), &::pandora::inventory::v1::ItemGrant_globals_},
+        #endif
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
         #endif
     }},
     {{
@@ -6669,10 +6748,10 @@ inline constexpr SettlePlayerTradeRequest::Impl_::Impl_(
             PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettlePlayerTradeRequest, _impl_.buyer_items_)>()
          }
         ,
+        price_amount_{nullptr},
         order_id_{::uint64_t{0u}},
         seller_id_{::uint64_t{0u}},
-        buyer_id_{::uint64_t{0u}},
-        price_{::int64_t{0}} {}
+        buyer_id_{::uint64_t{0u}} {}
 
 template <typename>
 constexpr SettlePlayerTradeRequest::SettlePlayerTradeRequest(::_pbi::ConstantInitialized,
@@ -6762,6 +6841,350 @@ const ::_pbi::ClassData* SettlePlayerTradeRequest_get_class_data() {
   return SettlePlayerTradeRequest_globals_.GetClassData();
 #else
   return SettlePlayerTradeRequest_class_data_.base();
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+}
+}  // namespace
+#endif  // PROTOBUF_CUSTOM_VTABLE
+class SellItemResponse::_Internal {
+ public:
+  using HasBits = decltype(::std::declval<SellItemResponse>()._impl_._has_bits_);
+  static constexpr ::int32_t kHasBitsOffset =
+      8 * PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_._has_bits_);
+};
+
+constexpr SellItemResponse::ParseTableT_ SellItemResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
+  return ParseTableT_{
+    {
+      PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_._has_bits_),
+      0, // no _extensions_
+      5, 56,  // max_field_number, fast_idx_mask
+      offsetof(ParseTableT_, field_lookup_table),
+      4294967268,  // skipmap
+      offsetof(ParseTableT_, field_entries),
+      4,  // num_field_entries
+      2,  // num_aux_entries
+      offsetof(ParseTableT_, aux_entries),
+      class_data,
+      nullptr,  // post_loop_handler
+      ::_pbi::TcParser::GenericFallback,  // fallback
+      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
+      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::SellItemResponse>(),  // to_prefetch
+      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
+    }, {{
+      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(SellItemResponse, _impl_.code_), 3>(),
+       {8, 3, 0,
+        PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.code_)}},
+      // int64 remaining = 2 [json_name = "remaining"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(SellItemResponse, _impl_.remaining_), 2>(),
+       {16, 2, 0,
+        PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.remaining_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.CurrencyAmount balance = 4 [json_name = "balance"];
+      {::_pbi::TcParser::FastMtS1,
+       {34, 0, 0,
+        PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.balance_)}},
+      // .pandora.common.v1.CurrencyAmount earned = 5 [json_name = "earned"];
+      {::_pbi::TcParser::FastMtS1,
+       {42, 1, 1,
+        PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.earned_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+    }}, {{
+      65535, 65535
+    }}, {{
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.code_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      // int64 remaining = 2 [json_name = "remaining"];
+      {PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.remaining_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // .pandora.common.v1.CurrencyAmount balance = 4 [json_name = "balance"];
+      {PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.balance_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kMessage | ::_fl::kTvTable)},
+      // .pandora.common.v1.CurrencyAmount earned = 5 [json_name = "earned"];
+      {PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.earned_), _Internal::kHasBitsOffset + 1, 1, (0 | ::_fl::kFcOptional | ::_fl::kMessage | ::_fl::kTvTable)},
+    }},
+    {{
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
+    }},
+    {{
+    }},
+  };
+}
+
+
+inline constexpr SellItemResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    ::_pbi::ConstantInitialized) noexcept
+      : _cached_size_{0},
+        balance_{nullptr},
+        earned_{nullptr},
+        remaining_{::int64_t{0}},
+        code_{static_cast< ::pandora::common::v1::ErrCode >(0)} {}
+
+template <typename>
+constexpr SellItemResponse::SellItemResponse(::_pbi::ConstantInitialized,
+                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
+    : ::google::protobuf::Message(
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          class_data
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          ),
+      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
+}
+inline void* PROTOBUF_NONNULL SellItemResponse::PlacementNew_(
+    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
+  return ::new (mem) SellItemResponse(arena);
+}
+constexpr auto SellItemResponse::InternalNewImpl_() {
+  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(SellItemResponse), alignof(SellItemResponse));
+}
+constexpr auto SellItemResponse::InternalGenerateClassData_(
+    const MessageLite& prototype,
+    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
+  return ::google::protobuf::internal::ClassDataFull{
+      ::google::protobuf::internal::ClassData{
+          &prototype,
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+          &_table_.header,
+#else
+          tc_table,
+#endif
+          nullptr,  // IsInitialized
+          &SellItemResponse::MergeImpl,
+          ::google::protobuf::Message::GetNewImpl<SellItemResponse>(),
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          &SellItemResponse::SharedDtor,
+          ::google::protobuf::Message::GetClearImpl<SellItemResponse>(), &SellItemResponse::ByteSizeLong,
+              &SellItemResponse::_InternalSerialize,
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_._cached_size_),
+          false,
+      },
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+      &file_reflection_data[22],
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+      &::_pbi::kDescriptorMethods,
+      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
+      nullptr,  // tracker
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  };
+}
+struct SellItemResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
+  constexpr SellItemResponseGlobalsTypeInternal()
+      :
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+        _default(::_pbi::ConstantInitialized{},
+                 SellItemResponse_class_data_.base())
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+        MessageGlobalsBase(SellItemResponse::InternalGenerateClassData_(
+            _default, &SellItemResponse_globals_._table.header)),
+        _default(::_pbi::ConstantInitialized{}, GetClassData()),
+        _table(::_pbi::PrivateAccess::GenerateParseTable<SellItemResponse>(
+            GetClassData()))
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  {
+  }
+  ~SellItemResponseGlobalsTypeInternal() {}
+  union {
+    alignas(::_pbi::kMaxMessageAlignment) SellItemResponse _default;
+  };
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  decltype(::_pbi::PrivateAccess::GenerateParseTable<SellItemResponse>(
+      ::std::declval<const ::_pbi::ClassData*>())) _table;
+#endif
+};
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+static_assert(PROTOBUF_FIELD_OFFSET(SellItemResponseGlobalsTypeInternal, _default) ==
+              ::_pbi::MessageGlobalsBase::OffsetToDefault());
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
+    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST SellItemResponseGlobalsTypeInternal SellItemResponse_globals_
+        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+namespace {
+const ::_pbi::ClassData* SellItemResponse_get_class_data() {
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  return SellItemResponse_globals_.GetClassData();
+#else
+  return SellItemResponse_class_data_.base();
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+}
+}  // namespace
+#endif  // PROTOBUF_CUSTOM_VTABLE
+class SellInstanceResponse::_Internal {
+ public:
+  using HasBits = decltype(::std::declval<SellInstanceResponse>()._impl_._has_bits_);
+  static constexpr ::int32_t kHasBitsOffset =
+      8 * PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_._has_bits_);
+};
+
+constexpr SellInstanceResponse::ParseTableT_ SellInstanceResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
+  return ParseTableT_{
+    {
+      PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_._has_bits_),
+      0, // no _extensions_
+      4, 24,  // max_field_number, fast_idx_mask
+      offsetof(ParseTableT_, field_lookup_table),
+      4294967282,  // skipmap
+      offsetof(ParseTableT_, field_entries),
+      3,  // num_field_entries
+      2,  // num_aux_entries
+      offsetof(ParseTableT_, aux_entries),
+      class_data,
+      nullptr,  // post_loop_handler
+      ::_pbi::TcParser::GenericFallback,  // fallback
+      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
+      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::SellInstanceResponse>(),  // to_prefetch
+      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
+    }, {{
+      // .pandora.common.v1.CurrencyAmount earned = 4 [json_name = "earned"];
+      {::_pbi::TcParser::FastMtS1,
+       {34, 1, 1,
+        PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.earned_)}},
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(SellInstanceResponse, _impl_.code_), 2>(),
+       {8, 2, 0,
+        PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.code_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.CurrencyAmount balance = 3 [json_name = "balance"];
+      {::_pbi::TcParser::FastMtS1,
+       {26, 0, 0,
+        PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.balance_)}},
+    }}, {{
+      65535, 65535
+    }}, {{
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.code_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      // .pandora.common.v1.CurrencyAmount balance = 3 [json_name = "balance"];
+      {PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.balance_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kMessage | ::_fl::kTvTable)},
+      // .pandora.common.v1.CurrencyAmount earned = 4 [json_name = "earned"];
+      {PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.earned_), _Internal::kHasBitsOffset + 1, 1, (0 | ::_fl::kFcOptional | ::_fl::kMessage | ::_fl::kTvTable)},
+    }},
+    {{
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
+    }},
+    {{
+    }},
+  };
+}
+
+
+inline constexpr SellInstanceResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    ::_pbi::ConstantInitialized) noexcept
+      : _cached_size_{0},
+        balance_{nullptr},
+        earned_{nullptr},
+        code_{static_cast< ::pandora::common::v1::ErrCode >(0)} {}
+
+template <typename>
+constexpr SellInstanceResponse::SellInstanceResponse(::_pbi::ConstantInitialized,
+                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
+    : ::google::protobuf::Message(
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          class_data
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          ),
+      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
+}
+inline void* PROTOBUF_NONNULL SellInstanceResponse::PlacementNew_(
+    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
+  return ::new (mem) SellInstanceResponse(arena);
+}
+constexpr auto SellInstanceResponse::InternalNewImpl_() {
+  return ::google::protobuf::internal::MessageCreator::ZeroInit(sizeof(SellInstanceResponse), alignof(SellInstanceResponse));
+}
+constexpr auto SellInstanceResponse::InternalGenerateClassData_(
+    const MessageLite& prototype,
+    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
+  return ::google::protobuf::internal::ClassDataFull{
+      ::google::protobuf::internal::ClassData{
+          &prototype,
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+          &_table_.header,
+#else
+          tc_table,
+#endif
+          nullptr,  // IsInitialized
+          &SellInstanceResponse::MergeImpl,
+          ::google::protobuf::Message::GetNewImpl<SellInstanceResponse>(),
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          &SellInstanceResponse::SharedDtor,
+          ::google::protobuf::Message::GetClearImpl<SellInstanceResponse>(), &SellInstanceResponse::ByteSizeLong,
+              &SellInstanceResponse::_InternalSerialize,
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_._cached_size_),
+          false,
+      },
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+      &file_reflection_data[44],
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+      &::_pbi::kDescriptorMethods,
+      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
+      nullptr,  // tracker
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  };
+}
+struct SellInstanceResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
+  constexpr SellInstanceResponseGlobalsTypeInternal()
+      :
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+        _default(::_pbi::ConstantInitialized{},
+                 SellInstanceResponse_class_data_.base())
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+        MessageGlobalsBase(SellInstanceResponse::InternalGenerateClassData_(
+            _default, &SellInstanceResponse_globals_._table.header)),
+        _default(::_pbi::ConstantInitialized{}, GetClassData()),
+        _table(::_pbi::PrivateAccess::GenerateParseTable<SellInstanceResponse>(
+            GetClassData()))
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  {
+  }
+  ~SellInstanceResponseGlobalsTypeInternal() {}
+  union {
+    alignas(::_pbi::kMaxMessageAlignment) SellInstanceResponse _default;
+  };
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  decltype(::_pbi::PrivateAccess::GenerateParseTable<SellInstanceResponse>(
+      ::std::declval<const ::_pbi::ClassData*>())) _table;
+#endif
+};
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+static_assert(PROTOBUF_FIELD_OFFSET(SellInstanceResponseGlobalsTypeInternal, _default) ==
+              ::_pbi::MessageGlobalsBase::OffsetToDefault());
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
+    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST SellInstanceResponseGlobalsTypeInternal SellInstanceResponse_globals_
+        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+namespace {
+const ::_pbi::ClassData* SellInstanceResponse_get_class_data() {
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  return SellInstanceResponse_globals_.GetClassData();
+#else
+  return SellInstanceResponse_class_data_.base();
 #endif  // PROTOBUF_MESSAGE_GLOBALS
 }
 }  // namespace
@@ -7105,6 +7528,166 @@ const ::_pbi::ClassData* ItemInstance_get_class_data() {
 }
 }  // namespace
 #endif  // PROTOBUF_CUSTOM_VTABLE
+class GrantItemsResponse::_Internal {
+ public:
+  using HasBits = decltype(::std::declval<GrantItemsResponse>()._impl_._has_bits_);
+  static constexpr ::int32_t kHasBitsOffset =
+      8 * PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_._has_bits_);
+};
+
+constexpr GrantItemsResponse::ParseTableT_ GrantItemsResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
+  return ParseTableT_{
+    {
+      PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_._has_bits_),
+      0, // no _extensions_
+      3, 24,  // max_field_number, fast_idx_mask
+      offsetof(ParseTableT_, field_lookup_table),
+      4294967290,  // skipmap
+      offsetof(ParseTableT_, field_entries),
+      2,  // num_field_entries
+      1,  // num_aux_entries
+      offsetof(ParseTableT_, aux_entries),
+      class_data,
+      nullptr,  // post_loop_handler
+      ::_pbi::TcParser::GenericFallback,  // fallback
+      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
+      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::GrantItemsResponse>(),  // to_prefetch
+      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
+    }, {{
+      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(GrantItemsResponse, _impl_.code_), 1>(),
+       {8, 1, 0,
+        PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.code_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      // repeated .pandora.common.v1.CurrencyAmount currencies = 3 [json_name = "currencies"];
+      {::_pbi::TcParser::FastMtR1,
+       {26, 0, 0,
+        PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.currencies_)}},
+    }}, {{
+      65535, 65535
+    }}, {{
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.code_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      // repeated .pandora.common.v1.CurrencyAmount currencies = 3 [json_name = "currencies"];
+      {PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.currencies_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
+    }},
+    {{
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
+    }},
+    {{
+    }},
+  };
+}
+
+
+inline constexpr GrantItemsResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    ::_pbi::ConstantInitialized) noexcept
+      : _cached_size_{0},
+        currencies_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::GrantItemsResponse,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsResponse, _impl_.currencies_)>()
+         }
+        ,
+        code_{static_cast< ::pandora::common::v1::ErrCode >(0)} {}
+
+template <typename>
+constexpr GrantItemsResponse::GrantItemsResponse(::_pbi::ConstantInitialized,
+                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
+    : ::google::protobuf::Message(
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          class_data
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          ),
+      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
+}
+inline void* PROTOBUF_NONNULL GrantItemsResponse::PlacementNew_(
+    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
+  return ::new (mem) GrantItemsResponse(arena);
+}
+constexpr auto GrantItemsResponse::InternalNewImpl_() {
+  return ::google::protobuf::internal::MessageCreator::CopyInit(sizeof(GrantItemsResponse), alignof(GrantItemsResponse));
+}
+constexpr auto GrantItemsResponse::InternalGenerateClassData_(
+    const MessageLite& prototype,
+    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
+  return ::google::protobuf::internal::ClassDataFull{
+      ::google::protobuf::internal::ClassData{
+          &prototype,
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+          &_table_.header,
+#else
+          tc_table,
+#endif
+          nullptr,  // IsInitialized
+          &GrantItemsResponse::MergeImpl,
+          ::google::protobuf::Message::GetNewImpl<GrantItemsResponse>(),
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          &GrantItemsResponse::SharedDtor,
+          ::google::protobuf::Message::GetClearImpl<GrantItemsResponse>(), &GrantItemsResponse::ByteSizeLong,
+              &GrantItemsResponse::_InternalSerialize,
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_._cached_size_),
+          false,
+      },
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+      &file_reflection_data[9],
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+      &::_pbi::kDescriptorMethods,
+      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
+      nullptr,  // tracker
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  };
+}
+struct GrantItemsResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
+  constexpr GrantItemsResponseGlobalsTypeInternal()
+      :
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+        _default(::_pbi::ConstantInitialized{},
+                 GrantItemsResponse_class_data_.base())
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+        MessageGlobalsBase(GrantItemsResponse::InternalGenerateClassData_(
+            _default, &GrantItemsResponse_globals_._table.header)),
+        _default(::_pbi::ConstantInitialized{}, GetClassData()),
+        _table(::_pbi::PrivateAccess::GenerateParseTable<GrantItemsResponse>(
+            GetClassData()))
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  {
+  }
+  ~GrantItemsResponseGlobalsTypeInternal() {}
+  union {
+    alignas(::_pbi::kMaxMessageAlignment) GrantItemsResponse _default;
+  };
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  decltype(::_pbi::PrivateAccess::GenerateParseTable<GrantItemsResponse>(
+      ::std::declval<const ::_pbi::ClassData*>())) _table;
+#endif
+};
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+static_assert(PROTOBUF_FIELD_OFFSET(GrantItemsResponseGlobalsTypeInternal, _default) ==
+              ::_pbi::MessageGlobalsBase::OffsetToDefault());
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
+    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST GrantItemsResponseGlobalsTypeInternal GrantItemsResponse_globals_
+        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+namespace {
+const ::_pbi::ClassData* GrantItemsResponse_get_class_data() {
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  return GrantItemsResponse_globals_.GetClassData();
+#else
+  return GrantItemsResponse_class_data_.base();
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+}
+}  // namespace
+#endif  // PROTOBUF_CUSTOM_VTABLE
 class GrantItemsRequest::_Internal {
  public:
   using HasBits = decltype(::std::declval<GrantItemsRequest>()._impl_._has_bits_);
@@ -7117,12 +7700,12 @@ constexpr GrantItemsRequest::ParseTableT_ GrantItemsRequest::InternalGeneratePar
     {
       PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_._has_bits_),
       0, // no _extensions_
-      4, 24,  // max_field_number, fast_idx_mask
+      5, 56,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967280,  // skipmap
+      4294967268,  // skipmap
       offsetof(ParseTableT_, field_entries),
       4,  // num_field_entries
-      1,  // num_aux_entries
+      2,  // num_aux_entries
       offsetof(ParseTableT_, aux_entries),
       class_data,
       nullptr,  // post_loop_handler
@@ -7131,33 +7714,37 @@ constexpr GrantItemsRequest::ParseTableT_ GrantItemsRequest::InternalGeneratePar
       ::_pbi::TcParser::GetTable<::pandora::inventory::v1::GrantItemsRequest>(),  // to_prefetch
       #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
     }, {{
-      // string idempotency_key = 4 [json_name = "idempotencyKey"];
-      {::_pbi::TcParser::FastUS1,
-       {34, 1, 0,
-        PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.idempotency_key_)}},
+      {::_pbi::TcParser::MiniParse, {}},
       // uint64 player_id = 1 [json_name = "playerId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(GrantItemsRequest, _impl_.player_id_), 2>(),
-       {8, 2, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(GrantItemsRequest, _impl_.player_id_), 3>(),
+       {8, 3, 0,
         PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.player_id_)}},
       // repeated .pandora.inventory.v1.ItemGrant items = 2 [json_name = "items"];
       {::_pbi::TcParser::FastMtR1,
        {18, 0, 0,
         PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.items_)}},
-      // int64 gold = 3 [json_name = "gold"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(GrantItemsRequest, _impl_.gold_), 3>(),
-       {24, 3, 0,
-        PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.gold_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      // string idempotency_key = 4 [json_name = "idempotencyKey"];
+      {::_pbi::TcParser::FastUS1,
+       {34, 2, 0,
+        PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.idempotency_key_)}},
+      // repeated .pandora.common.v1.CurrencyAmount currencies = 5 [json_name = "currencies"];
+      {::_pbi::TcParser::FastMtR1,
+       {42, 1, 1,
+        PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.currencies_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
     }}, {{
       65535, 65535
     }}, {{
       // uint64 player_id = 1 [json_name = "playerId"];
-      {PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.player_id_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
+      {PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.player_id_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // repeated .pandora.inventory.v1.ItemGrant items = 2 [json_name = "items"];
       {PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.items_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
-      // int64 gold = 3 [json_name = "gold"];
-      {PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.gold_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
       // string idempotency_key = 4 [json_name = "idempotencyKey"];
-      {PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.idempotency_key_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kUtf8String | ::_fl::kRepAString)},
+      {PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.idempotency_key_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUtf8String | ::_fl::kRepAString)},
+      // repeated .pandora.common.v1.CurrencyAmount currencies = 5 [json_name = "currencies"];
+      {PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.currencies_), _Internal::kHasBitsOffset + 1, 1, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
     }},
     {{
         #ifndef PROTOBUF_MESSAGE_GLOBALS
@@ -7165,9 +7752,14 @@ constexpr GrantItemsRequest::ParseTableT_ GrantItemsRequest::InternalGeneratePar
         #else
         {::_pbi::FieldAuxMessageGlobals(), &::pandora::inventory::v1::ItemGrant_globals_},
         #endif
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
     }},
     {{
-      "\46\0\0\0\17\0\0\0"
+      "\46\0\0\17\0\0\0\0"
       "pandora.inventory.v1.GrantItemsRequest"
       "idempotency_key"
     }},
@@ -7184,11 +7776,15 @@ inline constexpr GrantItemsRequest::Impl_::Impl_(
             PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.items_)>()
          }
         ,
+        currencies_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::GrantItemsRequest,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.currencies_)>()
+         }
+        ,
         idempotency_key_(
             &::google::protobuf::internal::fixed_address_empty_string,
             ::_pbi::ConstantInitialized()),
-        player_id_{::uint64_t{0u}},
-        gold_{::int64_t{0}} {}
+        player_id_{::uint64_t{0u}} {}
 
 template <typename>
 constexpr GrantItemsRequest::GrantItemsRequest(::_pbi::ConstantInitialized,
@@ -7278,6 +7874,172 @@ const ::_pbi::ClassData* GrantItemsRequest_get_class_data() {
   return GrantItemsRequest_globals_.GetClassData();
 #else
   return GrantItemsRequest_class_data_.base();
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+}
+}  // namespace
+#endif  // PROTOBUF_CUSTOM_VTABLE
+class GetShopResponse::_Internal {
+ public:
+  using HasBits = decltype(::std::declval<GetShopResponse>()._impl_._has_bits_);
+  static constexpr ::int32_t kHasBitsOffset =
+      8 * PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_._has_bits_);
+};
+
+constexpr GetShopResponse::ParseTableT_ GetShopResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
+  return ParseTableT_{
+    {
+      PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_._has_bits_),
+      0, // no _extensions_
+      3, 24,  // max_field_number, fast_idx_mask
+      offsetof(ParseTableT_, field_lookup_table),
+      4294967288,  // skipmap
+      offsetof(ParseTableT_, field_entries),
+      3,  // num_field_entries
+      1,  // num_aux_entries
+      offsetof(ParseTableT_, aux_entries),
+      class_data,
+      nullptr,  // post_loop_handler
+      ::_pbi::TcParser::GenericFallback,  // fallback
+      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
+      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::GetShopResponse>(),  // to_prefetch
+      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
+    }, {{
+      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(GetShopResponse, _impl_.code_), 1>(),
+       {8, 1, 0,
+        PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_.code_)}},
+      // uint32 shop_id = 2 [json_name = "shopId"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(GetShopResponse, _impl_.shop_id_), 2>(),
+       {16, 2, 0,
+        PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_.shop_id_)}},
+      // repeated .pandora.inventory.v1.ShopEntry entries = 3 [json_name = "entries"];
+      {::_pbi::TcParser::FastMtR1,
+       {26, 0, 0,
+        PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_.entries_)}},
+    }}, {{
+      65535, 65535
+    }}, {{
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_.code_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      // uint32 shop_id = 2 [json_name = "shopId"];
+      {PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_.shop_id_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
+      // repeated .pandora.inventory.v1.ShopEntry entries = 3 [json_name = "entries"];
+      {PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_.entries_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
+    }},
+    {{
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::inventory::v1::ShopEntry>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::inventory::v1::ShopEntry_globals_},
+        #endif
+    }},
+    {{
+    }},
+  };
+}
+
+
+inline constexpr GetShopResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    ::_pbi::ConstantInitialized) noexcept
+      : _cached_size_{0},
+        entries_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::GetShopResponse,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GetShopResponse, _impl_.entries_)>()
+         }
+        ,
+        code_{static_cast< ::pandora::common::v1::ErrCode >(0)},
+        shop_id_{0u} {}
+
+template <typename>
+constexpr GetShopResponse::GetShopResponse(::_pbi::ConstantInitialized,
+                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
+    : ::google::protobuf::Message(
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          class_data
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          ),
+      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
+}
+inline void* PROTOBUF_NONNULL GetShopResponse::PlacementNew_(
+    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
+  return ::new (mem) GetShopResponse(arena);
+}
+constexpr auto GetShopResponse::InternalNewImpl_() {
+  return ::google::protobuf::internal::MessageCreator::CopyInit(sizeof(GetShopResponse), alignof(GetShopResponse));
+}
+constexpr auto GetShopResponse::InternalGenerateClassData_(
+    const MessageLite& prototype,
+    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
+  return ::google::protobuf::internal::ClassDataFull{
+      ::google::protobuf::internal::ClassData{
+          &prototype,
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+          &_table_.header,
+#else
+          tc_table,
+#endif
+          nullptr,  // IsInitialized
+          &GetShopResponse::MergeImpl,
+          ::google::protobuf::Message::GetNewImpl<GetShopResponse>(),
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          &GetShopResponse::SharedDtor,
+          ::google::protobuf::Message::GetClearImpl<GetShopResponse>(), &GetShopResponse::ByteSizeLong,
+              &GetShopResponse::_InternalSerialize,
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_._cached_size_),
+          false,
+      },
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+      &file_reflection_data[47],
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+      &::_pbi::kDescriptorMethods,
+      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
+      nullptr,  // tracker
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  };
+}
+struct GetShopResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
+  constexpr GetShopResponseGlobalsTypeInternal()
+      :
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+        _default(::_pbi::ConstantInitialized{},
+                 GetShopResponse_class_data_.base())
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+        MessageGlobalsBase(GetShopResponse::InternalGenerateClassData_(
+            _default, &GetShopResponse_globals_._table.header)),
+        _default(::_pbi::ConstantInitialized{}, GetClassData()),
+        _table(::_pbi::PrivateAccess::GenerateParseTable<GetShopResponse>(
+            GetClassData()))
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  {
+  }
+  ~GetShopResponseGlobalsTypeInternal() {}
+  union {
+    alignas(::_pbi::kMaxMessageAlignment) GetShopResponse _default;
+  };
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  decltype(::_pbi::PrivateAccess::GenerateParseTable<GetShopResponse>(
+      ::std::declval<const ::_pbi::ClassData*>())) _table;
+#endif
+};
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+static_assert(PROTOBUF_FIELD_OFFSET(GetShopResponseGlobalsTypeInternal, _default) ==
+              ::_pbi::MessageGlobalsBase::OffsetToDefault());
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
+    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST GetShopResponseGlobalsTypeInternal GetShopResponse_globals_
+        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+namespace {
+const ::_pbi::ClassData* GetShopResponse_get_class_data() {
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  return GetShopResponse_globals_.GetClassData();
+#else
+  return GetShopResponse_class_data_.base();
 #endif  // PROTOBUF_MESSAGE_GLOBALS
 }
 }  // namespace
@@ -7402,7 +8164,7 @@ constexpr auto ClaimTransferInstancesRequest::InternalGenerateClassData_(
           false,
       },
 #ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[48],
+      &file_reflection_data[53],
 #else   // !PROTOBUF_MESSAGE_GLOBALS
       &::_pbi::kDescriptorMethods,
       &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
@@ -7611,6 +8373,207 @@ const ::_pbi::ClassData* CheckInstancesOwnedRequest_get_class_data() {
 }
 }  // namespace
 #endif  // PROTOBUF_CUSTOM_VTABLE
+class PurchaseShopItemResponse::_Internal {
+ public:
+  using HasBits = decltype(::std::declval<PurchaseShopItemResponse>()._impl_._has_bits_);
+  static constexpr ::int32_t kHasBitsOffset =
+      8 * PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_._has_bits_);
+};
+
+constexpr PurchaseShopItemResponse::ParseTableT_ PurchaseShopItemResponse::InternalGenerateParseTable_(const ::_pbi::ClassData* class_data) {
+  return ParseTableT_{
+    {
+      PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_._has_bits_),
+      0, // no _extensions_
+      5, 56,  // max_field_number, fast_idx_mask
+      offsetof(ParseTableT_, field_lookup_table),
+      4294967264,  // skipmap
+      offsetof(ParseTableT_, field_entries),
+      5,  // num_field_entries
+      4,  // num_aux_entries
+      offsetof(ParseTableT_, aux_entries),
+      class_data,
+      nullptr,  // post_loop_handler
+      ::_pbi::TcParser::GenericFallback,  // fallback
+      #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
+      ::_pbi::TcParser::GetTable<::pandora::inventory::v1::PurchaseShopItemResponse>(),  // to_prefetch
+      #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
+    }, {{
+      {::_pbi::TcParser::MiniParse, {}},
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(PurchaseShopItemResponse, _impl_.code_), 4>(),
+       {8, 4, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.code_)}},
+      // .pandora.common.v1.CurrencyAmount balance = 2 [json_name = "balance"];
+      {::_pbi::TcParser::FastMtS1,
+       {18, 2, 0,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.balance_)}},
+      // .pandora.common.v1.CurrencyAmount cost = 3 [json_name = "cost"];
+      {::_pbi::TcParser::FastMtS1,
+       {26, 3, 1,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.cost_)}},
+      // repeated .pandora.inventory.v1.ItemGrant granted_items = 4 [json_name = "grantedItems"];
+      {::_pbi::TcParser::FastMtR1,
+       {34, 0, 2,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.granted_items_)}},
+      // repeated .pandora.inventory.v1.ItemInstance granted_instances = 5 [json_name = "grantedInstances"];
+      {::_pbi::TcParser::FastMtR1,
+       {42, 1, 3,
+        PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.granted_instances_)}},
+      {::_pbi::TcParser::MiniParse, {}},
+      {::_pbi::TcParser::MiniParse, {}},
+    }}, {{
+      65535, 65535
+    }}, {{
+      // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.code_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+      // .pandora.common.v1.CurrencyAmount balance = 2 [json_name = "balance"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.balance_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kMessage | ::_fl::kTvTable)},
+      // .pandora.common.v1.CurrencyAmount cost = 3 [json_name = "cost"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.cost_), _Internal::kHasBitsOffset + 3, 1, (0 | ::_fl::kFcOptional | ::_fl::kMessage | ::_fl::kTvTable)},
+      // repeated .pandora.inventory.v1.ItemGrant granted_items = 4 [json_name = "grantedItems"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.granted_items_), _Internal::kHasBitsOffset + 0, 2, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
+      // repeated .pandora.inventory.v1.ItemInstance granted_instances = 5 [json_name = "grantedInstances"];
+      {PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.granted_instances_), _Internal::kHasBitsOffset + 1, 3, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
+    }},
+    {{
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
+        #endif
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::inventory::v1::ItemGrant>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::inventory::v1::ItemGrant_globals_},
+        #endif
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::inventory::v1::ItemInstance>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::inventory::v1::ItemInstance_globals_},
+        #endif
+    }},
+    {{
+    }},
+  };
+}
+
+
+inline constexpr PurchaseShopItemResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    ::_pbi::ConstantInitialized) noexcept
+      : _cached_size_{0},
+        granted_items_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::PurchaseShopItemResponse,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.granted_items_)>()
+         }
+        ,
+        granted_instances_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::PurchaseShopItemResponse,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.granted_instances_)>()
+         }
+        ,
+        balance_{nullptr},
+        cost_{nullptr},
+        code_{static_cast< ::pandora::common::v1::ErrCode >(0)} {}
+
+template <typename>
+constexpr PurchaseShopItemResponse::PurchaseShopItemResponse(::_pbi::ConstantInitialized,
+                       const ::_pbi::ClassData* PROTOBUF_NONNULL class_data)
+    : ::google::protobuf::Message(
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          class_data
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          ),
+      _impl_(internal_visibility(), ::_pbi::ConstantInitialized()) {
+}
+inline void* PROTOBUF_NONNULL PurchaseShopItemResponse::PlacementNew_(
+    const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena) {
+  return ::new (mem) PurchaseShopItemResponse(arena);
+}
+constexpr auto PurchaseShopItemResponse::InternalNewImpl_() {
+  return ::google::protobuf::internal::MessageCreator::CopyInit(sizeof(PurchaseShopItemResponse), alignof(PurchaseShopItemResponse));
+}
+constexpr auto PurchaseShopItemResponse::InternalGenerateClassData_(
+    const MessageLite& prototype,
+    const ::google::protobuf::internal::TcParseTableBase* tc_table) {
+  return ::google::protobuf::internal::ClassDataFull{
+      ::google::protobuf::internal::ClassData{
+          &prototype,
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+          &_table_.header,
+#else
+          tc_table,
+#endif
+          nullptr,  // IsInitialized
+          &PurchaseShopItemResponse::MergeImpl,
+          ::google::protobuf::Message::GetNewImpl<PurchaseShopItemResponse>(),
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+          &PurchaseShopItemResponse::SharedDtor,
+          ::google::protobuf::Message::GetClearImpl<PurchaseShopItemResponse>(), &PurchaseShopItemResponse::ByteSizeLong,
+              &PurchaseShopItemResponse::_InternalSerialize,
+#endif  // PROTOBUF_CUSTOM_VTABLE
+          PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_._cached_size_),
+          false,
+      },
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+      &file_reflection_data[49],
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+      &::_pbi::kDescriptorMethods,
+      &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
+      nullptr,  // tracker
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  };
+}
+struct PurchaseShopItemResponseGlobalsTypeInternal : ::_pbi::MessageGlobalsBase {
+  constexpr PurchaseShopItemResponseGlobalsTypeInternal()
+      :
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+        _default(::_pbi::ConstantInitialized{},
+                 PurchaseShopItemResponse_class_data_.base())
+#else   // !PROTOBUF_MESSAGE_GLOBALS
+        MessageGlobalsBase(PurchaseShopItemResponse::InternalGenerateClassData_(
+            _default, &PurchaseShopItemResponse_globals_._table.header)),
+        _default(::_pbi::ConstantInitialized{}, GetClassData()),
+        _table(::_pbi::PrivateAccess::GenerateParseTable<PurchaseShopItemResponse>(
+            GetClassData()))
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+  {
+  }
+  ~PurchaseShopItemResponseGlobalsTypeInternal() {}
+  union {
+    alignas(::_pbi::kMaxMessageAlignment) PurchaseShopItemResponse _default;
+  };
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  decltype(::_pbi::PrivateAccess::GenerateParseTable<PurchaseShopItemResponse>(
+      ::std::declval<const ::_pbi::ClassData*>())) _table;
+#endif
+};
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+static_assert(PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponseGlobalsTypeInternal, _default) ==
+              ::_pbi::MessageGlobalsBase::OffsetToDefault());
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
+    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PROTOBUF_MESSAGE_GLOBALS_CONST PurchaseShopItemResponseGlobalsTypeInternal PurchaseShopItemResponse_globals_
+        PROTOBUF_MESSAGE_GLOBALS_SECTION(.data.rel.ro);
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+namespace {
+const ::_pbi::ClassData* PurchaseShopItemResponse_get_class_data() {
+#ifdef PROTOBUF_MESSAGE_GLOBALS
+  return PurchaseShopItemResponse_globals_.GetClassData();
+#else
+  return PurchaseShopItemResponse_class_data_.base();
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+}
+}  // namespace
+#endif  // PROTOBUF_CUSTOM_VTABLE
 class Inventory::_Internal {
  public:
   using HasBits = decltype(::std::declval<Inventory>()._impl_._has_bits_);
@@ -7623,12 +8586,12 @@ constexpr Inventory::ParseTableT_ Inventory::InternalGenerateParseTable_(const :
     {
       PROTOBUF_FIELD_OFFSET(Inventory, _impl_._has_bits_),
       0, // no _extensions_
-      5, 56,  // max_field_number, fast_idx_mask
+      6, 56,  // max_field_number, fast_idx_mask
       offsetof(ParseTableT_, field_lookup_table),
-      4294967264,  // skipmap
+      4294967234,  // skipmap
       offsetof(ParseTableT_, field_entries),
       5,  // num_field_entries
-      2,  // num_aux_entries
+      3,  // num_aux_entries
       offsetof(ParseTableT_, aux_entries),
       class_data,
       nullptr,  // post_loop_handler
@@ -7639,13 +8602,10 @@ constexpr Inventory::ParseTableT_ Inventory::InternalGenerateParseTable_(const :
     }, {{
       {::_pbi::TcParser::MiniParse, {}},
       // uint64 player_id = 1 [json_name = "playerId"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(Inventory, _impl_.player_id_), 2>(),
-       {8, 2, 0,
+      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(Inventory, _impl_.player_id_), 3>(),
+       {8, 3, 0,
         PROTOBUF_FIELD_OFFSET(Inventory, _impl_.player_id_)}},
-      // int64 gold = 2 [json_name = "gold"];
-      {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(Inventory, _impl_.gold_), 3>(),
-       {16, 3, 0,
-        PROTOBUF_FIELD_OFFSET(Inventory, _impl_.gold_)}},
+      {::_pbi::TcParser::MiniParse, {}},
       // repeated .pandora.inventory.v1.ItemStack items = 3 [json_name = "items"];
       {::_pbi::TcParser::FastMtR1,
        {26, 0, 0,
@@ -7658,21 +8618,24 @@ constexpr Inventory::ParseTableT_ Inventory::InternalGenerateParseTable_(const :
       {::_pbi::TcParser::FastMtR1,
        {42, 1, 1,
         PROTOBUF_FIELD_OFFSET(Inventory, _impl_.instances_)}},
-      {::_pbi::TcParser::MiniParse, {}},
+      // repeated .pandora.common.v1.CurrencyAmount currencies = 6 [json_name = "currencies"];
+      {::_pbi::TcParser::FastMtR1,
+       {50, 2, 2,
+        PROTOBUF_FIELD_OFFSET(Inventory, _impl_.currencies_)}},
       {::_pbi::TcParser::MiniParse, {}},
     }}, {{
       65535, 65535
     }}, {{
       // uint64 player_id = 1 [json_name = "playerId"];
-      {PROTOBUF_FIELD_OFFSET(Inventory, _impl_.player_id_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
-      // int64 gold = 2 [json_name = "gold"];
-      {PROTOBUF_FIELD_OFFSET(Inventory, _impl_.gold_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      {PROTOBUF_FIELD_OFFSET(Inventory, _impl_.player_id_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // repeated .pandora.inventory.v1.ItemStack items = 3 [json_name = "items"];
       {PROTOBUF_FIELD_OFFSET(Inventory, _impl_.items_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
       // int32 capacity = 4 [json_name = "capacity"];
       {PROTOBUF_FIELD_OFFSET(Inventory, _impl_.capacity_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt32)},
       // repeated .pandora.inventory.v1.ItemInstance instances = 5 [json_name = "instances"];
       {PROTOBUF_FIELD_OFFSET(Inventory, _impl_.instances_), _Internal::kHasBitsOffset + 1, 1, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
+      // repeated .pandora.common.v1.CurrencyAmount currencies = 6 [json_name = "currencies"];
+      {PROTOBUF_FIELD_OFFSET(Inventory, _impl_.currencies_), _Internal::kHasBitsOffset + 2, 2, (0 | ::_fl::kFcRepeated | ::_fl::kMessage | ::_fl::kTvTable)},
     }},
     {{
         #ifndef PROTOBUF_MESSAGE_GLOBALS
@@ -7684,6 +8647,11 @@ constexpr Inventory::ParseTableT_ Inventory::InternalGenerateParseTable_(const :
         {::_pbi::TcParser::GetTable<::pandora::inventory::v1::ItemInstance>()},
         #else
         {::_pbi::FieldAuxMessageGlobals(), &::pandora::inventory::v1::ItemInstance_globals_},
+        #endif
+        #ifndef PROTOBUF_MESSAGE_GLOBALS
+        {::_pbi::TcParser::GetTable<::pandora::common::v1::CurrencyAmount>()},
+        #else
+        {::_pbi::FieldAuxMessageGlobals(), &::pandora::common::v1::CurrencyAmount_globals_},
         #endif
     }},
     {{
@@ -7706,8 +8674,12 @@ inline constexpr Inventory::Impl_::Impl_(
             PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.instances_)>()
          }
         ,
+        currencies_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::Inventory,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.currencies_)>()
+         }
+        ,
         player_id_{::uint64_t{0u}},
-        gold_{::int64_t{0}},
         capacity_{0} {}
 
 template <typename>
@@ -8221,7 +9193,7 @@ constexpr auto EscrowOutInstancesResponse::InternalGenerateClassData_(
           false,
       },
 #ifdef PROTOBUF_MESSAGE_GLOBALS
-      &file_reflection_data[46],
+      &file_reflection_data[51],
 #else   // !PROTOBUF_MESSAGE_GLOBALS
       &::_pbi::kDescriptorMethods,
       &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto,
@@ -8601,7 +9573,7 @@ const ::_pbi::ClassData* GetInventoryResponse_get_class_data() {
 }  // namespace inventory
 }  // namespace pandora
 static const ::_pb::EnumDescriptor* PROTOBUF_NONNULL
-    file_level_enum_descriptors_pandora_2finventory_2fv1_2finventory_2eproto[2];
+    file_level_enum_descriptors_pandora_2finventory_2fv1_2finventory_2eproto[1];
 static constexpr const ::_pb::ServiceDescriptor* PROTOBUF_NONNULL* PROTOBUF_NULLABLE
     file_level_service_descriptors_pandora_2finventory_2fv1_2finventory_2eproto = nullptr;
 const ::uint32_t
@@ -8625,15 +9597,15 @@ const ::uint32_t
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_._has_bits_),
         8, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.player_id_),
-        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.gold_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.items_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.capacity_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.instances_),
-        2,
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.currencies_),
         3,
         0,
         4,
         1,
+        2,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::ItemAttribute, _impl_._has_bits_),
         5, // hasbit index offset
@@ -8678,17 +9650,17 @@ const ::uint32_t
         7, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.player_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.items_),
-        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.gold_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.idempotency_key_),
-        2,
-        0,
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.currencies_),
         3,
+        0,
+        2,
         1,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsResponse, _impl_._has_bits_),
         5, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsResponse, _impl_.code_),
-        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsResponse, _impl_.gold_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsResponse, _impl_.currencies_),
         1,
         0,
         0x081, // bitmap
@@ -8795,10 +9767,12 @@ const ::uint32_t
         0,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellItemResponse, _impl_._has_bits_),
-        6, // hasbit index offset
+        7, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellItemResponse, _impl_.code_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellItemResponse, _impl_.remaining_),
-        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellItemResponse, _impl_.gold_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellItemResponse, _impl_.balance_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellItemResponse, _impl_.earned_),
+        3,
         2,
         0,
         1,
@@ -8822,7 +9796,7 @@ const ::uint32_t
         0,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettleAuctionMatchRequest, _impl_._has_bits_),
-        11, // hasbit index offset
+        12, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettleAuctionMatchRequest, _impl_.match_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettleAuctionMatchRequest, _impl_.seller_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettleAuctionMatchRequest, _impl_.buyer_id_),
@@ -8831,13 +9805,15 @@ const ::uint32_t
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettleAuctionMatchRequest, _impl_.unit_price_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettleAuctionMatchRequest, _impl_.sell_order_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettleAuctionMatchRequest, _impl_.buy_order_id_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettleAuctionMatchRequest, _impl_.currency_kind_),
         0,
         1,
         2,
-        7,
+        5,
         3,
         4,
-        5,
+        7,
+        8,
         6,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettleAuctionMatchResponse, _impl_._has_bits_),
@@ -8852,13 +9828,13 @@ const ::uint32_t
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettlePlayerTradeRequest, _impl_.buyer_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettlePlayerTradeRequest, _impl_.seller_items_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettlePlayerTradeRequest, _impl_.buyer_items_),
-        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettlePlayerTradeRequest, _impl_.price_),
-        2,
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettlePlayerTradeRequest, _impl_.price_amount_),
         3,
         4,
+        5,
         0,
         1,
-        5,
+        2,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SettlePlayerTradeResponse, _impl_._has_bits_),
         4, // hasbit index offset
@@ -8866,19 +9842,21 @@ const ::uint32_t
         0,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::FreezeForOrderRequest, _impl_._has_bits_),
-        9, // hasbit index offset
+        10, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::FreezeForOrderRequest, _impl_.player_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::FreezeForOrderRequest, _impl_.order_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::FreezeForOrderRequest, _impl_.side_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::FreezeForOrderRequest, _impl_.item_config_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::FreezeForOrderRequest, _impl_.quantity_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::FreezeForOrderRequest, _impl_.unit_price_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::FreezeForOrderRequest, _impl_.currency_kind_),
         0,
         1,
         2,
         3,
         4,
         5,
+        6,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::FreezeForOrderResponse, _impl_._has_bits_),
         4, // hasbit index offset
@@ -8886,19 +9864,21 @@ const ::uint32_t
         0,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EnsureAuctionEscrowRequest, _impl_._has_bits_),
-        9, // hasbit index offset
+        10, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EnsureAuctionEscrowRequest, _impl_.player_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EnsureAuctionEscrowRequest, _impl_.order_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EnsureAuctionEscrowRequest, _impl_.side_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EnsureAuctionEscrowRequest, _impl_.item_config_id_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EnsureAuctionEscrowRequest, _impl_.remaining_quantity_),
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EnsureAuctionEscrowRequest, _impl_.unit_price_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EnsureAuctionEscrowRequest, _impl_.currency_kind_),
         0,
         1,
         2,
         3,
         4,
         5,
+        6,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EnsureAuctionEscrowResponse, _impl_._has_bits_),
         4, // hasbit index offset
@@ -8985,11 +9965,66 @@ const ::uint32_t
         0,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellInstanceResponse, _impl_._has_bits_),
-        5, // hasbit index offset
+        6, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellInstanceResponse, _impl_.code_),
-        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellInstanceResponse, _impl_.gold_),
-        1,
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellInstanceResponse, _impl_.balance_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::SellInstanceResponse, _impl_.earned_),
+        2,
         0,
+        1,
+        0x081, // bitmap
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GetShopRequest, _impl_._has_bits_),
+        4, // hasbit index offset
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GetShopRequest, _impl_.shop_id_),
+        0,
+        0x081, // bitmap
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::ShopEntry, _impl_._has_bits_),
+        8, // hasbit index offset
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::ShopEntry, _impl_.item_config_id_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::ShopEntry, _impl_.count_per_unit_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::ShopEntry, _impl_.currency_kind_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::ShopEntry, _impl_.unit_price_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::ShopEntry, _impl_.sort_order_),
+        0,
+        1,
+        3,
+        2,
+        4,
+        0x081, // bitmap
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GetShopResponse, _impl_._has_bits_),
+        6, // hasbit index offset
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GetShopResponse, _impl_.code_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GetShopResponse, _impl_.shop_id_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GetShopResponse, _impl_.entries_),
+        1,
+        2,
+        0,
+        0x081, // bitmap
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemRequest, _impl_._has_bits_),
+        8, // hasbit index offset
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemRequest, _impl_.player_id_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemRequest, _impl_.shop_id_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemRequest, _impl_.item_config_id_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemRequest, _impl_.unit_count_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemRequest, _impl_.idempotency_key_),
+        1,
+        2,
+        3,
+        4,
+        0,
+        0x081, // bitmap
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_._has_bits_),
+        8, // hasbit index offset
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.code_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.balance_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.cost_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.granted_items_),
+        PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.granted_instances_),
+        4,
+        2,
+        3,
+        0,
+        1,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::EscrowOutInstancesRequest, _impl_._has_bits_),
         7, // hasbit index offset
@@ -9078,37 +10113,42 @@ static const ::_pbi::MigrationSchema
         {168, sizeof(::pandora::inventory::v1::DiscardBattleItemResponse)},
         {175, sizeof(::pandora::inventory::v1::SellItemRequest)},
         {186, sizeof(::pandora::inventory::v1::SellItemResponse)},
-        {195, sizeof(::pandora::inventory::v1::DiscardItemRequest)},
-        {206, sizeof(::pandora::inventory::v1::DiscardItemResponse)},
-        {213, sizeof(::pandora::inventory::v1::SettleAuctionMatchRequest)},
-        {232, sizeof(::pandora::inventory::v1::SettleAuctionMatchResponse)},
-        {237, sizeof(::pandora::inventory::v1::SettlePlayerTradeRequest)},
-        {252, sizeof(::pandora::inventory::v1::SettlePlayerTradeResponse)},
-        {257, sizeof(::pandora::inventory::v1::FreezeForOrderRequest)},
-        {272, sizeof(::pandora::inventory::v1::FreezeForOrderResponse)},
-        {277, sizeof(::pandora::inventory::v1::EnsureAuctionEscrowRequest)},
-        {292, sizeof(::pandora::inventory::v1::EnsureAuctionEscrowResponse)},
-        {297, sizeof(::pandora::inventory::v1::ReleaseEscrowRequest)},
-        {304, sizeof(::pandora::inventory::v1::ReleaseEscrowResponse)},
-        {309, sizeof(::pandora::inventory::v1::GrantInstancesRequest)},
-        {318, sizeof(::pandora::inventory::v1::GrantInstancesResponse)},
-        {325, sizeof(::pandora::inventory::v1::IdentifyItemRequest)},
-        {332, sizeof(::pandora::inventory::v1::IdentifyItemResponse)},
-        {339, sizeof(::pandora::inventory::v1::DiscardInstanceRequest)},
-        {346, sizeof(::pandora::inventory::v1::DiscardInstanceResponse)},
-        {351, sizeof(::pandora::inventory::v1::MoveInstanceRequest)},
-        {360, sizeof(::pandora::inventory::v1::MoveInstanceResponse)},
-        {365, sizeof(::pandora::inventory::v1::SellInstanceRequest)},
-        {376, sizeof(::pandora::inventory::v1::SellInstanceResponse)},
-        {383, sizeof(::pandora::inventory::v1::EscrowOutInstancesRequest)},
-        {394, sizeof(::pandora::inventory::v1::EscrowOutInstancesResponse)},
-        {401, sizeof(::pandora::inventory::v1::TransferClaimItem)},
-        {408, sizeof(::pandora::inventory::v1::ClaimTransferInstancesRequest)},
-        {417, sizeof(::pandora::inventory::v1::ClaimTransferInstancesResponse)},
-        {422, sizeof(::pandora::inventory::v1::ReleaseTransferEscrowRequest)},
-        {427, sizeof(::pandora::inventory::v1::ReleaseTransferEscrowResponse)},
-        {432, sizeof(::pandora::inventory::v1::ConsumeTransferEscrowRequest)},
-        {439, sizeof(::pandora::inventory::v1::ConsumeTransferEscrowResponse)},
+        {197, sizeof(::pandora::inventory::v1::DiscardItemRequest)},
+        {208, sizeof(::pandora::inventory::v1::DiscardItemResponse)},
+        {215, sizeof(::pandora::inventory::v1::SettleAuctionMatchRequest)},
+        {236, sizeof(::pandora::inventory::v1::SettleAuctionMatchResponse)},
+        {241, sizeof(::pandora::inventory::v1::SettlePlayerTradeRequest)},
+        {256, sizeof(::pandora::inventory::v1::SettlePlayerTradeResponse)},
+        {261, sizeof(::pandora::inventory::v1::FreezeForOrderRequest)},
+        {278, sizeof(::pandora::inventory::v1::FreezeForOrderResponse)},
+        {283, sizeof(::pandora::inventory::v1::EnsureAuctionEscrowRequest)},
+        {300, sizeof(::pandora::inventory::v1::EnsureAuctionEscrowResponse)},
+        {305, sizeof(::pandora::inventory::v1::ReleaseEscrowRequest)},
+        {312, sizeof(::pandora::inventory::v1::ReleaseEscrowResponse)},
+        {317, sizeof(::pandora::inventory::v1::GrantInstancesRequest)},
+        {326, sizeof(::pandora::inventory::v1::GrantInstancesResponse)},
+        {333, sizeof(::pandora::inventory::v1::IdentifyItemRequest)},
+        {340, sizeof(::pandora::inventory::v1::IdentifyItemResponse)},
+        {347, sizeof(::pandora::inventory::v1::DiscardInstanceRequest)},
+        {354, sizeof(::pandora::inventory::v1::DiscardInstanceResponse)},
+        {359, sizeof(::pandora::inventory::v1::MoveInstanceRequest)},
+        {368, sizeof(::pandora::inventory::v1::MoveInstanceResponse)},
+        {373, sizeof(::pandora::inventory::v1::SellInstanceRequest)},
+        {384, sizeof(::pandora::inventory::v1::SellInstanceResponse)},
+        {393, sizeof(::pandora::inventory::v1::GetShopRequest)},
+        {398, sizeof(::pandora::inventory::v1::ShopEntry)},
+        {411, sizeof(::pandora::inventory::v1::GetShopResponse)},
+        {420, sizeof(::pandora::inventory::v1::PurchaseShopItemRequest)},
+        {433, sizeof(::pandora::inventory::v1::PurchaseShopItemResponse)},
+        {446, sizeof(::pandora::inventory::v1::EscrowOutInstancesRequest)},
+        {457, sizeof(::pandora::inventory::v1::EscrowOutInstancesResponse)},
+        {464, sizeof(::pandora::inventory::v1::TransferClaimItem)},
+        {471, sizeof(::pandora::inventory::v1::ClaimTransferInstancesRequest)},
+        {480, sizeof(::pandora::inventory::v1::ClaimTransferInstancesResponse)},
+        {485, sizeof(::pandora::inventory::v1::ReleaseTransferEscrowRequest)},
+        {490, sizeof(::pandora::inventory::v1::ReleaseTransferEscrowResponse)},
+        {495, sizeof(::pandora::inventory::v1::ConsumeTransferEscrowRequest)},
+        {502, sizeof(::pandora::inventory::v1::ConsumeTransferEscrowResponse)},
 };
 static const ::_pbi::MessageGlobalsBase* PROTOBUF_NONNULL const
     file_message_globals[] = {
@@ -9157,6 +10197,11 @@ static const ::_pbi::MessageGlobalsBase* PROTOBUF_NONNULL const
         &::pandora::inventory::v1::MoveInstanceResponse_globals_,
         &::pandora::inventory::v1::SellInstanceRequest_globals_,
         &::pandora::inventory::v1::SellInstanceResponse_globals_,
+        &::pandora::inventory::v1::GetShopRequest_globals_,
+        &::pandora::inventory::v1::ShopEntry_globals_,
+        &::pandora::inventory::v1::GetShopResponse_globals_,
+        &::pandora::inventory::v1::PurchaseShopItemRequest_globals_,
+        &::pandora::inventory::v1::PurchaseShopItemResponse_globals_,
         &::pandora::inventory::v1::EscrowOutInstancesRequest_globals_,
         &::pandora::inventory::v1::EscrowOutInstancesResponse_globals_,
         &::pandora::inventory::v1::TransferClaimItem_globals_,
@@ -9171,262 +10216,308 @@ const char descriptor_table_protodef_pandora_2finventory_2fv1_2finventory_2eprot
     protodesc_cold) = {
     "\n$pandora/inventory/v1/inventory.proto\022\024"
     "pandora.inventory.v1\032\037pandora/common/v1/"
-    "errcode.proto\032\030pandora/bag/v1/bag.proto\""
-    "G\n\tItemStack\022$\n\016item_config_id\030\001 \001(\rR\014it"
-    "emConfigId\022\024\n\005count\030\002 \001(\003R\005count\"G\n\tItem"
-    "Grant\022$\n\016item_config_id\030\001 \001(\rR\014itemConfi"
-    "gId\022\024\n\005count\030\002 \001(\003R\005count\"\321\001\n\tInventory\022"
-    "\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\022\n\004gold\030\002 \001"
-    "(\003R\004gold\0225\n\005items\030\003 \003(\0132\037.pandora.invent"
-    "ory.v1.ItemStackR\005items\022\032\n\010capacity\030\004 \001("
-    "\005R\010capacity\022@\n\tinstances\030\005 \003(\0132\".pandora"
-    ".inventory.v1.ItemInstanceR\tinstances\">\n"
-    "\rItemAttribute\022\027\n\007attr_id\030\001 \001(\rR\006attrId\022"
-    "\024\n\005value\030\002 \001(\003R\005value\"j\n#ItemInstanceAtt"
-    "ributesStorageRecord\022C\n\nattributes\030\001 \003(\013"
-    "2#.pandora.inventory.v1.ItemAttributeR\na"
-    "ttributes\"\357\001\n\014ItemInstance\022\037\n\013instance_i"
-    "d\030\001 \001(\004R\ninstanceId\022$\n\016item_config_id\030\002 "
-    "\001(\rR\014itemConfigId\022\036\n\nidentified\030\003 \001(\010R\ni"
-    "dentified\022C\n\nattributes\030\004 \003(\0132#.pandora."
-    "inventory.v1.ItemAttributeR\nattributes\022\035"
-    "\n\nslot_index\030\005 \001(\005R\tslotIndex\022\024\n\005bound\030\006"
-    " \001(\010R\005bound\"2\n\023GetInventoryRequest\022\033\n\tpl"
-    "ayer_id\030\001 \001(\004R\010playerId\"\205\001\n\024GetInventory"
-    "Response\022.\n\004code\030\001 \001(\0162\032.pandora.common."
-    "v1.ErrCodeR\004code\022=\n\tinventory\030\002 \001(\0132\037.pa"
-    "ndora.inventory.v1.InventoryR\tinventory\""
-    "\244\001\n\021GrantItemsRequest\022\033\n\tplayer_id\030\001 \001(\004"
-    "R\010playerId\0225\n\005items\030\002 \003(\0132\037.pandora.inve"
-    "ntory.v1.ItemGrantR\005items\022\022\n\004gold\030\003 \001(\003R"
-    "\004gold\022\'\n\017idempotency_key\030\004 \001(\tR\016idempote"
-    "ncyKey\"X\n\022GrantItemsResponse\022.\n\004code\030\001 \001"
-    "(\0162\032.pandora.common.v1.ErrCodeR\004code\022\022\n\004"
-    "gold\030\002 \001(\003R\004gold\"]\n\026CheckItemsOwnedReque"
-    "st\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022&\n\017item_"
-    "config_ids\030\002 \003(\rR\ritemConfigIds\"|\n\027Check"
-    "ItemsOwnedResponse\022.\n\004code\030\001 \001(\0162\032.pando"
-    "ra.common.v1.ErrCodeR\004code\0221\n\025owned_item"
-    "_config_ids\030\002 \003(\rR\022ownedItemConfigIds\"_\n"
-    "\026InstanceOwnershipQuery\022\037\n\013instance_id\030\001"
-    " \001(\004R\ninstanceId\022$\n\016item_config_id\030\002 \001(\r"
-    "R\014itemConfigId\"\205\001\n\032CheckInstancesOwnedRe"
-    "quest\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022J\n\tin"
-    "stances\030\002 \003(\0132,.pandora.inventory.v1.Ins"
-    "tanceOwnershipQueryR\tinstances\"\310\001\n\033Check"
-    "InstancesOwnedResponse\022.\n\004code\030\001 \001(\0162\032.p"
-    "andora.common.v1.ErrCodeR\004code\022,\n\022owned_"
-    "instance_ids\030\002 \003(\004R\020ownedInstanceIds\022K\n\017"
-    "owned_instances\030\003 \003(\0132\".pandora.inventor"
-    "y.v1.ItemInstanceR\016ownedInstances\"\222\001\n\016Us"
-    "eItemRequest\022\033\n\tplayer_id\030\001 \001(\004R\010playerI"
-    "d\022$\n\016item_config_id\030\002 \001(\rR\014itemConfigId\022"
-    "\024\n\005count\030\003 \001(\003R\005count\022\'\n\017idempotency_key"
-    "\030\004 \001(\tR\016idempotencyKey\"_\n\017UseItemRespons"
-    "e\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrC"
-    "odeR\004code\022\034\n\tremaining\030\002 \001(\003R\tremaining\""
-    "\234\001\n\030ConsumeBattleItemRequest\022\033\n\tplayer_i"
-    "d\030\001 \001(\004R\010playerId\022$\n\016item_config_id\030\002 \001("
-    "\rR\014itemConfigId\022\024\n\005count\030\003 \001(\003R\005count\022\'\n"
-    "\017idempotency_key\030\004 \001(\tR\016idempotencyKey\"i"
-    "\n\031ConsumeBattleItemResponse\022.\n\004code\030\001 \001("
-    "\0162\032.pandora.common.v1.ErrCodeR\004code\022\034\n\tr"
-    "emaining\030\002 \001(\003R\tremaining\"\234\001\n\030DiscardBat"
-    "tleItemRequest\022\033\n\tplayer_id\030\001 \001(\004R\010playe"
-    "rId\022$\n\016item_config_id\030\002 \001(\rR\014itemConfigI"
-    "d\022\024\n\005count\030\003 \001(\003R\005count\022\'\n\017idempotency_k"
-    "ey\030\004 \001(\tR\016idempotencyKey\"i\n\031DiscardBattl"
+    "errcode.proto\032 pandora/common/v1/currenc"
+    "y.proto\032\030pandora/bag/v1/bag.proto\"G\n\tIte"
+    "mStack\022$\n\016item_config_id\030\001 \001(\rR\014itemConf"
+    "igId\022\024\n\005count\030\002 \001(\003R\005count\"G\n\tItemGrant\022"
+    "$\n\016item_config_id\030\001 \001(\rR\014itemConfigId\022\024\n"
+    "\005count\030\002 \001(\003R\005count\"\214\002\n\tInventory\022\033\n\tpla"
+    "yer_id\030\001 \001(\004R\010playerId\0225\n\005items\030\003 \003(\0132\037."
+    "pandora.inventory.v1.ItemStackR\005items\022\032\n"
+    "\010capacity\030\004 \001(\005R\010capacity\022@\n\tinstances\030\005"
+    " \003(\0132\".pandora.inventory.v1.ItemInstance"
+    "R\tinstances\022A\n\ncurrencies\030\006 \003(\0132!.pandor"
+    "a.common.v1.CurrencyAmountR\ncurrenciesJ\004"
+    "\010\002\020\003R\004gold\">\n\rItemAttribute\022\027\n\007attr_id\030\001"
+    " \001(\rR\006attrId\022\024\n\005value\030\002 \001(\003R\005value\"j\n#It"
+    "emInstanceAttributesStorageRecord\022C\n\natt"
+    "ributes\030\001 \003(\0132#.pandora.inventory.v1.Ite"
+    "mAttributeR\nattributes\"\357\001\n\014ItemInstance\022"
+    "\037\n\013instance_id\030\001 \001(\004R\ninstanceId\022$\n\016item"
+    "_config_id\030\002 \001(\rR\014itemConfigId\022\036\n\nidenti"
+    "fied\030\003 \001(\010R\nidentified\022C\n\nattributes\030\004 \003"
+    "(\0132#.pandora.inventory.v1.ItemAttributeR"
+    "\nattributes\022\035\n\nslot_index\030\005 \001(\005R\tslotInd"
+    "ex\022\024\n\005bound\030\006 \001(\010R\005bound\"2\n\023GetInventory"
+    "Request\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\"\205\001\n"
+    "\024GetInventoryResponse\022.\n\004code\030\001 \001(\0162\032.pa"
+    "ndora.common.v1.ErrCodeR\004code\022=\n\tinvento"
+    "ry\030\002 \001(\0132\037.pandora.inventory.v1.Inventor"
+    "yR\tinventory\"\337\001\n\021GrantItemsRequest\022\033\n\tpl"
+    "ayer_id\030\001 \001(\004R\010playerId\0225\n\005items\030\002 \003(\0132\037"
+    ".pandora.inventory.v1.ItemGrantR\005items\022\'"
+    "\n\017idempotency_key\030\004 \001(\tR\016idempotencyKey\022"
+    "A\n\ncurrencies\030\005 \003(\0132!.pandora.common.v1."
+    "CurrencyAmountR\ncurrenciesJ\004\010\003\020\004R\004gold\"\223"
+    "\001\n\022GrantItemsResponse\022.\n\004code\030\001 \001(\0162\032.pa"
+    "ndora.common.v1.ErrCodeR\004code\022A\n\ncurrenc"
+    "ies\030\003 \003(\0132!.pandora.common.v1.CurrencyAm"
+    "ountR\ncurrenciesJ\004\010\002\020\003R\004gold\"]\n\026CheckIte"
+    "msOwnedRequest\022\033\n\tplayer_id\030\001 \001(\004R\010playe"
+    "rId\022&\n\017item_config_ids\030\002 \003(\rR\ritemConfig"
+    "Ids\"|\n\027CheckItemsOwnedResponse\022.\n\004code\030\001"
+    " \001(\0162\032.pandora.common.v1.ErrCodeR\004code\0221"
+    "\n\025owned_item_config_ids\030\002 \003(\rR\022ownedItem"
+    "ConfigIds\"_\n\026InstanceOwnershipQuery\022\037\n\013i"
+    "nstance_id\030\001 \001(\004R\ninstanceId\022$\n\016item_con"
+    "fig_id\030\002 \001(\rR\014itemConfigId\"\205\001\n\032CheckInst"
+    "ancesOwnedRequest\022\033\n\tplayer_id\030\001 \001(\004R\010pl"
+    "ayerId\022J\n\tinstances\030\002 \003(\0132,.pandora.inve"
+    "ntory.v1.InstanceOwnershipQueryR\tinstanc"
+    "es\"\310\001\n\033CheckInstancesOwnedResponse\022.\n\004co"
+    "de\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004co"
+    "de\022,\n\022owned_instance_ids\030\002 \003(\004R\020ownedIns"
+    "tanceIds\022K\n\017owned_instances\030\003 \003(\0132\".pand"
+    "ora.inventory.v1.ItemInstanceR\016ownedInst"
+    "ances\"\222\001\n\016UseItemRequest\022\033\n\tplayer_id\030\001 "
+    "\001(\004R\010playerId\022$\n\016item_config_id\030\002 \001(\rR\014i"
+    "temConfigId\022\024\n\005count\030\003 \001(\003R\005count\022\'\n\017ide"
+    "mpotency_key\030\004 \001(\tR\016idempotencyKey\"_\n\017Us"
     "eItemResponse\022.\n\004code\030\001 \001(\0162\032.pandora.co"
     "mmon.v1.ErrCodeR\004code\022\034\n\tremaining\030\002 \001(\003"
-    "R\tremaining\"\223\001\n\017SellItemRequest\022\033\n\tplaye"
-    "r_id\030\001 \001(\004R\010playerId\022$\n\016item_config_id\030\002"
-    " \001(\rR\014itemConfigId\022\024\n\005count\030\003 \001(\003R\005count"
-    "\022\'\n\017idempotency_key\030\004 \001(\tR\016idempotencyKe"
-    "y\"t\n\020SellItemResponse\022.\n\004code\030\001 \001(\0162\032.pa"
-    "ndora.common.v1.ErrCodeR\004code\022\034\n\tremaini"
-    "ng\030\002 \001(\003R\tremaining\022\022\n\004gold\030\003 \001(\003R\004gold\""
-    "\226\001\n\022DiscardItemRequest\022\033\n\tplayer_id\030\001 \001("
-    "\004R\010playerId\022$\n\016item_config_id\030\002 \001(\rR\014ite"
-    "mConfigId\022\024\n\005count\030\003 \001(\003R\005count\022\'\n\017idemp"
-    "otency_key\030\004 \001(\tR\016idempotencyKey\"c\n\023Disc"
-    "ardItemResponse\022.\n\004code\030\001 \001(\0162\032.pandora."
-    "common.v1.ErrCodeR\004code\022\034\n\tremaining\030\002 \001"
-    "(\003R\tremaining\"\225\002\n\031SettleAuctionMatchRequ"
-    "est\022\031\n\010match_id\030\001 \001(\004R\007matchId\022\033\n\tseller"
-    "_id\030\002 \001(\004R\010sellerId\022\031\n\010buyer_id\030\003 \001(\004R\007b"
-    "uyerId\022$\n\016item_config_id\030\004 \001(\rR\014itemConf"
-    "igId\022\032\n\010quantity\030\005 \001(\003R\010quantity\022\035\n\nunit"
-    "_price\030\006 \001(\003R\tunitPrice\022\"\n\rsell_order_id"
-    "\030\007 \001(\004R\013sellOrderId\022 \n\014buy_order_id\030\010 \001("
-    "\004R\nbuyOrderId\"L\n\032SettleAuctionMatchRespo"
-    "nse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.Er"
-    "rCodeR\004code\"\211\002\n\030SettlePlayerTradeRequest"
-    "\022\031\n\010order_id\030\001 \001(\004R\007orderId\022\033\n\tseller_id"
-    "\030\002 \001(\004R\010sellerId\022\031\n\010buyer_id\030\003 \001(\004R\007buye"
-    "rId\022B\n\014seller_items\030\004 \003(\0132\037.pandora.inve"
-    "ntory.v1.ItemGrantR\013sellerItems\022@\n\013buyer"
-    "_items\030\005 \003(\0132\037.pandora.inventory.v1.Item"
-    "GrantR\nbuyerItems\022\024\n\005price\030\006 \001(\003R\005price\""
-    "K\n\031SettlePlayerTradeResponse\022.\n\004code\030\001 \001"
-    "(\0162\032.pandora.common.v1.ErrCodeR\004code\"\346\001\n"
-    "\025FreezeForOrderRequest\022\033\n\tplayer_id\030\001 \001("
-    "\004R\010playerId\022\031\n\010order_id\030\002 \001(\004R\007orderId\0224"
-    "\n\004side\030\003 \001(\0162 .pandora.inventory.v1.Escr"
-    "owSideR\004side\022$\n\016item_config_id\030\004 \001(\rR\014it"
-    "emConfigId\022\032\n\010quantity\030\005 \001(\003R\010quantity\022\035"
-    "\n\nunit_price\030\006 \001(\003R\tunitPrice\"H\n\026FreezeF"
-    "orOrderResponse\022.\n\004code\030\001 \001(\0162\032.pandora."
-    "common.v1.ErrCodeR\004code\"\376\001\n\032EnsureAuctio"
-    "nEscrowRequest\022\033\n\tplayer_id\030\001 \001(\004R\010playe"
-    "rId\022\031\n\010order_id\030\002 \001(\004R\007orderId\0224\n\004side\030\003"
-    " \001(\0162 .pandora.inventory.v1.EscrowSideR\004"
-    "side\022$\n\016item_config_id\030\004 \001(\rR\014itemConfig"
-    "Id\022-\n\022remaining_quantity\030\005 \001(\004R\021remainin"
-    "gQuantity\022\035\n\nunit_price\030\006 \001(\004R\tunitPrice"
-    "\"M\n\033EnsureAuctionEscrowResponse\022.\n\004code\030"
-    "\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004code\""
-    "N\n\024ReleaseEscrowRequest\022\033\n\tplayer_id\030\001 \001"
-    "(\004R\010playerId\022\031\n\010order_id\030\002 \001(\004R\007orderId\""
-    "G\n\025ReleaseEscrowResponse\022.\n\004code\030\001 \001(\0162\032"
-    ".pandora.common.v1.ErrCodeR\004code\"\205\001\n\025Gra"
-    "ntInstancesRequest\022\033\n\tplayer_id\030\001 \001(\004R\010p"
-    "layerId\022&\n\017item_config_ids\030\002 \003(\rR\ritemCo"
-    "nfigIds\022\'\n\017idempotency_key\030\003 \001(\tR\016idempo"
-    "tencyKey\"\212\001\n\026GrantInstancesResponse\022.\n\004c"
-    "ode\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004c"
-    "ode\022@\n\tinstances\030\002 \003(\0132\".pandora.invento"
-    "ry.v1.ItemInstanceR\tinstances\"S\n\023Identif"
-    "yItemRequest\022\033\n\tplayer_id\030\001 \001(\004R\010playerI"
-    "d\022\037\n\013instance_id\030\002 \001(\004R\ninstanceId\"\206\001\n\024I"
-    "dentifyItemResponse\022.\n\004code\030\001 \001(\0162\032.pand"
-    "ora.common.v1.ErrCodeR\004code\022>\n\010instance\030"
-    "\002 \001(\0132\".pandora.inventory.v1.ItemInstanc"
-    "eR\010instance\"V\n\026DiscardInstanceRequest\022\033\n"
-    "\tplayer_id\030\001 \001(\004R\010playerId\022\037\n\013instance_i"
-    "d\030\002 \001(\004R\ninstanceId\"I\n\027DiscardInstanceRe"
-    "sponse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1"
-    ".ErrCodeR\004code\"w\n\023MoveInstanceRequest\022\033\n"
-    "\tplayer_id\030\001 \001(\004R\010playerId\022\037\n\013instance_i"
-    "d\030\002 \001(\004R\ninstanceId\022\"\n\rto_slot_index\030\003 \001"
-    "(\005R\013toSlotIndex\"F\n\024MoveInstanceResponse\022"
+    "R\tremaining\"\234\001\n\030ConsumeBattleItemRequest"
+    "\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022$\n\016item_co"
+    "nfig_id\030\002 \001(\rR\014itemConfigId\022\024\n\005count\030\003 \001"
+    "(\003R\005count\022\'\n\017idempotency_key\030\004 \001(\tR\016idem"
+    "potencyKey\"i\n\031ConsumeBattleItemResponse\022"
     ".\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCod"
-    "eR\004code\"\242\001\n\023SellInstanceRequest\022\033\n\tplaye"
-    "r_id\030\001 \001(\004R\010playerId\022\037\n\013instance_id\030\002 \001("
-    "\004R\ninstanceId\022$\n\016item_config_id\030\003 \001(\rR\014i"
-    "temConfigId\022\'\n\017idempotency_key\030\004 \001(\tR\016id"
-    "empotencyKey\"Z\n\024SellInstanceResponse\022.\n\004"
-    "code\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004"
-    "code\022\022\n\004gold\030\002 \001(\003R\004gold\"\251\001\n\031EscrowOutIn"
-    "stancesRequest\022(\n\020source_player_id\030\001 \001(\004"
-    "R\016sourcePlayerId\022 \n\014to_player_id\030\002 \001(\004R\n"
-    "toPlayerId\022!\n\014instance_ids\030\003 \003(\004R\013instan"
-    "ceIds\022\035\n\nescrow_key\030\004 \001(\tR\tescrowKey\"{\n\032"
-    "EscrowOutInstancesResponse\022.\n\004code\030\001 \001(\016"
-    "2\032.pandora.common.v1.ErrCodeR\004code\022-\n\005it"
-    "ems\030\002 \003(\0132\027.pandora.bag.v1.BagItemR\005item"
-    "s\"Z\n\021TransferClaimItem\022\037\n\013instance_id\030\001 "
-    "\001(\004R\ninstanceId\022$\n\016item_config_id\030\002 \001(\rR"
-    "\014itemConfigId\"\251\001\n\035ClaimTransferInstances"
-    "Request\022 \n\014to_player_id\030\001 \001(\004R\ntoPlayerI"
-    "d\022=\n\005items\030\002 \003(\0132\'.pandora.inventory.v1."
-    "TransferClaimItemR\005items\022\'\n\017idempotency_"
-    "key\030\003 \001(\tR\016idempotencyKey\"P\n\036ClaimTransf"
-    "erInstancesResponse\022.\n\004code\030\001 \001(\0162\032.pand"
-    "ora.common.v1.ErrCodeR\004code\"A\n\034ReleaseTr"
-    "ansferEscrowRequest\022!\n\014instance_ids\030\001 \003("
-    "\004R\013instanceIds\"O\n\035ReleaseTransferEscrowR"
-    "esponse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v"
-    "1.ErrCodeR\004code\"c\n\034ConsumeTransferEscrow"
-    "Request\022 \n\014to_player_id\030\001 \001(\004R\ntoPlayerI"
-    "d\022!\n\014instance_ids\030\002 \003(\004R\013instanceIds\"O\n\035"
-    "ConsumeTransferEscrowResponse\022.\n\004code\030\001 "
-    "\001(\0162\032.pandora.common.v1.ErrCodeR\004code*T\n"
-    "\nEscrowSide\022\033\n\027ESCROW_SIDE_UNSPECIFIED\020\000"
-    "\022\024\n\020ESCROW_SIDE_SELL\020\001\022\023\n\017ESCROW_SIDE_BU"
-    "Y\020\002*E\n\014CurrencyKind\022\035\n\031CURRENCY_KIND_UNS"
-    "PECIFIED\020\000\022\026\n\022CURRENCY_KIND_GOLD\020\0012\242\024\n\020I"
-    "nventoryService\022e\n\014GetInventory\022).pandor"
-    "a.inventory.v1.GetInventoryRequest\032*.pan"
-    "dora.inventory.v1.GetInventoryResponse\022_"
-    "\n\nGrantItems\022\'.pandora.inventory.v1.Gran"
-    "tItemsRequest\032(.pandora.inventory.v1.Gra"
-    "ntItemsResponse\022V\n\007UseItem\022$.pandora.inv"
-    "entory.v1.UseItemRequest\032%.pandora.inven"
-    "tory.v1.UseItemResponse\022t\n\021ConsumeBattle"
-    "Item\022..pandora.inventory.v1.ConsumeBattl"
-    "eItemRequest\032/.pandora.inventory.v1.Cons"
-    "umeBattleItemResponse\022t\n\021DiscardBattleIt"
-    "em\022..pandora.inventory.v1.DiscardBattleI"
-    "temRequest\032/.pandora.inventory.v1.Discar"
-    "dBattleItemResponse\022Y\n\010SellItem\022%.pandor"
-    "a.inventory.v1.SellItemRequest\032&.pandora"
-    ".inventory.v1.SellItemResponse\022b\n\013Discar"
-    "dItem\022(.pandora.inventory.v1.DiscardItem"
-    "Request\032).pandora.inventory.v1.DiscardIt"
-    "emResponse\022k\n\016GrantInstances\022+.pandora.i"
-    "nventory.v1.GrantInstancesRequest\032,.pand"
-    "ora.inventory.v1.GrantInstancesResponse\022"
-    "e\n\014IdentifyItem\022).pandora.inventory.v1.I"
-    "dentifyItemRequest\032*.pandora.inventory.v"
-    "1.IdentifyItemResponse\022n\n\017DiscardInstanc"
-    "e\022,.pandora.inventory.v1.DiscardInstance"
-    "Request\032-.pandora.inventory.v1.DiscardIn"
-    "stanceResponse\022e\n\014MoveInstance\022).pandora"
-    ".inventory.v1.MoveInstanceRequest\032*.pand"
-    "ora.inventory.v1.MoveInstanceResponse\022e\n"
-    "\014SellInstance\022).pandora.inventory.v1.Sel"
-    "lInstanceRequest\032*.pandora.inventory.v1."
-    "SellInstanceResponse\022k\n\016FreezeForOrder\022+"
-    ".pandora.inventory.v1.FreezeForOrderRequ"
-    "est\032,.pandora.inventory.v1.FreezeForOrde"
-    "rResponse\022z\n\023EnsureAuctionEscrow\0220.pando"
-    "ra.inventory.v1.EnsureAuctionEscrowReque"
-    "st\0321.pandora.inventory.v1.EnsureAuctionE"
-    "scrowResponse\022w\n\022SettleAuctionMatch\022/.pa"
-    "ndora.inventory.v1.SettleAuctionMatchReq"
-    "uest\0320.pandora.inventory.v1.SettleAuctio"
-    "nMatchResponse\022t\n\021SettlePlayerTrade\022..pa"
-    "ndora.inventory.v1.SettlePlayerTradeRequ"
-    "est\032/.pandora.inventory.v1.SettlePlayerT"
-    "radeResponse\022h\n\rReleaseEscrow\022*.pandora."
-    "inventory.v1.ReleaseEscrowRequest\032+.pand"
-    "ora.inventory.v1.ReleaseEscrowResponse\022w"
-    "\n\022EscrowOutInstances\022/.pandora.inventory"
-    ".v1.EscrowOutInstancesRequest\0320.pandora."
-    "inventory.v1.EscrowOutInstancesResponse\022"
-    "\203\001\n\026ClaimTransferInstances\0223.pandora.inv"
-    "entory.v1.ClaimTransferInstancesRequest\032"
-    "4.pandora.inventory.v1.ClaimTransferInst"
-    "ancesResponse\022\200\001\n\025ReleaseTransferEscrow\022"
-    "2.pandora.inventory.v1.ReleaseTransferEs"
-    "crowRequest\0323.pandora.inventory.v1.Relea"
-    "seTransferEscrowResponse\022\200\001\n\025ConsumeTran"
-    "sferEscrow\0222.pandora.inventory.v1.Consum"
-    "eTransferEscrowRequest\0323.pandora.invento"
-    "ry.v1.ConsumeTransferEscrowResponse\022n\n\017C"
-    "heckItemsOwned\022,.pandora.inventory.v1.Ch"
-    "eckItemsOwnedRequest\032-.pandora.inventory"
-    ".v1.CheckItemsOwnedResponse\022z\n\023CheckInst"
-    "ancesOwned\0220.pandora.inventory.v1.CheckI"
-    "nstancesOwnedRequest\0321.pandora.inventory"
-    ".v1.CheckInstancesOwnedResponseb\006proto3"
+    "eR\004code\022\034\n\tremaining\030\002 \001(\003R\tremaining\"\234\001"
+    "\n\030DiscardBattleItemRequest\022\033\n\tplayer_id\030"
+    "\001 \001(\004R\010playerId\022$\n\016item_config_id\030\002 \001(\rR"
+    "\014itemConfigId\022\024\n\005count\030\003 \001(\003R\005count\022\'\n\017i"
+    "dempotency_key\030\004 \001(\tR\016idempotencyKey\"i\n\031"
+    "DiscardBattleItemResponse\022.\n\004code\030\001 \001(\0162"
+    "\032.pandora.common.v1.ErrCodeR\004code\022\034\n\trem"
+    "aining\030\002 \001(\003R\tremaining\"\223\001\n\017SellItemRequ"
+    "est\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022$\n\016item"
+    "_config_id\030\002 \001(\rR\014itemConfigId\022\024\n\005count\030"
+    "\003 \001(\003R\005count\022\'\n\017idempotency_key\030\004 \001(\tR\016i"
+    "dempotencyKey\"\344\001\n\020SellItemResponse\022.\n\004co"
+    "de\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004co"
+    "de\022\034\n\tremaining\030\002 \001(\003R\tremaining\022;\n\007bala"
+    "nce\030\004 \001(\0132!.pandora.common.v1.CurrencyAm"
+    "ountR\007balance\0229\n\006earned\030\005 \001(\0132!.pandora."
+    "common.v1.CurrencyAmountR\006earnedJ\004\010\003\020\004R\004"
+    "gold\"\226\001\n\022DiscardItemRequest\022\033\n\tplayer_id"
+    "\030\001 \001(\004R\010playerId\022$\n\016item_config_id\030\002 \001(\r"
+    "R\014itemConfigId\022\024\n\005count\030\003 \001(\003R\005count\022\'\n\017"
+    "idempotency_key\030\004 \001(\tR\016idempotencyKey\"c\n"
+    "\023DiscardItemResponse\022.\n\004code\030\001 \001(\0162\032.pan"
+    "dora.common.v1.ErrCodeR\004code\022\034\n\tremainin"
+    "g\030\002 \001(\003R\tremaining\"\333\002\n\031SettleAuctionMatc"
+    "hRequest\022\031\n\010match_id\030\001 \001(\004R\007matchId\022\033\n\ts"
+    "eller_id\030\002 \001(\004R\010sellerId\022\031\n\010buyer_id\030\003 \001"
+    "(\004R\007buyerId\022$\n\016item_config_id\030\004 \001(\rR\014ite"
+    "mConfigId\022\032\n\010quantity\030\005 \001(\003R\010quantity\022\035\n"
+    "\nunit_price\030\006 \001(\004R\tunitPrice\022\"\n\rsell_ord"
+    "er_id\030\007 \001(\004R\013sellOrderId\022 \n\014buy_order_id"
+    "\030\010 \001(\004R\nbuyOrderId\022D\n\rcurrency_kind\030\t \001("
+    "\0162\037.pandora.common.v1.CurrencyKindR\014curr"
+    "encyKind\"L\n\032SettleAuctionMatchResponse\022."
+    "\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrCode"
+    "R\004code\"\306\002\n\030SettlePlayerTradeRequest\022\031\n\010o"
+    "rder_id\030\001 \001(\004R\007orderId\022\033\n\tseller_id\030\002 \001("
+    "\004R\010sellerId\022\031\n\010buyer_id\030\003 \001(\004R\007buyerId\022B"
+    "\n\014seller_items\030\004 \003(\0132\037.pandora.inventory"
+    ".v1.ItemGrantR\013sellerItems\022@\n\013buyer_item"
+    "s\030\005 \003(\0132\037.pandora.inventory.v1.ItemGrant"
+    "R\nbuyerItems\022D\n\014price_amount\030\007 \001(\0132!.pan"
+    "dora.common.v1.CurrencyAmountR\013priceAmou"
+    "ntJ\004\010\006\020\007R\005price\"K\n\031SettlePlayerTradeResp"
+    "onse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.E"
+    "rrCodeR\004code\"\254\002\n\025FreezeForOrderRequest\022\033"
+    "\n\tplayer_id\030\001 \001(\004R\010playerId\022\031\n\010order_id\030"
+    "\002 \001(\004R\007orderId\0224\n\004side\030\003 \001(\0162 .pandora.i"
+    "nventory.v1.EscrowSideR\004side\022$\n\016item_con"
+    "fig_id\030\004 \001(\rR\014itemConfigId\022\032\n\010quantity\030\005"
+    " \001(\003R\010quantity\022\035\n\nunit_price\030\006 \001(\004R\tunit"
+    "Price\022D\n\rcurrency_kind\030\007 \001(\0162\037.pandora.c"
+    "ommon.v1.CurrencyKindR\014currencyKind\"H\n\026F"
+    "reezeForOrderResponse\022.\n\004code\030\001 \001(\0162\032.pa"
+    "ndora.common.v1.ErrCodeR\004code\"\304\002\n\032Ensure"
+    "AuctionEscrowRequest\022\033\n\tplayer_id\030\001 \001(\004R"
+    "\010playerId\022\031\n\010order_id\030\002 \001(\004R\007orderId\0224\n\004"
+    "side\030\003 \001(\0162 .pandora.inventory.v1.Escrow"
+    "SideR\004side\022$\n\016item_config_id\030\004 \001(\rR\014item"
+    "ConfigId\022-\n\022remaining_quantity\030\005 \001(\004R\021re"
+    "mainingQuantity\022\035\n\nunit_price\030\006 \001(\004R\tuni"
+    "tPrice\022D\n\rcurrency_kind\030\007 \001(\0162\037.pandora."
+    "common.v1.CurrencyKindR\014currencyKind\"M\n\033"
+    "EnsureAuctionEscrowResponse\022.\n\004code\030\001 \001("
+    "\0162\032.pandora.common.v1.ErrCodeR\004code\"N\n\024R"
+    "eleaseEscrowRequest\022\033\n\tplayer_id\030\001 \001(\004R\010"
+    "playerId\022\031\n\010order_id\030\002 \001(\004R\007orderId\"G\n\025R"
+    "eleaseEscrowResponse\022.\n\004code\030\001 \001(\0162\032.pan"
+    "dora.common.v1.ErrCodeR\004code\"\205\001\n\025GrantIn"
+    "stancesRequest\022\033\n\tplayer_id\030\001 \001(\004R\010playe"
+    "rId\022&\n\017item_config_ids\030\002 \003(\rR\ritemConfig"
+    "Ids\022\'\n\017idempotency_key\030\003 \001(\tR\016idempotenc"
+    "yKey\"\212\001\n\026GrantInstancesResponse\022.\n\004code\030"
+    "\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004code\022"
+    "@\n\tinstances\030\002 \003(\0132\".pandora.inventory.v"
+    "1.ItemInstanceR\tinstances\"S\n\023IdentifyIte"
+    "mRequest\022\033\n\tplayer_id\030\001 \001(\004R\010playerId\022\037\n"
+    "\013instance_id\030\002 \001(\004R\ninstanceId\"\206\001\n\024Ident"
+    "ifyItemResponse\022.\n\004code\030\001 \001(\0162\032.pandora."
+    "common.v1.ErrCodeR\004code\022>\n\010instance\030\002 \001("
+    "\0132\".pandora.inventory.v1.ItemInstanceR\010i"
+    "nstance\"V\n\026DiscardInstanceRequest\022\033\n\tpla"
+    "yer_id\030\001 \001(\004R\010playerId\022\037\n\013instance_id\030\002 "
+    "\001(\004R\ninstanceId\"I\n\027DiscardInstanceRespon"
+    "se\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.Err"
+    "CodeR\004code\"w\n\023MoveInstanceRequest\022\033\n\tpla"
+    "yer_id\030\001 \001(\004R\010playerId\022\037\n\013instance_id\030\002 "
+    "\001(\004R\ninstanceId\022\"\n\rto_slot_index\030\003 \001(\005R\013"
+    "toSlotIndex\"F\n\024MoveInstanceResponse\022.\n\004c"
+    "ode\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004c"
+    "ode\"\242\001\n\023SellInstanceRequest\022\033\n\tplayer_id"
+    "\030\001 \001(\004R\010playerId\022\037\n\013instance_id\030\002 \001(\004R\ni"
+    "nstanceId\022$\n\016item_config_id\030\003 \001(\rR\014itemC"
+    "onfigId\022\'\n\017idempotency_key\030\004 \001(\tR\016idempo"
+    "tencyKey\"\312\001\n\024SellInstanceResponse\022.\n\004cod"
+    "e\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004cod"
+    "e\022;\n\007balance\030\003 \001(\0132!.pandora.common.v1.C"
+    "urrencyAmountR\007balance\0229\n\006earned\030\004 \001(\0132!"
+    ".pandora.common.v1.CurrencyAmountR\006earne"
+    "dJ\004\010\002\020\003R\004gold\")\n\016GetShopRequest\022\027\n\007shop_"
+    "id\030\001 \001(\rR\006shopId\"\333\001\n\tShopEntry\022$\n\016item_c"
+    "onfig_id\030\001 \001(\rR\014itemConfigId\022$\n\016count_pe"
+    "r_unit\030\002 \001(\rR\014countPerUnit\022D\n\rcurrency_k"
+    "ind\030\003 \001(\0162\037.pandora.common.v1.CurrencyKi"
+    "ndR\014currencyKind\022\035\n\nunit_price\030\004 \001(\004R\tun"
+    "itPrice\022\035\n\nsort_order\030\005 \001(\rR\tsortOrder\"\225"
+    "\001\n\017GetShopResponse\022.\n\004code\030\001 \001(\0162\032.pando"
+    "ra.common.v1.ErrCodeR\004code\022\027\n\007shop_id\030\002 "
+    "\001(\rR\006shopId\0229\n\007entries\030\003 \003(\0132\037.pandora.i"
+    "nventory.v1.ShopEntryR\007entries\"\275\001\n\027Purch"
+    "aseShopItemRequest\022\033\n\tplayer_id\030\001 \001(\004R\010p"
+    "layerId\022\027\n\007shop_id\030\002 \001(\rR\006shopId\022$\n\016item"
+    "_config_id\030\003 \001(\rR\014itemConfigId\022\035\n\nunit_c"
+    "ount\030\004 \001(\rR\tunitCount\022\'\n\017idempotency_key"
+    "\030\005 \001(\tR\016idempotencyKey\"\325\002\n\030PurchaseShopI"
+    "temResponse\022.\n\004code\030\001 \001(\0162\032.pandora.comm"
+    "on.v1.ErrCodeR\004code\022;\n\007balance\030\002 \001(\0132!.p"
+    "andora.common.v1.CurrencyAmountR\007balance"
+    "\0225\n\004cost\030\003 \001(\0132!.pandora.common.v1.Curre"
+    "ncyAmountR\004cost\022D\n\rgranted_items\030\004 \003(\0132\037"
+    ".pandora.inventory.v1.ItemGrantR\014granted"
+    "Items\022O\n\021granted_instances\030\005 \003(\0132\".pando"
+    "ra.inventory.v1.ItemInstanceR\020grantedIns"
+    "tances\"\251\001\n\031EscrowOutInstancesRequest\022(\n\020"
+    "source_player_id\030\001 \001(\004R\016sourcePlayerId\022 "
+    "\n\014to_player_id\030\002 \001(\004R\ntoPlayerId\022!\n\014inst"
+    "ance_ids\030\003 \003(\004R\013instanceIds\022\035\n\nescrow_ke"
+    "y\030\004 \001(\tR\tescrowKey\"{\n\032EscrowOutInstances"
+    "Response\022.\n\004code\030\001 \001(\0162\032.pandora.common."
+    "v1.ErrCodeR\004code\022-\n\005items\030\002 \003(\0132\027.pandor"
+    "a.bag.v1.BagItemR\005items\"Z\n\021TransferClaim"
+    "Item\022\037\n\013instance_id\030\001 \001(\004R\ninstanceId\022$\n"
+    "\016item_config_id\030\002 \001(\rR\014itemConfigId\"\251\001\n\035"
+    "ClaimTransferInstancesRequest\022 \n\014to_play"
+    "er_id\030\001 \001(\004R\ntoPlayerId\022=\n\005items\030\002 \003(\0132\'"
+    ".pandora.inventory.v1.TransferClaimItemR"
+    "\005items\022\'\n\017idempotency_key\030\003 \001(\tR\016idempot"
+    "encyKey\"P\n\036ClaimTransferInstancesRespons"
+    "e\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.ErrC"
+    "odeR\004code\"A\n\034ReleaseTransferEscrowReques"
+    "t\022!\n\014instance_ids\030\001 \003(\004R\013instanceIds\"O\n\035"
+    "ReleaseTransferEscrowResponse\022.\n\004code\030\001 "
+    "\001(\0162\032.pandora.common.v1.ErrCodeR\004code\"c\n"
+    "\034ConsumeTransferEscrowRequest\022 \n\014to_play"
+    "er_id\030\001 \001(\004R\ntoPlayerId\022!\n\014instance_ids\030"
+    "\002 \003(\004R\013instanceIds\"O\n\035ConsumeTransferEsc"
+    "rowResponse\022.\n\004code\030\001 \001(\0162\032.pandora.comm"
+    "on.v1.ErrCodeR\004code*T\n\nEscrowSide\022\033\n\027ESC"
+    "ROW_SIDE_UNSPECIFIED\020\000\022\024\n\020ESCROW_SIDE_SE"
+    "LL\020\001\022\023\n\017ESCROW_SIDE_BUY\020\0022\355\025\n\020InventoryS"
+    "ervice\022e\n\014GetInventory\022).pandora.invento"
+    "ry.v1.GetInventoryRequest\032*.pandora.inve"
+    "ntory.v1.GetInventoryResponse\022_\n\nGrantIt"
+    "ems\022\'.pandora.inventory.v1.GrantItemsReq"
+    "uest\032(.pandora.inventory.v1.GrantItemsRe"
+    "sponse\022V\n\007UseItem\022$.pandora.inventory.v1"
+    ".UseItemRequest\032%.pandora.inventory.v1.U"
+    "seItemResponse\022t\n\021ConsumeBattleItem\022..pa"
+    "ndora.inventory.v1.ConsumeBattleItemRequ"
+    "est\032/.pandora.inventory.v1.ConsumeBattle"
+    "ItemResponse\022t\n\021DiscardBattleItem\022..pand"
+    "ora.inventory.v1.DiscardBattleItemReques"
+    "t\032/.pandora.inventory.v1.DiscardBattleIt"
+    "emResponse\022Y\n\010SellItem\022%.pandora.invento"
+    "ry.v1.SellItemRequest\032&.pandora.inventor"
+    "y.v1.SellItemResponse\022b\n\013DiscardItem\022(.p"
+    "andora.inventory.v1.DiscardItemRequest\032)"
+    ".pandora.inventory.v1.DiscardItemRespons"
+    "e\022k\n\016GrantInstances\022+.pandora.inventory."
+    "v1.GrantInstancesRequest\032,.pandora.inven"
+    "tory.v1.GrantInstancesResponse\022e\n\014Identi"
+    "fyItem\022).pandora.inventory.v1.IdentifyIt"
+    "emRequest\032*.pandora.inventory.v1.Identif"
+    "yItemResponse\022n\n\017DiscardInstance\022,.pando"
+    "ra.inventory.v1.DiscardInstanceRequest\032-"
+    ".pandora.inventory.v1.DiscardInstanceRes"
+    "ponse\022e\n\014MoveInstance\022).pandora.inventor"
+    "y.v1.MoveInstanceRequest\032*.pandora.inven"
+    "tory.v1.MoveInstanceResponse\022e\n\014SellInst"
+    "ance\022).pandora.inventory.v1.SellInstance"
+    "Request\032*.pandora.inventory.v1.SellInsta"
+    "nceResponse\022V\n\007GetShop\022$.pandora.invento"
+    "ry.v1.GetShopRequest\032%.pandora.inventory"
+    ".v1.GetShopResponse\022q\n\020PurchaseShopItem\022"
+    "-.pandora.inventory.v1.PurchaseShopItemR"
+    "equest\032..pandora.inventory.v1.PurchaseSh"
+    "opItemResponse\022k\n\016FreezeForOrder\022+.pando"
+    "ra.inventory.v1.FreezeForOrderRequest\032,."
+    "pandora.inventory.v1.FreezeForOrderRespo"
+    "nse\022z\n\023EnsureAuctionEscrow\0220.pandora.inv"
+    "entory.v1.EnsureAuctionEscrowRequest\0321.p"
+    "andora.inventory.v1.EnsureAuctionEscrowR"
+    "esponse\022w\n\022SettleAuctionMatch\022/.pandora."
+    "inventory.v1.SettleAuctionMatchRequest\0320"
+    ".pandora.inventory.v1.SettleAuctionMatch"
+    "Response\022t\n\021SettlePlayerTrade\022..pandora."
+    "inventory.v1.SettlePlayerTradeRequest\032/."
+    "pandora.inventory.v1.SettlePlayerTradeRe"
+    "sponse\022h\n\rReleaseEscrow\022*.pandora.invent"
+    "ory.v1.ReleaseEscrowRequest\032+.pandora.in"
+    "ventory.v1.ReleaseEscrowResponse\022w\n\022Escr"
+    "owOutInstances\022/.pandora.inventory.v1.Es"
+    "crowOutInstancesRequest\0320.pandora.invent"
+    "ory.v1.EscrowOutInstancesResponse\022\203\001\n\026Cl"
+    "aimTransferInstances\0223.pandora.inventory"
+    ".v1.ClaimTransferInstancesRequest\0324.pand"
+    "ora.inventory.v1.ClaimTransferInstancesR"
+    "esponse\022\200\001\n\025ReleaseTransferEscrow\0222.pand"
+    "ora.inventory.v1.ReleaseTransferEscrowRe"
+    "quest\0323.pandora.inventory.v1.ReleaseTran"
+    "sferEscrowResponse\022\200\001\n\025ConsumeTransferEs"
+    "crow\0222.pandora.inventory.v1.ConsumeTrans"
+    "ferEscrowRequest\0323.pandora.inventory.v1."
+    "ConsumeTransferEscrowResponse\022n\n\017CheckIt"
+    "emsOwned\022,.pandora.inventory.v1.CheckIte"
+    "msOwnedRequest\032-.pandora.inventory.v1.Ch"
+    "eckItemsOwnedResponse\022z\n\023CheckInstancesO"
+    "wned\0220.pandora.inventory.v1.CheckInstanc"
+    "esOwnedRequest\0321.pandora.inventory.v1.Ch"
+    "eckInstancesOwnedResponseb\006proto3"
 };
 static const ::_pbi::DescriptorTable* PROTOBUF_NONNULL const
-    descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto_deps[2] = {
+    descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto_deps[3] = {
         &::descriptor_table_pandora_2fbag_2fv1_2fbag_2eproto,
+        &::descriptor_table_pandora_2fcommon_2fv1_2fcurrency_2eproto,
         &::descriptor_table_pandora_2fcommon_2fv1_2ferrcode_2eproto,
 };
 static ::absl::once_flag descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto_once;
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto = {
     false,
     false,
-    9639,
+    11433,
     descriptor_table_protodef_pandora_2finventory_2fv1_2finventory_2eproto,
     "pandora/inventory/v1/inventory.proto",
     &descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto_once,
     descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto_deps,
-    2,
-    54,
+    3,
+    59,
     schemas,
     file_message_globals,
     TableStruct_pandora_2finventory_2fv1_2finventory_2eproto::offsets,
@@ -9443,13 +10534,6 @@ EscrowSide_descriptor() {
 }
 PROTOBUF_CONSTINIT const uint32_t EscrowSide_internal_data_[] = {
     196608u, 0u, };
-[[nodiscard]] const ::google::protobuf::EnumDescriptor* PROTOBUF_NONNULL
-CurrencyKind_descriptor() {
-  ::google::protobuf::internal::AssignDescriptors(&descriptor_table_pandora_2finventory_2fv1_2finventory_2eproto);
-  return file_level_enum_descriptors_pandora_2finventory_2fv1_2finventory_2eproto[1];
-}
-PROTOBUF_CONSTINIT const uint32_t CurrencyKind_internal_data_[] = {
-    131072u, 0u, };
 // ===================================================================
 
 ItemStack::ItemStack(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
@@ -9908,6 +10992,11 @@ void ItemGrant::InternalSwap(ItemGrant* PROTOBUF_RESTRICT PROTOBUF_NONNULL other
 }
 // ===================================================================
 
+void Inventory::clear_currencies() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currencies_.Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+}
 Inventory::Inventory(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
     : ::google::protobuf::Message(arena, Inventory_get_class_data()) {
@@ -9935,6 +11024,13 @@ PROTOBUF_NDEBUG_INLINE Inventory::Impl_::Impl_(
               ::pandora::inventory::v1::Inventory,
               PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.instances_)>()
           , from.instances_
+        }
+        ,
+        currencies_ {
+          visibility, ::_pbi::InternalMetadataOffset::Build<
+              ::pandora::inventory::v1::Inventory,
+              PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.currencies_)>()
+          , from.currencies_
         }
      {}
 
@@ -9974,6 +11070,11 @@ PROTOBUF_NDEBUG_INLINE Inventory::Impl_::Impl_(
         instances_ { visibility, ::_pbi::InternalMetadataOffset::Build<
             ::pandora::inventory::v1::Inventory,
             PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.instances_)>()
+         }
+        ,
+        currencies_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::Inventory,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::Inventory, _impl_.currencies_)>()
          }
      {}
 
@@ -10034,15 +11135,18 @@ PROTOBUF_NOINLINE void Inventory::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       _impl_.items_.Clear();
     }
     if (CheckHasBit(cached_has_bits, 0x00000002U)) {
       _impl_.instances_.Clear();
     }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      _impl_.currencies_.Clear();
+    }
   }
-  if (BatchCheckHasBit(cached_has_bits, 0x0000001cU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00000018U)) {
     ::memset(&_impl_.player_id_, 0, static_cast<::size_t>(
         reinterpret_cast<char*>(&_impl_.capacity_) -
         reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.capacity_));
@@ -10071,20 +11175,11 @@ PROTOBUF_NOINLINE void Inventory::Clear() {
 
   cached_has_bits = this_._impl_._has_bits_[0];
   // uint64 player_id = 1 [json_name = "playerId"];
-  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
     if (this_._internal_player_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
           1, this_._internal_player_id(), target);
-    }
-  }
-
-  // int64 gold = 2 [json_name = "gold"];
-  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
-    if (this_._internal_gold() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<2>(
-              stream, this_._internal_gold(), target);
     }
   }
 
@@ -10119,6 +11214,19 @@ PROTOBUF_NOINLINE void Inventory::Clear() {
       target =
           ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
               5, repfield, repfield.GetCachedSize(),
+              target, stream);
+    }
+  }
+
+  // repeated .pandora.common.v1.CurrencyAmount currencies = 6 [json_name = "currencies"];
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    for (unsigned i = 0, n = static_cast<unsigned>(
+                             this_._internal_currencies_size());
+         i < n; i++) {
+      const auto& repfield = this_._internal_currencies().Get(i);
+      target =
+          ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+              6, repfield, repfield.GetCachedSize(),
               target, stream);
     }
   }
@@ -10163,18 +11271,18 @@ PROTOBUF_NOINLINE void Inventory::Clear() {
         total_size += ::google::protobuf::internal::WireFormatLite::MessageSize(msg);
       }
     }
-    // uint64 player_id = 1 [json_name = "playerId"];
+    // repeated .pandora.common.v1.CurrencyAmount currencies = 6 [json_name = "currencies"];
     if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      total_size += 1UL * this_._internal_currencies_size();
+      for (const auto& msg : this_._internal_currencies()) {
+        total_size += ::google::protobuf::internal::WireFormatLite::MessageSize(msg);
+      }
+    }
+    // uint64 player_id = 1 [json_name = "playerId"];
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (this_._internal_player_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_player_id());
-      }
-    }
-    // int64 gold = 2 [json_name = "gold"];
-    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
-      if (this_._internal_gold() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
-            this_._internal_gold());
       }
     }
     // int32 capacity = 4 [json_name = "capacity"];
@@ -10215,13 +11323,13 @@ void Inventory::MergeImpl(::google::protobuf::MessageLite& to_msg,
           from._internal_instances());
     }
     if (CheckHasBit(cached_has_bits, 0x00000004U)) {
-      if (from._internal_player_id() != 0) {
-        _this->_impl_.player_id_ = from._impl_.player_id_;
-      }
+      _this->_internal_mutable_currencies()->InternalMergeFromWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), arena,
+          from._internal_currencies());
     }
     if (CheckHasBit(cached_has_bits, 0x00000008U)) {
-      if (from._internal_gold() != 0) {
-        _this->_impl_.gold_ = from._impl_.gold_;
+      if (from._internal_player_id() != 0) {
+        _this->_impl_.player_id_ = from._impl_.player_id_;
       }
     }
     if (CheckHasBit(cached_has_bits, 0x00000010U)) {
@@ -10249,6 +11357,7 @@ void Inventory::InternalSwap(Inventory* PROTOBUF_RESTRICT PROTOBUF_NONNULL other
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   _impl_.items_.InternalSwap(&other->_impl_.items_);
   _impl_.instances_.InternalSwap(&other->_impl_.instances_);
+  _impl_.currencies_.InternalSwap(&other->_impl_.currencies_);
   ::google::protobuf::internal::memswap<
       PROTOBUF_FIELD_OFFSET(Inventory, _impl_.capacity_)
       + sizeof(Inventory::_impl_.capacity_)
@@ -11499,6 +12608,11 @@ void GetInventoryResponse::InternalSwap(GetInventoryResponse* PROTOBUF_RESTRICT 
 }
 // ===================================================================
 
+void GrantItemsRequest::clear_currencies() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currencies_.Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+}
 GrantItemsRequest::GrantItemsRequest(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
     : ::google::protobuf::Message(arena, GrantItemsRequest_get_class_data()) {
@@ -11521,6 +12635,13 @@ PROTOBUF_NDEBUG_INLINE GrantItemsRequest::Impl_::Impl_(
           , from.items_
         }
         ,
+        currencies_ {
+          visibility, ::_pbi::InternalMetadataOffset::Build<
+              ::pandora::inventory::v1::GrantItemsRequest,
+              PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.currencies_)>()
+          , from.currencies_
+        }
+        ,
         idempotency_key_(arena, from.idempotency_key_) {}
 
 GrantItemsRequest::GrantItemsRequest(
@@ -11537,13 +12658,7 @@ GrantItemsRequest::GrantItemsRequest(
   _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
       from._internal_metadata_);
   new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
-  ::memcpy(reinterpret_cast<char*>(&_impl_) +
-               offsetof(Impl_, player_id_),
-           reinterpret_cast<const char*>(&from._impl_) +
-               offsetof(Impl_, player_id_),
-           offsetof(Impl_, gold_) -
-               offsetof(Impl_, player_id_) +
-               sizeof(Impl_::gold_));
+  _impl_.player_id_ = from._impl_.player_id_;
 
   // @@protoc_insertion_point(copy_constructor:pandora.inventory.v1.GrantItemsRequest)
 }
@@ -11556,16 +12671,16 @@ PROTOBUF_NDEBUG_INLINE GrantItemsRequest::Impl_::Impl_(
             PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.items_)>()
          }
         ,
+        currencies_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::GrantItemsRequest,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsRequest, _impl_.currencies_)>()
+         }
+        ,
         idempotency_key_(arena) {}
 
 inline void GrantItemsRequest::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   new (&_impl_) Impl_(internal_visibility(), arena);
-  ::memset(reinterpret_cast<char*>(&_impl_) +
-               offsetof(Impl_, player_id_),
-           0,
-           offsetof(Impl_, gold_) -
-               offsetof(Impl_, player_id_) +
-               sizeof(Impl_::gold_));
+  _impl_.player_id_ = {};
 }
 GrantItemsRequest::~GrantItemsRequest() {
   // @@protoc_insertion_point(destructor:pandora.inventory.v1.GrantItemsRequest)
@@ -11616,19 +12731,18 @@ PROTOBUF_NOINLINE void GrantItemsRequest::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       _impl_.items_.Clear();
     }
     if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      _impl_.currencies_.Clear();
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       _impl_.idempotency_key_.ClearNonDefaultToEmpty();
     }
   }
-  if (BatchCheckHasBit(cached_has_bits, 0x0000000cU)) {
-    ::memset(&_impl_.player_id_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.gold_) -
-        reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.gold_));
-  }
+  _impl_.player_id_ = ::uint64_t{0u};
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
 }
@@ -11653,7 +12767,7 @@ PROTOBUF_NOINLINE void GrantItemsRequest::Clear() {
 
   cached_has_bits = this_._impl_._has_bits_[0];
   // uint64 player_id = 1 [json_name = "playerId"];
-  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
     if (this_._internal_player_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
@@ -11674,22 +12788,26 @@ PROTOBUF_NOINLINE void GrantItemsRequest::Clear() {
     }
   }
 
-  // int64 gold = 3 [json_name = "gold"];
-  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
-    if (this_._internal_gold() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<3>(
-              stream, this_._internal_gold(), target);
-    }
-  }
-
   // string idempotency_key = 4 [json_name = "idempotencyKey"];
-  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
     if (!this_._internal_idempotency_key().empty()) {
       const ::std::string& _s = this_._internal_idempotency_key();
       ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
           _s.data(), static_cast<int>(_s.length()), ::google::protobuf::internal::WireFormatLite::SERIALIZE, "pandora.inventory.v1.GrantItemsRequest.idempotency_key");
       target = stream->WriteStringMaybeAliased(4, _s, target);
+    }
+  }
+
+  // repeated .pandora.common.v1.CurrencyAmount currencies = 5 [json_name = "currencies"];
+  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    for (unsigned i = 0, n = static_cast<unsigned>(
+                             this_._internal_currencies_size());
+         i < n; i++) {
+      const auto& repfield = this_._internal_currencies().Get(i);
+      target =
+          ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+              5, repfield, repfield.GetCachedSize(),
+              target, stream);
     }
   }
 
@@ -11726,25 +12844,25 @@ PROTOBUF_NOINLINE void GrantItemsRequest::Clear() {
         total_size += ::google::protobuf::internal::WireFormatLite::MessageSize(msg);
       }
     }
-    // string idempotency_key = 4 [json_name = "idempotencyKey"];
+    // repeated .pandora.common.v1.CurrencyAmount currencies = 5 [json_name = "currencies"];
     if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      total_size += 1UL * this_._internal_currencies_size();
+      for (const auto& msg : this_._internal_currencies()) {
+        total_size += ::google::protobuf::internal::WireFormatLite::MessageSize(msg);
+      }
+    }
+    // string idempotency_key = 4 [json_name = "idempotencyKey"];
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (!this_._internal_idempotency_key().empty()) {
         total_size += 1 + ::google::protobuf::internal::WireFormatLite::StringSize(
                                         this_._internal_idempotency_key());
       }
     }
     // uint64 player_id = 1 [json_name = "playerId"];
-    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (this_._internal_player_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_player_id());
-      }
-    }
-    // int64 gold = 3 [json_name = "gold"];
-    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
-      if (this_._internal_gold() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
-            this_._internal_gold());
       }
     }
   }
@@ -11773,6 +12891,11 @@ void GrantItemsRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
           from._internal_items());
     }
     if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      _this->_internal_mutable_currencies()->InternalMergeFromWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), arena,
+          from._internal_currencies());
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (!from._internal_idempotency_key().empty()) {
         _this->_internal_set_idempotency_key(from._internal_idempotency_key());
       } else {
@@ -11781,14 +12904,9 @@ void GrantItemsRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
         }
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (from._internal_player_id() != 0) {
         _this->_impl_.player_id_ = from._impl_.player_id_;
-      }
-    }
-    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
-      if (from._internal_gold() != 0) {
-        _this->_impl_.gold_ = from._impl_.gold_;
       }
     }
   }
@@ -11812,13 +12930,9 @@ void GrantItemsRequest::InternalSwap(GrantItemsRequest* PROTOBUF_RESTRICT PROTOB
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   _impl_.items_.InternalSwap(&other->_impl_.items_);
+  _impl_.currencies_.InternalSwap(&other->_impl_.currencies_);
   ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.idempotency_key_, &other->_impl_.idempotency_key_, arena);
-  ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.gold_)
-      + sizeof(GrantItemsRequest::_impl_.gold_)
-      - PROTOBUF_FIELD_OFFSET(GrantItemsRequest, _impl_.player_id_)>(
-          reinterpret_cast<char*>(&_impl_.player_id_),
-          reinterpret_cast<char*>(&other->_impl_.player_id_));
+  swap(_impl_.player_id_, other->_impl_.player_id_);
 }
 
 ::google::protobuf::Metadata GrantItemsRequest::GetMetadata() const {
@@ -11826,6 +12940,11 @@ void GrantItemsRequest::InternalSwap(GrantItemsRequest* PROTOBUF_RESTRICT PROTOB
 }
 // ===================================================================
 
+void GrantItemsResponse::clear_currencies() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currencies_.Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
 GrantItemsResponse::GrantItemsResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
     : ::google::protobuf::Message(arena, GrantItemsResponse_get_class_data()) {
@@ -11835,30 +12954,51 @@ GrantItemsResponse::GrantItemsResponse(::google::protobuf::Arena* PROTOBUF_NULLA
   SharedCtor(arena);
   // @@protoc_insertion_point(arena_constructor:pandora.inventory.v1.GrantItemsResponse)
 }
+PROTOBUF_NDEBUG_INLINE GrantItemsResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+    [[maybe_unused]] const ::pandora::inventory::v1::GrantItemsResponse& from_msg)
+      : _has_bits_{from._has_bits_},
+        _cached_size_{0},
+        currencies_ {
+          visibility, ::_pbi::InternalMetadataOffset::Build<
+              ::pandora::inventory::v1::GrantItemsResponse,
+              PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsResponse, _impl_.currencies_)>()
+          , from.currencies_
+        }
+     {}
+
 GrantItemsResponse::GrantItemsResponse(
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const GrantItemsResponse& from)
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena,
+    const GrantItemsResponse& from)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
-    : ::google::protobuf::Message(arena, GrantItemsResponse_get_class_data()),
+    : ::google::protobuf::Message(arena, GrantItemsResponse_get_class_data()) {
+
 #else   // PROTOBUF_CUSTOM_VTABLE
-    : ::google::protobuf::Message(arena),
+    : ::google::protobuf::Message(arena) {
 #endif  // PROTOBUF_CUSTOM_VTABLE
-      _impl_(from._impl_) {
+  GrantItemsResponse* const _this = this;
+  (void)_this;
   _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
       from._internal_metadata_);
+  new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  _impl_.code_ = from._impl_.code_;
+
+  // @@protoc_insertion_point(copy_constructor:pandora.inventory.v1.GrantItemsResponse)
 }
 PROTOBUF_NDEBUG_INLINE GrantItemsResponse::Impl_::Impl_(
     [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
     [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
-      : _cached_size_{0} {}
+      : _cached_size_{0},
+        currencies_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::GrantItemsResponse,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GrantItemsResponse, _impl_.currencies_)>()
+         }
+     {}
 
 inline void GrantItemsResponse::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   new (&_impl_) Impl_(internal_visibility(), arena);
-  ::memset(reinterpret_cast<char*>(&_impl_) +
-               offsetof(Impl_, gold_),
-           0,
-           offsetof(Impl_, code_) -
-               offsetof(Impl_, gold_) +
-               sizeof(Impl_::code_));
+  _impl_.code_ = {};
 }
 GrantItemsResponse::~GrantItemsResponse() {
   // @@protoc_insertion_point(destructor:pandora.inventory.v1.GrantItemsResponse)
@@ -11908,11 +13048,10 @@ PROTOBUF_NOINLINE void GrantItemsResponse::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
-    ::memset(&_impl_.gold_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.code_) -
-        reinterpret_cast<char*>(&_impl_.gold_)) + sizeof(_impl_.code_));
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    _impl_.currencies_.Clear();
   }
+  _impl_.code_ = 0;
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
 }
@@ -11945,12 +13084,16 @@ PROTOBUF_NOINLINE void GrantItemsResponse::Clear() {
     }
   }
 
-  // int64 gold = 2 [json_name = "gold"];
+  // repeated .pandora.common.v1.CurrencyAmount currencies = 3 [json_name = "currencies"];
   if (CheckHasBit(cached_has_bits, 0x00000001U)) {
-    if (this_._internal_gold() != 0) {
+    for (unsigned i = 0, n = static_cast<unsigned>(
+                             this_._internal_currencies_size());
+         i < n; i++) {
+      const auto& repfield = this_._internal_currencies().Get(i);
       target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<2>(
-              stream, this_._internal_gold(), target);
+          ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+              3, repfield, repfield.GetCachedSize(),
+              target, stream);
     }
   }
 
@@ -11980,11 +13123,11 @@ PROTOBUF_NOINLINE void GrantItemsResponse::Clear() {
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
   if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
-    // int64 gold = 2 [json_name = "gold"];
+    // repeated .pandora.common.v1.CurrencyAmount currencies = 3 [json_name = "currencies"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
-      if (this_._internal_gold() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
-            this_._internal_gold());
+      total_size += 1UL * this_._internal_currencies_size();
+      for (const auto& msg : this_._internal_currencies()) {
+        total_size += ::google::protobuf::internal::WireFormatLite::MessageSize(msg);
       }
     }
     // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
@@ -12006,6 +13149,7 @@ void GrantItemsResponse::MergeImpl(::google::protobuf::MessageLite& to_msg,
   if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
     from.CheckHasBitConsistency();
   }
+  ::google::protobuf::Arena* arena = _this->GetArena();
   // @@protoc_insertion_point(class_specific_merge_from_start:pandora.inventory.v1.GrantItemsResponse)
   ABSL_DCHECK_NE(&from, _this);
   ::uint32_t cached_has_bits = 0;
@@ -12014,9 +13158,9 @@ void GrantItemsResponse::MergeImpl(::google::protobuf::MessageLite& to_msg,
   cached_has_bits = from._impl_._has_bits_[0];
   if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
-      if (from._internal_gold() != 0) {
-        _this->_impl_.gold_ = from._impl_.gold_;
-      }
+      _this->_internal_mutable_currencies()->InternalMergeFromWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), arena,
+          from._internal_currencies());
     }
     if (CheckHasBit(cached_has_bits, 0x00000002U)) {
       if (from._internal_code() != 0) {
@@ -12041,12 +13185,8 @@ void GrantItemsResponse::InternalSwap(GrantItemsResponse* PROTOBUF_RESTRICT PROT
   using ::std::swap;
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
-  ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.code_)
-      + sizeof(GrantItemsResponse::_impl_.code_)
-      - PROTOBUF_FIELD_OFFSET(GrantItemsResponse, _impl_.gold_)>(
-          reinterpret_cast<char*>(&_impl_.gold_),
-          reinterpret_cast<char*>(&other->_impl_.gold_));
+  _impl_.currencies_.InternalSwap(&other->_impl_.currencies_);
+  swap(_impl_.code_, other->_impl_.code_);
 }
 
 ::google::protobuf::Metadata GrantItemsResponse::GetMetadata() const {
@@ -15213,6 +16353,16 @@ void SellItemRequest::InternalSwap(SellItemRequest* PROTOBUF_RESTRICT PROTOBUF_N
 }
 // ===================================================================
 
+void SellItemResponse::clear_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.balance_ != nullptr) _impl_.balance_->Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
+void SellItemResponse::clear_earned() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.earned_ != nullptr) _impl_.earned_->Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+}
 SellItemResponse::SellItemResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
     : ::google::protobuf::Message(arena, SellItemResponse_get_class_data()) {
@@ -15222,16 +16372,43 @@ SellItemResponse::SellItemResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE 
   SharedCtor(arena);
   // @@protoc_insertion_point(arena_constructor:pandora.inventory.v1.SellItemResponse)
 }
+PROTOBUF_NDEBUG_INLINE SellItemResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+    [[maybe_unused]] const ::pandora::inventory::v1::SellItemResponse& from_msg)
+      : _has_bits_{from._has_bits_},
+        _cached_size_{0} {}
+
 SellItemResponse::SellItemResponse(
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const SellItemResponse& from)
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena,
+    const SellItemResponse& from)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
-    : ::google::protobuf::Message(arena, SellItemResponse_get_class_data()),
+    : ::google::protobuf::Message(arena, SellItemResponse_get_class_data()) {
+
 #else   // PROTOBUF_CUSTOM_VTABLE
-    : ::google::protobuf::Message(arena),
+    : ::google::protobuf::Message(arena) {
 #endif  // PROTOBUF_CUSTOM_VTABLE
-      _impl_(from._impl_) {
+  SellItemResponse* const _this = this;
+  (void)_this;
   _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
       from._internal_metadata_);
+  new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  ::uint32_t cached_has_bits = _impl_._has_bits_[0];
+  _impl_.balance_ = (CheckHasBit(cached_has_bits, 0x00000001U))
+                ? ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.balance_)
+                : nullptr;
+  _impl_.earned_ = (CheckHasBit(cached_has_bits, 0x00000002U))
+                ? ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.earned_)
+                : nullptr;
+  ::memcpy(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, remaining_),
+           reinterpret_cast<const char*>(&from._impl_) +
+               offsetof(Impl_, remaining_),
+           offsetof(Impl_, code_) -
+               offsetof(Impl_, remaining_) +
+               sizeof(Impl_::code_));
+
+  // @@protoc_insertion_point(copy_constructor:pandora.inventory.v1.SellItemResponse)
 }
 PROTOBUF_NDEBUG_INLINE SellItemResponse::Impl_::Impl_(
     [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
@@ -15241,10 +16418,10 @@ PROTOBUF_NDEBUG_INLINE SellItemResponse::Impl_::Impl_(
 inline void SellItemResponse::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   new (&_impl_) Impl_(internal_visibility(), arena);
   ::memset(reinterpret_cast<char*>(&_impl_) +
-               offsetof(Impl_, remaining_),
+               offsetof(Impl_, balance_),
            0,
            offsetof(Impl_, code_) -
-               offsetof(Impl_, remaining_) +
+               offsetof(Impl_, balance_) +
                sizeof(Impl_::code_));
 }
 SellItemResponse::~SellItemResponse() {
@@ -15258,6 +16435,8 @@ inline void SellItemResponse::SharedDtor(MessageLite& self) {
   }
   this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
   ABSL_DCHECK(this_.GetArena() == nullptr);
+  delete this_._impl_.balance_;
+  delete this_._impl_.earned_;
   this_._impl_.~Impl_();
 }
 
@@ -15295,7 +16474,17 @@ PROTOBUF_NOINLINE void SellItemResponse::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      ABSL_DCHECK(_impl_.balance_ != nullptr);
+      _impl_.balance_->Clear();
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      ABSL_DCHECK(_impl_.earned_ != nullptr);
+      _impl_.earned_->Clear();
+    }
+  }
+  if (BatchCheckHasBit(cached_has_bits, 0x0000000cU)) {
     ::memset(&_impl_.remaining_, 0, static_cast<::size_t>(
         reinterpret_cast<char*>(&_impl_.code_) -
         reinterpret_cast<char*>(&_impl_.remaining_)) + sizeof(_impl_.code_));
@@ -15324,7 +16513,7 @@ PROTOBUF_NOINLINE void SellItemResponse::Clear() {
 
   cached_has_bits = this_._impl_._has_bits_[0];
   // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
     if (this_._internal_code() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteEnumToArray(
@@ -15333,7 +16522,7 @@ PROTOBUF_NOINLINE void SellItemResponse::Clear() {
   }
 
   // int64 remaining = 2 [json_name = "remaining"];
-  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
     if (this_._internal_remaining() != 0) {
       target =
           ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<2>(
@@ -15341,13 +16530,18 @@ PROTOBUF_NOINLINE void SellItemResponse::Clear() {
     }
   }
 
-  // int64 gold = 3 [json_name = "gold"];
+  // .pandora.common.v1.CurrencyAmount balance = 4 [json_name = "balance"];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    target = ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+        4, *this_._impl_.balance_, this_._impl_.balance_->GetCachedSize(), target,
+        stream);
+  }
+
+  // .pandora.common.v1.CurrencyAmount earned = 5 [json_name = "earned"];
   if (CheckHasBit(cached_has_bits, 0x00000002U)) {
-    if (this_._internal_gold() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<3>(
-              stream, this_._internal_gold(), target);
-    }
+    target = ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+        5, *this_._impl_.earned_, this_._impl_.earned_->GetCachedSize(), target,
+        stream);
   }
 
   if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
@@ -15375,23 +16569,26 @@ PROTOBUF_NOINLINE void SellItemResponse::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
-    // int64 remaining = 2 [json_name = "remaining"];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000000fU)) {
+    // .pandora.common.v1.CurrencyAmount balance = 4 [json_name = "balance"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      total_size += 1 +
+                    ::google::protobuf::internal::WireFormatLite::MessageSize(*this_._impl_.balance_);
+    }
+    // .pandora.common.v1.CurrencyAmount earned = 5 [json_name = "earned"];
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      total_size += 1 +
+                    ::google::protobuf::internal::WireFormatLite::MessageSize(*this_._impl_.earned_);
+    }
+    // int64 remaining = 2 [json_name = "remaining"];
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (this_._internal_remaining() != 0) {
         total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
             this_._internal_remaining());
       }
     }
-    // int64 gold = 3 [json_name = "gold"];
-    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
-      if (this_._internal_gold() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
-            this_._internal_gold());
-      }
-    }
     // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (this_._internal_code() != 0) {
         total_size += 1 +
                       ::_pbi::WireFormatLite::EnumSize(this_._internal_code());
@@ -15409,24 +16606,36 @@ void SellItemResponse::MergeImpl(::google::protobuf::MessageLite& to_msg,
   if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
     from.CheckHasBitConsistency();
   }
+  ::google::protobuf::Arena* arena = _this->GetArena();
   // @@protoc_insertion_point(class_specific_merge_from_start:pandora.inventory.v1.SellItemResponse)
   ABSL_DCHECK_NE(&from, _this);
   ::uint32_t cached_has_bits = 0;
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000000fU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      ABSL_DCHECK(from._impl_.balance_ != nullptr);
+      if (_this->_impl_.balance_ == nullptr) {
+        _this->_impl_.balance_ = ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.balance_);
+      } else {
+        _this->_impl_.balance_->MergeFrom(*from._impl_.balance_);
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      ABSL_DCHECK(from._impl_.earned_ != nullptr);
+      if (_this->_impl_.earned_ == nullptr) {
+        _this->_impl_.earned_ = ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.earned_);
+      } else {
+        _this->_impl_.earned_->MergeFrom(*from._impl_.earned_);
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (from._internal_remaining() != 0) {
         _this->_impl_.remaining_ = from._impl_.remaining_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
-      if (from._internal_gold() != 0) {
-        _this->_impl_.gold_ = from._impl_.gold_;
-      }
-    }
-    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (from._internal_code() != 0) {
         _this->_impl_.code_ = from._impl_.code_;
       }
@@ -15452,9 +16661,9 @@ void SellItemResponse::InternalSwap(SellItemResponse* PROTOBUF_RESTRICT PROTOBUF
   ::google::protobuf::internal::memswap<
       PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.code_)
       + sizeof(SellItemResponse::_impl_.code_)
-      - PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.remaining_)>(
-          reinterpret_cast<char*>(&_impl_.remaining_),
-          reinterpret_cast<char*>(&other->_impl_.remaining_));
+      - PROTOBUF_FIELD_OFFSET(SellItemResponse, _impl_.balance_)>(
+          reinterpret_cast<char*>(&_impl_.balance_),
+          reinterpret_cast<char*>(&other->_impl_.balance_));
 }
 
 ::google::protobuf::Metadata SellItemResponse::GetMetadata() const {
@@ -16024,9 +17233,9 @@ inline void SettleAuctionMatchRequest::SharedCtor(::_pb::Arena* PROTOBUF_NULLABL
   ::memset(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, match_id_),
            0,
-           offsetof(Impl_, item_config_id_) -
+           offsetof(Impl_, buy_order_id_) -
                offsetof(Impl_, match_id_) +
-               sizeof(Impl_::item_config_id_));
+               sizeof(Impl_::buy_order_id_));
 }
 SettleAuctionMatchRequest::~SettleAuctionMatchRequest() {
   // @@protoc_insertion_point(destructor:pandora.inventory.v1.SettleAuctionMatchRequest)
@@ -16078,9 +17287,10 @@ PROTOBUF_NOINLINE void SettleAuctionMatchRequest::Clear() {
   cached_has_bits = _impl_._has_bits_[0];
   if (BatchCheckHasBit(cached_has_bits, 0x000000ffU)) {
     ::memset(&_impl_.match_id_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.item_config_id_) -
-        reinterpret_cast<char*>(&_impl_.match_id_)) + sizeof(_impl_.item_config_id_));
+        reinterpret_cast<char*>(&_impl_.sell_order_id_) -
+        reinterpret_cast<char*>(&_impl_.match_id_)) + sizeof(_impl_.sell_order_id_));
   }
+  _impl_.buy_order_id_ = ::uint64_t{0u};
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
 }
@@ -16132,7 +17342,7 @@ PROTOBUF_NOINLINE void SettleAuctionMatchRequest::Clear() {
   }
 
   // uint32 item_config_id = 4 [json_name = "itemConfigId"];
-  if (CheckHasBit(cached_has_bits, 0x00000080U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
     if (this_._internal_item_config_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
@@ -16149,17 +17359,17 @@ PROTOBUF_NOINLINE void SettleAuctionMatchRequest::Clear() {
     }
   }
 
-  // int64 unit_price = 6 [json_name = "unitPrice"];
+  // uint64 unit_price = 6 [json_name = "unitPrice"];
   if (CheckHasBit(cached_has_bits, 0x00000010U)) {
     if (this_._internal_unit_price() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<6>(
-              stream, this_._internal_unit_price(), target);
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          6, this_._internal_unit_price(), target);
     }
   }
 
   // uint64 sell_order_id = 7 [json_name = "sellOrderId"];
-  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000080U)) {
     if (this_._internal_sell_order_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
@@ -16168,11 +17378,20 @@ PROTOBUF_NOINLINE void SettleAuctionMatchRequest::Clear() {
   }
 
   // uint64 buy_order_id = 8 [json_name = "buyOrderId"];
-  if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000100U)) {
     if (this_._internal_buy_order_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
           8, this_._internal_buy_order_id(), target);
+    }
+  }
+
+  // .pandora.common.v1.CurrencyKind currency_kind = 9 [json_name = "currencyKind"];
+  if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+    if (this_._internal_currency_kind() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteEnumToArray(
+          9, this_._internal_currency_kind(), target);
     }
   }
 
@@ -16230,32 +17449,41 @@ PROTOBUF_NOINLINE void SettleAuctionMatchRequest::Clear() {
             this_._internal_quantity());
       }
     }
-    // int64 unit_price = 6 [json_name = "unitPrice"];
+    // uint64 unit_price = 6 [json_name = "unitPrice"];
     if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (this_._internal_unit_price() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_unit_price());
       }
     }
-    // uint64 sell_order_id = 7 [json_name = "sellOrderId"];
+    // uint32 item_config_id = 4 [json_name = "itemConfigId"];
     if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+      if (this_._internal_item_config_id() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
+            this_._internal_item_config_id());
+      }
+    }
+    // .pandora.common.v1.CurrencyKind currency_kind = 9 [json_name = "currencyKind"];
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+      if (this_._internal_currency_kind() != 0) {
+        total_size += 1 +
+                      ::_pbi::WireFormatLite::EnumSize(this_._internal_currency_kind());
+      }
+    }
+    // uint64 sell_order_id = 7 [json_name = "sellOrderId"];
+    if (CheckHasBit(cached_has_bits, 0x00000080U)) {
       if (this_._internal_sell_order_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_sell_order_id());
       }
     }
+  }
+   {
     // uint64 buy_order_id = 8 [json_name = "buyOrderId"];
-    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000100U)) {
       if (this_._internal_buy_order_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_buy_order_id());
-      }
-    }
-    // uint32 item_config_id = 4 [json_name = "itemConfigId"];
-    if (CheckHasBit(cached_has_bits, 0x00000080U)) {
-      if (this_._internal_item_config_id() != 0) {
-        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
-            this_._internal_item_config_id());
       }
     }
   }
@@ -16303,19 +17531,24 @@ void SettleAuctionMatchRequest::MergeImpl(::google::protobuf::MessageLite& to_ms
       }
     }
     if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+      if (from._internal_item_config_id() != 0) {
+        _this->_impl_.item_config_id_ = from._impl_.item_config_id_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+      if (from._internal_currency_kind() != 0) {
+        _this->_impl_.currency_kind_ = from._impl_.currency_kind_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000080U)) {
       if (from._internal_sell_order_id() != 0) {
         _this->_impl_.sell_order_id_ = from._impl_.sell_order_id_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
-      if (from._internal_buy_order_id() != 0) {
-        _this->_impl_.buy_order_id_ = from._impl_.buy_order_id_;
-      }
-    }
-    if (CheckHasBit(cached_has_bits, 0x00000080U)) {
-      if (from._internal_item_config_id() != 0) {
-        _this->_impl_.item_config_id_ = from._impl_.item_config_id_;
-      }
+  }
+  if (CheckHasBit(cached_has_bits, 0x00000100U)) {
+    if (from._internal_buy_order_id() != 0) {
+      _this->_impl_.buy_order_id_ = from._impl_.buy_order_id_;
     }
   }
   _this->_impl_._has_bits_[0] |= cached_has_bits;
@@ -16336,8 +17569,8 @@ void SettleAuctionMatchRequest::InternalSwap(SettleAuctionMatchRequest* PROTOBUF
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.item_config_id_)
-      + sizeof(SettleAuctionMatchRequest::_impl_.item_config_id_)
+      PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.buy_order_id_)
+      + sizeof(SettleAuctionMatchRequest::_impl_.buy_order_id_)
       - PROTOBUF_FIELD_OFFSET(SettleAuctionMatchRequest, _impl_.match_id_)>(
           reinterpret_cast<char*>(&_impl_.match_id_),
           reinterpret_cast<char*>(&other->_impl_.match_id_));
@@ -16537,6 +17770,11 @@ void SettleAuctionMatchResponse::InternalSwap(SettleAuctionMatchResponse* PROTOB
 }
 // ===================================================================
 
+void SettlePlayerTradeRequest::clear_price_amount() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.price_amount_ != nullptr) _impl_.price_amount_->Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+}
 SettlePlayerTradeRequest::SettlePlayerTradeRequest(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
     : ::google::protobuf::Message(arena, SettlePlayerTradeRequest_get_class_data()) {
@@ -16581,13 +17819,17 @@ SettlePlayerTradeRequest::SettlePlayerTradeRequest(
   _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
       from._internal_metadata_);
   new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  ::uint32_t cached_has_bits = _impl_._has_bits_[0];
+  _impl_.price_amount_ = (CheckHasBit(cached_has_bits, 0x00000004U))
+                ? ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.price_amount_)
+                : nullptr;
   ::memcpy(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, order_id_),
            reinterpret_cast<const char*>(&from._impl_) +
                offsetof(Impl_, order_id_),
-           offsetof(Impl_, price_) -
+           offsetof(Impl_, buyer_id_) -
                offsetof(Impl_, order_id_) +
-               sizeof(Impl_::price_));
+               sizeof(Impl_::buyer_id_));
 
   // @@protoc_insertion_point(copy_constructor:pandora.inventory.v1.SettlePlayerTradeRequest)
 }
@@ -16609,11 +17851,11 @@ PROTOBUF_NDEBUG_INLINE SettlePlayerTradeRequest::Impl_::Impl_(
 inline void SettlePlayerTradeRequest::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   new (&_impl_) Impl_(internal_visibility(), arena);
   ::memset(reinterpret_cast<char*>(&_impl_) +
-               offsetof(Impl_, order_id_),
+               offsetof(Impl_, price_amount_),
            0,
-           offsetof(Impl_, price_) -
-               offsetof(Impl_, order_id_) +
-               sizeof(Impl_::price_));
+           offsetof(Impl_, buyer_id_) -
+               offsetof(Impl_, price_amount_) +
+               sizeof(Impl_::buyer_id_));
 }
 SettlePlayerTradeRequest::~SettlePlayerTradeRequest() {
   // @@protoc_insertion_point(destructor:pandora.inventory.v1.SettlePlayerTradeRequest)
@@ -16626,6 +17868,7 @@ inline void SettlePlayerTradeRequest::SharedDtor(MessageLite& self) {
   }
   this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
   ABSL_DCHECK(this_.GetArena() == nullptr);
+  delete this_._impl_.price_amount_;
   this_._impl_.~Impl_();
 }
 
@@ -16663,18 +17906,22 @@ PROTOBUF_NOINLINE void SettlePlayerTradeRequest::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       _impl_.seller_items_.Clear();
     }
     if (CheckHasBit(cached_has_bits, 0x00000002U)) {
       _impl_.buyer_items_.Clear();
     }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      ABSL_DCHECK(_impl_.price_amount_ != nullptr);
+      _impl_.price_amount_->Clear();
+    }
   }
-  if (BatchCheckHasBit(cached_has_bits, 0x0000003cU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00000038U)) {
     ::memset(&_impl_.order_id_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.price_) -
-        reinterpret_cast<char*>(&_impl_.order_id_)) + sizeof(_impl_.price_));
+        reinterpret_cast<char*>(&_impl_.buyer_id_) -
+        reinterpret_cast<char*>(&_impl_.order_id_)) + sizeof(_impl_.buyer_id_));
   }
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
@@ -16700,7 +17947,7 @@ PROTOBUF_NOINLINE void SettlePlayerTradeRequest::Clear() {
 
   cached_has_bits = this_._impl_._has_bits_[0];
   // uint64 order_id = 1 [json_name = "orderId"];
-  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
     if (this_._internal_order_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
@@ -16709,7 +17956,7 @@ PROTOBUF_NOINLINE void SettlePlayerTradeRequest::Clear() {
   }
 
   // uint64 seller_id = 2 [json_name = "sellerId"];
-  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
     if (this_._internal_seller_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
@@ -16718,7 +17965,7 @@ PROTOBUF_NOINLINE void SettlePlayerTradeRequest::Clear() {
   }
 
   // uint64 buyer_id = 3 [json_name = "buyerId"];
-  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
     if (this_._internal_buyer_id() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
@@ -16752,13 +17999,11 @@ PROTOBUF_NOINLINE void SettlePlayerTradeRequest::Clear() {
     }
   }
 
-  // int64 price = 6 [json_name = "price"];
-  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
-    if (this_._internal_price() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<6>(
-              stream, this_._internal_price(), target);
-    }
+  // .pandora.common.v1.CurrencyAmount price_amount = 7 [json_name = "priceAmount"];
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    target = ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+        7, *this_._impl_.price_amount_, this_._impl_.price_amount_->GetCachedSize(), target,
+        stream);
   }
 
   if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
@@ -16801,32 +18046,30 @@ PROTOBUF_NOINLINE void SettlePlayerTradeRequest::Clear() {
         total_size += ::google::protobuf::internal::WireFormatLite::MessageSize(msg);
       }
     }
-    // uint64 order_id = 1 [json_name = "orderId"];
+    // .pandora.common.v1.CurrencyAmount price_amount = 7 [json_name = "priceAmount"];
     if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      total_size += 1 +
+                    ::google::protobuf::internal::WireFormatLite::MessageSize(*this_._impl_.price_amount_);
+    }
+    // uint64 order_id = 1 [json_name = "orderId"];
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (this_._internal_order_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_order_id());
       }
     }
     // uint64 seller_id = 2 [json_name = "sellerId"];
-    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (this_._internal_seller_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_seller_id());
       }
     }
     // uint64 buyer_id = 3 [json_name = "buyerId"];
-    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (this_._internal_buyer_id() != 0) {
         total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_buyer_id());
-      }
-    }
-    // int64 price = 6 [json_name = "price"];
-    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
-      if (this_._internal_price() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
-            this_._internal_price());
       }
     }
   }
@@ -16860,23 +18103,26 @@ void SettlePlayerTradeRequest::MergeImpl(::google::protobuf::MessageLite& to_msg
           from._internal_buyer_items());
     }
     if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      ABSL_DCHECK(from._impl_.price_amount_ != nullptr);
+      if (_this->_impl_.price_amount_ == nullptr) {
+        _this->_impl_.price_amount_ = ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.price_amount_);
+      } else {
+        _this->_impl_.price_amount_->MergeFrom(*from._impl_.price_amount_);
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
       if (from._internal_order_id() != 0) {
         _this->_impl_.order_id_ = from._impl_.order_id_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (from._internal_seller_id() != 0) {
         _this->_impl_.seller_id_ = from._impl_.seller_id_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (from._internal_buyer_id() != 0) {
         _this->_impl_.buyer_id_ = from._impl_.buyer_id_;
-      }
-    }
-    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
-      if (from._internal_price() != 0) {
-        _this->_impl_.price_ = from._impl_.price_;
       }
     }
   }
@@ -16900,11 +18146,11 @@ void SettlePlayerTradeRequest::InternalSwap(SettlePlayerTradeRequest* PROTOBUF_R
   _impl_.seller_items_.InternalSwap(&other->_impl_.seller_items_);
   _impl_.buyer_items_.InternalSwap(&other->_impl_.buyer_items_);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.price_)
-      + sizeof(SettlePlayerTradeRequest::_impl_.price_)
-      - PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.order_id_)>(
-          reinterpret_cast<char*>(&_impl_.order_id_),
-          reinterpret_cast<char*>(&other->_impl_.order_id_));
+      PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.buyer_id_)
+      + sizeof(SettlePlayerTradeRequest::_impl_.buyer_id_)
+      - PROTOBUF_FIELD_OFFSET(SettlePlayerTradeRequest, _impl_.price_amount_)>(
+          reinterpret_cast<char*>(&_impl_.price_amount_),
+          reinterpret_cast<char*>(&other->_impl_.price_amount_));
 }
 
 ::google::protobuf::Metadata SettlePlayerTradeRequest::GetMetadata() const {
@@ -17131,9 +18377,9 @@ inline void FreezeForOrderRequest::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE ar
   ::memset(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, player_id_),
            0,
-           offsetof(Impl_, unit_price_) -
+           offsetof(Impl_, currency_kind_) -
                offsetof(Impl_, player_id_) +
-               sizeof(Impl_::unit_price_));
+               sizeof(Impl_::currency_kind_));
 }
 FreezeForOrderRequest::~FreezeForOrderRequest() {
   // @@protoc_insertion_point(destructor:pandora.inventory.v1.FreezeForOrderRequest)
@@ -17183,10 +18429,10 @@ PROTOBUF_NOINLINE void FreezeForOrderRequest::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
     ::memset(&_impl_.player_id_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.unit_price_) -
-        reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.unit_price_));
+        reinterpret_cast<char*>(&_impl_.currency_kind_) -
+        reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.currency_kind_));
   }
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
@@ -17256,12 +18502,21 @@ PROTOBUF_NOINLINE void FreezeForOrderRequest::Clear() {
     }
   }
 
-  // int64 unit_price = 6 [json_name = "unitPrice"];
+  // uint64 unit_price = 6 [json_name = "unitPrice"];
   if (CheckHasBit(cached_has_bits, 0x00000020U)) {
     if (this_._internal_unit_price() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<6>(
-              stream, this_._internal_unit_price(), target);
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          6, this_._internal_unit_price(), target);
+    }
+  }
+
+  // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+  if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+    if (this_._internal_currency_kind() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteEnumToArray(
+          7, this_._internal_currency_kind(), target);
     }
   }
 
@@ -17290,7 +18545,7 @@ PROTOBUF_NOINLINE void FreezeForOrderRequest::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
     // uint64 player_id = 1 [json_name = "playerId"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (this_._internal_player_id() != 0) {
@@ -17326,11 +18581,18 @@ PROTOBUF_NOINLINE void FreezeForOrderRequest::Clear() {
             this_._internal_quantity());
       }
     }
-    // int64 unit_price = 6 [json_name = "unitPrice"];
+    // uint64 unit_price = 6 [json_name = "unitPrice"];
     if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (this_._internal_unit_price() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_unit_price());
+      }
+    }
+    // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+      if (this_._internal_currency_kind() != 0) {
+        total_size += 1 +
+                      ::_pbi::WireFormatLite::EnumSize(this_._internal_currency_kind());
       }
     }
   }
@@ -17351,7 +18613,7 @@ void FreezeForOrderRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (from._internal_player_id() != 0) {
         _this->_impl_.player_id_ = from._impl_.player_id_;
@@ -17382,6 +18644,11 @@ void FreezeForOrderRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
         _this->_impl_.unit_price_ = from._impl_.unit_price_;
       }
     }
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+      if (from._internal_currency_kind() != 0) {
+        _this->_impl_.currency_kind_ = from._impl_.currency_kind_;
+      }
+    }
   }
   _this->_impl_._has_bits_[0] |= cached_has_bits;
   _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
@@ -17401,8 +18668,8 @@ void FreezeForOrderRequest::InternalSwap(FreezeForOrderRequest* PROTOBUF_RESTRIC
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.unit_price_)
-      + sizeof(FreezeForOrderRequest::_impl_.unit_price_)
+      PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.currency_kind_)
+      + sizeof(FreezeForOrderRequest::_impl_.currency_kind_)
       - PROTOBUF_FIELD_OFFSET(FreezeForOrderRequest, _impl_.player_id_)>(
           reinterpret_cast<char*>(&_impl_.player_id_),
           reinterpret_cast<char*>(&other->_impl_.player_id_));
@@ -17632,9 +18899,9 @@ inline void EnsureAuctionEscrowRequest::SharedCtor(::_pb::Arena* PROTOBUF_NULLAB
   ::memset(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, player_id_),
            0,
-           offsetof(Impl_, unit_price_) -
+           offsetof(Impl_, currency_kind_) -
                offsetof(Impl_, player_id_) +
-               sizeof(Impl_::unit_price_));
+               sizeof(Impl_::currency_kind_));
 }
 EnsureAuctionEscrowRequest::~EnsureAuctionEscrowRequest() {
   // @@protoc_insertion_point(destructor:pandora.inventory.v1.EnsureAuctionEscrowRequest)
@@ -17684,10 +18951,10 @@ PROTOBUF_NOINLINE void EnsureAuctionEscrowRequest::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
     ::memset(&_impl_.player_id_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.unit_price_) -
-        reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.unit_price_));
+        reinterpret_cast<char*>(&_impl_.currency_kind_) -
+        reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.currency_kind_));
   }
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
@@ -17766,6 +19033,15 @@ PROTOBUF_NOINLINE void EnsureAuctionEscrowRequest::Clear() {
     }
   }
 
+  // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+  if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+    if (this_._internal_currency_kind() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteEnumToArray(
+          7, this_._internal_currency_kind(), target);
+    }
+  }
+
   if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
     target =
         ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
@@ -17791,7 +19067,7 @@ PROTOBUF_NOINLINE void EnsureAuctionEscrowRequest::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
     // uint64 player_id = 1 [json_name = "playerId"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (this_._internal_player_id() != 0) {
@@ -17834,6 +19110,13 @@ PROTOBUF_NOINLINE void EnsureAuctionEscrowRequest::Clear() {
             this_._internal_unit_price());
       }
     }
+    // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+      if (this_._internal_currency_kind() != 0) {
+        total_size += 1 +
+                      ::_pbi::WireFormatLite::EnumSize(this_._internal_currency_kind());
+      }
+    }
   }
   return this_.MaybeComputeUnknownFieldsSize(total_size,
                                              &this_._impl_._cached_size_);
@@ -17852,7 +19135,7 @@ void EnsureAuctionEscrowRequest::MergeImpl(::google::protobuf::MessageLite& to_m
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000003fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (from._internal_player_id() != 0) {
         _this->_impl_.player_id_ = from._impl_.player_id_;
@@ -17883,6 +19166,11 @@ void EnsureAuctionEscrowRequest::MergeImpl(::google::protobuf::MessageLite& to_m
         _this->_impl_.unit_price_ = from._impl_.unit_price_;
       }
     }
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+      if (from._internal_currency_kind() != 0) {
+        _this->_impl_.currency_kind_ = from._impl_.currency_kind_;
+      }
+    }
   }
   _this->_impl_._has_bits_[0] |= cached_has_bits;
   _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
@@ -17902,8 +19190,8 @@ void EnsureAuctionEscrowRequest::InternalSwap(EnsureAuctionEscrowRequest* PROTOB
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(EnsureAuctionEscrowRequest, _impl_.unit_price_)
-      + sizeof(EnsureAuctionEscrowRequest::_impl_.unit_price_)
+      PROTOBUF_FIELD_OFFSET(EnsureAuctionEscrowRequest, _impl_.currency_kind_)
+      + sizeof(EnsureAuctionEscrowRequest::_impl_.currency_kind_)
       - PROTOBUF_FIELD_OFFSET(EnsureAuctionEscrowRequest, _impl_.player_id_)>(
           reinterpret_cast<char*>(&_impl_.player_id_),
           reinterpret_cast<char*>(&other->_impl_.player_id_));
@@ -20686,6 +21974,16 @@ void SellInstanceRequest::InternalSwap(SellInstanceRequest* PROTOBUF_RESTRICT PR
 }
 // ===================================================================
 
+void SellInstanceResponse::clear_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.balance_ != nullptr) _impl_.balance_->Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
+void SellInstanceResponse::clear_earned() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.earned_ != nullptr) _impl_.earned_->Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+}
 SellInstanceResponse::SellInstanceResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
     : ::google::protobuf::Message(arena, SellInstanceResponse_get_class_data()) {
@@ -20695,16 +21993,37 @@ SellInstanceResponse::SellInstanceResponse(::google::protobuf::Arena* PROTOBUF_N
   SharedCtor(arena);
   // @@protoc_insertion_point(arena_constructor:pandora.inventory.v1.SellInstanceResponse)
 }
+PROTOBUF_NDEBUG_INLINE SellInstanceResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+    [[maybe_unused]] const ::pandora::inventory::v1::SellInstanceResponse& from_msg)
+      : _has_bits_{from._has_bits_},
+        _cached_size_{0} {}
+
 SellInstanceResponse::SellInstanceResponse(
-    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const SellInstanceResponse& from)
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena,
+    const SellInstanceResponse& from)
 #if defined(PROTOBUF_CUSTOM_VTABLE)
-    : ::google::protobuf::Message(arena, SellInstanceResponse_get_class_data()),
+    : ::google::protobuf::Message(arena, SellInstanceResponse_get_class_data()) {
+
 #else   // PROTOBUF_CUSTOM_VTABLE
-    : ::google::protobuf::Message(arena),
+    : ::google::protobuf::Message(arena) {
 #endif  // PROTOBUF_CUSTOM_VTABLE
-      _impl_(from._impl_) {
+  SellInstanceResponse* const _this = this;
+  (void)_this;
   _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
       from._internal_metadata_);
+  new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  ::uint32_t cached_has_bits = _impl_._has_bits_[0];
+  _impl_.balance_ = (CheckHasBit(cached_has_bits, 0x00000001U))
+                ? ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.balance_)
+                : nullptr;
+  _impl_.earned_ = (CheckHasBit(cached_has_bits, 0x00000002U))
+                ? ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.earned_)
+                : nullptr;
+  _impl_.code_ = from._impl_.code_;
+
+  // @@protoc_insertion_point(copy_constructor:pandora.inventory.v1.SellInstanceResponse)
 }
 PROTOBUF_NDEBUG_INLINE SellInstanceResponse::Impl_::Impl_(
     [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
@@ -20714,10 +22033,10 @@ PROTOBUF_NDEBUG_INLINE SellInstanceResponse::Impl_::Impl_(
 inline void SellInstanceResponse::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   new (&_impl_) Impl_(internal_visibility(), arena);
   ::memset(reinterpret_cast<char*>(&_impl_) +
-               offsetof(Impl_, gold_),
+               offsetof(Impl_, balance_),
            0,
            offsetof(Impl_, code_) -
-               offsetof(Impl_, gold_) +
+               offsetof(Impl_, balance_) +
                sizeof(Impl_::code_));
 }
 SellInstanceResponse::~SellInstanceResponse() {
@@ -20731,6 +22050,8 @@ inline void SellInstanceResponse::SharedDtor(MessageLite& self) {
   }
   this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
   ABSL_DCHECK(this_.GetArena() == nullptr);
+  delete this_._impl_.balance_;
+  delete this_._impl_.earned_;
   this_._impl_.~Impl_();
 }
 
@@ -20769,10 +22090,16 @@ PROTOBUF_NOINLINE void SellInstanceResponse::Clear() {
 
   cached_has_bits = _impl_._has_bits_[0];
   if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
-    ::memset(&_impl_.gold_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.code_) -
-        reinterpret_cast<char*>(&_impl_.gold_)) + sizeof(_impl_.code_));
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      ABSL_DCHECK(_impl_.balance_ != nullptr);
+      _impl_.balance_->Clear();
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      ABSL_DCHECK(_impl_.earned_ != nullptr);
+      _impl_.earned_->Clear();
+    }
   }
+  _impl_.code_ = 0;
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
 }
@@ -20797,7 +22124,7 @@ PROTOBUF_NOINLINE void SellInstanceResponse::Clear() {
 
   cached_has_bits = this_._impl_._has_bits_[0];
   // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
     if (this_._internal_code() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteEnumToArray(
@@ -20805,13 +22132,18 @@ PROTOBUF_NOINLINE void SellInstanceResponse::Clear() {
     }
   }
 
-  // int64 gold = 2 [json_name = "gold"];
+  // .pandora.common.v1.CurrencyAmount balance = 3 [json_name = "balance"];
   if (CheckHasBit(cached_has_bits, 0x00000001U)) {
-    if (this_._internal_gold() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<2>(
-              stream, this_._internal_gold(), target);
-    }
+    target = ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+        3, *this_._impl_.balance_, this_._impl_.balance_->GetCachedSize(), target,
+        stream);
+  }
+
+  // .pandora.common.v1.CurrencyAmount earned = 4 [json_name = "earned"];
+  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    target = ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+        4, *this_._impl_.earned_, this_._impl_.earned_->GetCachedSize(), target,
+        stream);
   }
 
   if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
@@ -20839,16 +22171,19 @@ PROTOBUF_NOINLINE void SellInstanceResponse::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
-    // int64 gold = 2 [json_name = "gold"];
+  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
+    // .pandora.common.v1.CurrencyAmount balance = 3 [json_name = "balance"];
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
-      if (this_._internal_gold() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
-            this_._internal_gold());
-      }
+      total_size += 1 +
+                    ::google::protobuf::internal::WireFormatLite::MessageSize(*this_._impl_.balance_);
+    }
+    // .pandora.common.v1.CurrencyAmount earned = 4 [json_name = "earned"];
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      total_size += 1 +
+                    ::google::protobuf::internal::WireFormatLite::MessageSize(*this_._impl_.earned_);
     }
     // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (this_._internal_code() != 0) {
         total_size += 1 +
                       ::_pbi::WireFormatLite::EnumSize(this_._internal_code());
@@ -20866,19 +22201,31 @@ void SellInstanceResponse::MergeImpl(::google::protobuf::MessageLite& to_msg,
   if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
     from.CheckHasBitConsistency();
   }
+  ::google::protobuf::Arena* arena = _this->GetArena();
   // @@protoc_insertion_point(class_specific_merge_from_start:pandora.inventory.v1.SellInstanceResponse)
   ABSL_DCHECK_NE(&from, _this);
   ::uint32_t cached_has_bits = 0;
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x00000003U)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
-      if (from._internal_gold() != 0) {
-        _this->_impl_.gold_ = from._impl_.gold_;
+      ABSL_DCHECK(from._impl_.balance_ != nullptr);
+      if (_this->_impl_.balance_ == nullptr) {
+        _this->_impl_.balance_ = ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.balance_);
+      } else {
+        _this->_impl_.balance_->MergeFrom(*from._impl_.balance_);
       }
     }
     if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      ABSL_DCHECK(from._impl_.earned_ != nullptr);
+      if (_this->_impl_.earned_ == nullptr) {
+        _this->_impl_.earned_ = ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.earned_);
+      } else {
+        _this->_impl_.earned_->MergeFrom(*from._impl_.earned_);
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
       if (from._internal_code() != 0) {
         _this->_impl_.code_ = from._impl_.code_;
       }
@@ -20904,12 +22251,1476 @@ void SellInstanceResponse::InternalSwap(SellInstanceResponse* PROTOBUF_RESTRICT 
   ::google::protobuf::internal::memswap<
       PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.code_)
       + sizeof(SellInstanceResponse::_impl_.code_)
-      - PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.gold_)>(
-          reinterpret_cast<char*>(&_impl_.gold_),
-          reinterpret_cast<char*>(&other->_impl_.gold_));
+      - PROTOBUF_FIELD_OFFSET(SellInstanceResponse, _impl_.balance_)>(
+          reinterpret_cast<char*>(&_impl_.balance_),
+          reinterpret_cast<char*>(&other->_impl_.balance_));
 }
 
 ::google::protobuf::Metadata SellInstanceResponse::GetMetadata() const {
+  return ::google::protobuf::Message::GetMetadataImpl(GetClassData()->full());
+}
+// ===================================================================
+
+GetShopRequest::GetShopRequest(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, GetShopRequest_get_class_data()) {
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena) {
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  SharedCtor(arena);
+  // @@protoc_insertion_point(arena_constructor:pandora.inventory.v1.GetShopRequest)
+}
+GetShopRequest::GetShopRequest(
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const GetShopRequest& from)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, GetShopRequest_get_class_data()),
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena),
+#endif  // PROTOBUF_CUSTOM_VTABLE
+      _impl_(from._impl_) {
+  _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+}
+PROTOBUF_NDEBUG_INLINE GetShopRequest::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+      : _cached_size_{0} {}
+
+inline void GetShopRequest::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
+  new (&_impl_) Impl_(internal_visibility(), arena);
+  _impl_.shop_id_ = {};
+}
+GetShopRequest::~GetShopRequest() {
+  // @@protoc_insertion_point(destructor:pandora.inventory.v1.GetShopRequest)
+  SharedDtor(*this);
+}
+inline void GetShopRequest::SharedDtor(MessageLite& self) {
+  GetShopRequest& this_ = static_cast<GetShopRequest&>(self);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
+  ABSL_DCHECK(this_.GetArena() == nullptr);
+  this_._impl_.~Impl_();
+}
+
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const
+    ::google::protobuf::internal::ClassDataFull GetShopRequest_class_data_ =
+        GetShopRequest::InternalGenerateClassData_(GetShopRequest_globals_._default);
+
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+GetShopRequest::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&GetShopRequest_class_data_);
+  ::google::protobuf::internal::PrefetchToLocalCache(GetShopRequest_class_data_.tc_table);
+  return GetShopRequest_class_data_.base();
+}
+#else
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+GetShopRequest::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&GetShopRequest_globals_);
+  ::google::protobuf::internal::PrefetchToLocalCache(
+      ::google::protobuf::internal::MessageGlobalsBase::ToParseTableBase(&GetShopRequest_globals_));
+  return GetShopRequest_globals_.GetClassData();
+}
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT
+PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const GetShopRequest::ParseTableT_
+    GetShopRequest::_table_ =
+        GetShopRequest::InternalGenerateParseTable_(GetShopRequest_class_data_.base());
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_NOINLINE void GetShopRequest::Clear() {
+// @@protoc_insertion_point(message_clear_start:pandora.inventory.v1.GetShopRequest)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.shop_id_ = 0u;
+  _impl_._has_bits_.Clear();
+  _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::uint8_t* PROTOBUF_NONNULL GetShopRequest::_InternalSerialize(
+    const ::google::protobuf::MessageLite& base, ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) {
+  const GetShopRequest& this_ = static_cast<const GetShopRequest&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::uint8_t* PROTOBUF_NONNULL GetShopRequest::_InternalSerialize(
+    ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+  const GetShopRequest& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  // @@protoc_insertion_point(serialize_to_array_start:pandora.inventory.v1.GetShopRequest)
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = this_._impl_._has_bits_[0];
+  // uint32 shop_id = 1 [json_name = "shopId"];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    if (this_._internal_shop_id() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
+          1, this_._internal_shop_id(), target);
+    }
+  }
+
+  if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
+    target =
+        ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+            this_._internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:pandora.inventory.v1.GetShopRequest)
+  return target;
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::size_t GetShopRequest::ByteSizeLong(const MessageLite& base) {
+  const GetShopRequest& this_ = static_cast<const GetShopRequest&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::size_t GetShopRequest::ByteSizeLong() const {
+  const GetShopRequest& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  // @@protoc_insertion_point(message_byte_size_start:pandora.inventory.v1.GetShopRequest)
+  ::size_t total_size = 0;
+
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void)cached_has_bits;
+
+   {
+    // uint32 shop_id = 1 [json_name = "shopId"];
+    cached_has_bits = this_._impl_._has_bits_[0];
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      if (this_._internal_shop_id() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
+            this_._internal_shop_id());
+      }
+    }
+  }
+  return this_.MaybeComputeUnknownFieldsSize(total_size,
+                                             &this_._impl_._cached_size_);
+}
+
+void GetShopRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
+                      const ::google::protobuf::MessageLite& from_msg) {
+   auto* const _this = static_cast<GetShopRequest*>(&to_msg);
+  auto& from = static_cast<const GetShopRequest&>(from_msg);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    from.CheckHasBitConsistency();
+  }
+  // @@protoc_insertion_point(class_specific_merge_from_start:pandora.inventory.v1.GetShopRequest)
+  ABSL_DCHECK_NE(&from, _this);
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = from._impl_._has_bits_[0];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    if (from._internal_shop_id() != 0) {
+      _this->_impl_.shop_id_ = from._impl_.shop_id_;
+    }
+  }
+  _this->_impl_._has_bits_[0] |= cached_has_bits;
+  _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+}
+
+void GetShopRequest::CopyFrom(const GetShopRequest& from) {
+  // @@protoc_insertion_point(class_specific_copy_from_start:pandora.inventory.v1.GetShopRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+
+void GetShopRequest::InternalSwap(GetShopRequest* PROTOBUF_RESTRICT PROTOBUF_NONNULL other) {
+  using ::std::swap;
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
+  swap(_impl_.shop_id_, other->_impl_.shop_id_);
+}
+
+::google::protobuf::Metadata GetShopRequest::GetMetadata() const {
+  return ::google::protobuf::Message::GetMetadataImpl(GetClassData()->full());
+}
+// ===================================================================
+
+ShopEntry::ShopEntry(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, ShopEntry_get_class_data()) {
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena) {
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  SharedCtor(arena);
+  // @@protoc_insertion_point(arena_constructor:pandora.inventory.v1.ShopEntry)
+}
+ShopEntry::ShopEntry(
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const ShopEntry& from)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, ShopEntry_get_class_data()),
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena),
+#endif  // PROTOBUF_CUSTOM_VTABLE
+      _impl_(from._impl_) {
+  _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+}
+PROTOBUF_NDEBUG_INLINE ShopEntry::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+      : _cached_size_{0} {}
+
+inline void ShopEntry::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
+  new (&_impl_) Impl_(internal_visibility(), arena);
+  ::memset(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, item_config_id_),
+           0,
+           offsetof(Impl_, sort_order_) -
+               offsetof(Impl_, item_config_id_) +
+               sizeof(Impl_::sort_order_));
+}
+ShopEntry::~ShopEntry() {
+  // @@protoc_insertion_point(destructor:pandora.inventory.v1.ShopEntry)
+  SharedDtor(*this);
+}
+inline void ShopEntry::SharedDtor(MessageLite& self) {
+  ShopEntry& this_ = static_cast<ShopEntry&>(self);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
+  ABSL_DCHECK(this_.GetArena() == nullptr);
+  this_._impl_.~Impl_();
+}
+
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const
+    ::google::protobuf::internal::ClassDataFull ShopEntry_class_data_ =
+        ShopEntry::InternalGenerateClassData_(ShopEntry_globals_._default);
+
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+ShopEntry::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&ShopEntry_class_data_);
+  ::google::protobuf::internal::PrefetchToLocalCache(ShopEntry_class_data_.tc_table);
+  return ShopEntry_class_data_.base();
+}
+#else
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+ShopEntry::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&ShopEntry_globals_);
+  ::google::protobuf::internal::PrefetchToLocalCache(
+      ::google::protobuf::internal::MessageGlobalsBase::ToParseTableBase(&ShopEntry_globals_));
+  return ShopEntry_globals_.GetClassData();
+}
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT
+PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const ShopEntry::ParseTableT_
+    ShopEntry::_table_ =
+        ShopEntry::InternalGenerateParseTable_(ShopEntry_class_data_.base());
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_NOINLINE void ShopEntry::Clear() {
+// @@protoc_insertion_point(message_clear_start:pandora.inventory.v1.ShopEntry)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  cached_has_bits = _impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+    ::memset(&_impl_.item_config_id_, 0, static_cast<::size_t>(
+        reinterpret_cast<char*>(&_impl_.sort_order_) -
+        reinterpret_cast<char*>(&_impl_.item_config_id_)) + sizeof(_impl_.sort_order_));
+  }
+  _impl_._has_bits_.Clear();
+  _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::uint8_t* PROTOBUF_NONNULL ShopEntry::_InternalSerialize(
+    const ::google::protobuf::MessageLite& base, ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) {
+  const ShopEntry& this_ = static_cast<const ShopEntry&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::uint8_t* PROTOBUF_NONNULL ShopEntry::_InternalSerialize(
+    ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+  const ShopEntry& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  // @@protoc_insertion_point(serialize_to_array_start:pandora.inventory.v1.ShopEntry)
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = this_._impl_._has_bits_[0];
+  // uint32 item_config_id = 1 [json_name = "itemConfigId"];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    if (this_._internal_item_config_id() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
+          1, this_._internal_item_config_id(), target);
+    }
+  }
+
+  // uint32 count_per_unit = 2 [json_name = "countPerUnit"];
+  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (this_._internal_count_per_unit() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
+          2, this_._internal_count_per_unit(), target);
+    }
+  }
+
+  // .pandora.common.v1.CurrencyKind currency_kind = 3 [json_name = "currencyKind"];
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    if (this_._internal_currency_kind() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteEnumToArray(
+          3, this_._internal_currency_kind(), target);
+    }
+  }
+
+  // uint64 unit_price = 4 [json_name = "unitPrice"];
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (this_._internal_unit_price() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          4, this_._internal_unit_price(), target);
+    }
+  }
+
+  // uint32 sort_order = 5 [json_name = "sortOrder"];
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (this_._internal_sort_order() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
+          5, this_._internal_sort_order(), target);
+    }
+  }
+
+  if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
+    target =
+        ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+            this_._internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:pandora.inventory.v1.ShopEntry)
+  return target;
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::size_t ShopEntry::ByteSizeLong(const MessageLite& base) {
+  const ShopEntry& this_ = static_cast<const ShopEntry&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::size_t ShopEntry::ByteSizeLong() const {
+  const ShopEntry& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  // @@protoc_insertion_point(message_byte_size_start:pandora.inventory.v1.ShopEntry)
+  ::size_t total_size = 0;
+
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void)cached_has_bits;
+
+  ::_pbi::Prefetch5LinesFrom7Lines(&this_);
+  cached_has_bits = this_._impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+    // uint32 item_config_id = 1 [json_name = "itemConfigId"];
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      if (this_._internal_item_config_id() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
+            this_._internal_item_config_id());
+      }
+    }
+    // uint32 count_per_unit = 2 [json_name = "countPerUnit"];
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      if (this_._internal_count_per_unit() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
+            this_._internal_count_per_unit());
+      }
+    }
+    // uint64 unit_price = 4 [json_name = "unitPrice"];
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      if (this_._internal_unit_price() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
+            this_._internal_unit_price());
+      }
+    }
+    // .pandora.common.v1.CurrencyKind currency_kind = 3 [json_name = "currencyKind"];
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      if (this_._internal_currency_kind() != 0) {
+        total_size += 1 +
+                      ::_pbi::WireFormatLite::EnumSize(this_._internal_currency_kind());
+      }
+    }
+    // uint32 sort_order = 5 [json_name = "sortOrder"];
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (this_._internal_sort_order() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
+            this_._internal_sort_order());
+      }
+    }
+  }
+  return this_.MaybeComputeUnknownFieldsSize(total_size,
+                                             &this_._impl_._cached_size_);
+}
+
+void ShopEntry::MergeImpl(::google::protobuf::MessageLite& to_msg,
+                      const ::google::protobuf::MessageLite& from_msg) {
+   auto* const _this = static_cast<ShopEntry*>(&to_msg);
+  auto& from = static_cast<const ShopEntry&>(from_msg);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    from.CheckHasBitConsistency();
+  }
+  // @@protoc_insertion_point(class_specific_merge_from_start:pandora.inventory.v1.ShopEntry)
+  ABSL_DCHECK_NE(&from, _this);
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = from._impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      if (from._internal_item_config_id() != 0) {
+        _this->_impl_.item_config_id_ = from._impl_.item_config_id_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      if (from._internal_count_per_unit() != 0) {
+        _this->_impl_.count_per_unit_ = from._impl_.count_per_unit_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      if (from._internal_unit_price() != 0) {
+        _this->_impl_.unit_price_ = from._impl_.unit_price_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      if (from._internal_currency_kind() != 0) {
+        _this->_impl_.currency_kind_ = from._impl_.currency_kind_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (from._internal_sort_order() != 0) {
+        _this->_impl_.sort_order_ = from._impl_.sort_order_;
+      }
+    }
+  }
+  _this->_impl_._has_bits_[0] |= cached_has_bits;
+  _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+}
+
+void ShopEntry::CopyFrom(const ShopEntry& from) {
+  // @@protoc_insertion_point(class_specific_copy_from_start:pandora.inventory.v1.ShopEntry)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+
+void ShopEntry::InternalSwap(ShopEntry* PROTOBUF_RESTRICT PROTOBUF_NONNULL other) {
+  using ::std::swap;
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
+  ::google::protobuf::internal::memswap<
+      PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.sort_order_)
+      + sizeof(ShopEntry::_impl_.sort_order_)
+      - PROTOBUF_FIELD_OFFSET(ShopEntry, _impl_.item_config_id_)>(
+          reinterpret_cast<char*>(&_impl_.item_config_id_),
+          reinterpret_cast<char*>(&other->_impl_.item_config_id_));
+}
+
+::google::protobuf::Metadata ShopEntry::GetMetadata() const {
+  return ::google::protobuf::Message::GetMetadataImpl(GetClassData()->full());
+}
+// ===================================================================
+
+GetShopResponse::GetShopResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, GetShopResponse_get_class_data()) {
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena) {
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  SharedCtor(arena);
+  // @@protoc_insertion_point(arena_constructor:pandora.inventory.v1.GetShopResponse)
+}
+PROTOBUF_NDEBUG_INLINE GetShopResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+    [[maybe_unused]] const ::pandora::inventory::v1::GetShopResponse& from_msg)
+      : _has_bits_{from._has_bits_},
+        _cached_size_{0},
+        entries_ {
+          visibility, ::_pbi::InternalMetadataOffset::Build<
+              ::pandora::inventory::v1::GetShopResponse,
+              PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GetShopResponse, _impl_.entries_)>()
+          , from.entries_
+        }
+     {}
+
+GetShopResponse::GetShopResponse(
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena,
+    const GetShopResponse& from)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, GetShopResponse_get_class_data()) {
+
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena) {
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  GetShopResponse* const _this = this;
+  (void)_this;
+  _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+  new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  ::memcpy(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, code_),
+           reinterpret_cast<const char*>(&from._impl_) +
+               offsetof(Impl_, code_),
+           offsetof(Impl_, shop_id_) -
+               offsetof(Impl_, code_) +
+               sizeof(Impl_::shop_id_));
+
+  // @@protoc_insertion_point(copy_constructor:pandora.inventory.v1.GetShopResponse)
+}
+PROTOBUF_NDEBUG_INLINE GetShopResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+      : _cached_size_{0},
+        entries_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::GetShopResponse,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::GetShopResponse, _impl_.entries_)>()
+         }
+     {}
+
+inline void GetShopResponse::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
+  new (&_impl_) Impl_(internal_visibility(), arena);
+  ::memset(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, code_),
+           0,
+           offsetof(Impl_, shop_id_) -
+               offsetof(Impl_, code_) +
+               sizeof(Impl_::shop_id_));
+}
+GetShopResponse::~GetShopResponse() {
+  // @@protoc_insertion_point(destructor:pandora.inventory.v1.GetShopResponse)
+  SharedDtor(*this);
+}
+inline void GetShopResponse::SharedDtor(MessageLite& self) {
+  GetShopResponse& this_ = static_cast<GetShopResponse&>(self);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
+  ABSL_DCHECK(this_.GetArena() == nullptr);
+  this_._impl_.~Impl_();
+}
+
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const
+    ::google::protobuf::internal::ClassDataFull GetShopResponse_class_data_ =
+        GetShopResponse::InternalGenerateClassData_(GetShopResponse_globals_._default);
+
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+GetShopResponse::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&GetShopResponse_class_data_);
+  ::google::protobuf::internal::PrefetchToLocalCache(GetShopResponse_class_data_.tc_table);
+  return GetShopResponse_class_data_.base();
+}
+#else
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+GetShopResponse::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&GetShopResponse_globals_);
+  ::google::protobuf::internal::PrefetchToLocalCache(
+      ::google::protobuf::internal::MessageGlobalsBase::ToParseTableBase(&GetShopResponse_globals_));
+  return GetShopResponse_globals_.GetClassData();
+}
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT
+PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const GetShopResponse::ParseTableT_
+    GetShopResponse::_table_ =
+        GetShopResponse::InternalGenerateParseTable_(GetShopResponse_class_data_.base());
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_NOINLINE void GetShopResponse::Clear() {
+// @@protoc_insertion_point(message_clear_start:pandora.inventory.v1.GetShopResponse)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  cached_has_bits = _impl_._has_bits_[0];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    _impl_.entries_.Clear();
+  }
+  if (BatchCheckHasBit(cached_has_bits, 0x00000006U)) {
+    ::memset(&_impl_.code_, 0, static_cast<::size_t>(
+        reinterpret_cast<char*>(&_impl_.shop_id_) -
+        reinterpret_cast<char*>(&_impl_.code_)) + sizeof(_impl_.shop_id_));
+  }
+  _impl_._has_bits_.Clear();
+  _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::uint8_t* PROTOBUF_NONNULL GetShopResponse::_InternalSerialize(
+    const ::google::protobuf::MessageLite& base, ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) {
+  const GetShopResponse& this_ = static_cast<const GetShopResponse&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::uint8_t* PROTOBUF_NONNULL GetShopResponse::_InternalSerialize(
+    ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+  const GetShopResponse& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  // @@protoc_insertion_point(serialize_to_array_start:pandora.inventory.v1.GetShopResponse)
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = this_._impl_._has_bits_[0];
+  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (this_._internal_code() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteEnumToArray(
+          1, this_._internal_code(), target);
+    }
+  }
+
+  // uint32 shop_id = 2 [json_name = "shopId"];
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (this_._internal_shop_id() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
+          2, this_._internal_shop_id(), target);
+    }
+  }
+
+  // repeated .pandora.inventory.v1.ShopEntry entries = 3 [json_name = "entries"];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    for (unsigned i = 0, n = static_cast<unsigned>(
+                             this_._internal_entries_size());
+         i < n; i++) {
+      const auto& repfield = this_._internal_entries().Get(i);
+      target =
+          ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+              3, repfield, repfield.GetCachedSize(),
+              target, stream);
+    }
+  }
+
+  if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
+    target =
+        ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+            this_._internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:pandora.inventory.v1.GetShopResponse)
+  return target;
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::size_t GetShopResponse::ByteSizeLong(const MessageLite& base) {
+  const GetShopResponse& this_ = static_cast<const GetShopResponse&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::size_t GetShopResponse::ByteSizeLong() const {
+  const GetShopResponse& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  // @@protoc_insertion_point(message_byte_size_start:pandora.inventory.v1.GetShopResponse)
+  ::size_t total_size = 0;
+
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void)cached_has_bits;
+
+  ::_pbi::Prefetch5LinesFrom7Lines(&this_);
+  cached_has_bits = this_._impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
+    // repeated .pandora.inventory.v1.ShopEntry entries = 3 [json_name = "entries"];
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      total_size += 1UL * this_._internal_entries_size();
+      for (const auto& msg : this_._internal_entries()) {
+        total_size += ::google::protobuf::internal::WireFormatLite::MessageSize(msg);
+      }
+    }
+    // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      if (this_._internal_code() != 0) {
+        total_size += 1 +
+                      ::_pbi::WireFormatLite::EnumSize(this_._internal_code());
+      }
+    }
+    // uint32 shop_id = 2 [json_name = "shopId"];
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      if (this_._internal_shop_id() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
+            this_._internal_shop_id());
+      }
+    }
+  }
+  return this_.MaybeComputeUnknownFieldsSize(total_size,
+                                             &this_._impl_._cached_size_);
+}
+
+void GetShopResponse::MergeImpl(::google::protobuf::MessageLite& to_msg,
+                      const ::google::protobuf::MessageLite& from_msg) {
+   auto* const _this = static_cast<GetShopResponse*>(&to_msg);
+  auto& from = static_cast<const GetShopResponse&>(from_msg);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    from.CheckHasBitConsistency();
+  }
+  ::google::protobuf::Arena* arena = _this->GetArena();
+  // @@protoc_insertion_point(class_specific_merge_from_start:pandora.inventory.v1.GetShopResponse)
+  ABSL_DCHECK_NE(&from, _this);
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = from._impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x00000007U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      _this->_internal_mutable_entries()->InternalMergeFromWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), arena,
+          from._internal_entries());
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      if (from._internal_code() != 0) {
+        _this->_impl_.code_ = from._impl_.code_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      if (from._internal_shop_id() != 0) {
+        _this->_impl_.shop_id_ = from._impl_.shop_id_;
+      }
+    }
+  }
+  _this->_impl_._has_bits_[0] |= cached_has_bits;
+  _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+}
+
+void GetShopResponse::CopyFrom(const GetShopResponse& from) {
+  // @@protoc_insertion_point(class_specific_copy_from_start:pandora.inventory.v1.GetShopResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+
+void GetShopResponse::InternalSwap(GetShopResponse* PROTOBUF_RESTRICT PROTOBUF_NONNULL other) {
+  using ::std::swap;
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
+  _impl_.entries_.InternalSwap(&other->_impl_.entries_);
+  ::google::protobuf::internal::memswap<
+      PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_.shop_id_)
+      + sizeof(GetShopResponse::_impl_.shop_id_)
+      - PROTOBUF_FIELD_OFFSET(GetShopResponse, _impl_.code_)>(
+          reinterpret_cast<char*>(&_impl_.code_),
+          reinterpret_cast<char*>(&other->_impl_.code_));
+}
+
+::google::protobuf::Metadata GetShopResponse::GetMetadata() const {
+  return ::google::protobuf::Message::GetMetadataImpl(GetClassData()->full());
+}
+// ===================================================================
+
+PurchaseShopItemRequest::PurchaseShopItemRequest(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, PurchaseShopItemRequest_get_class_data()) {
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena) {
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  SharedCtor(arena);
+  // @@protoc_insertion_point(arena_constructor:pandora.inventory.v1.PurchaseShopItemRequest)
+}
+PROTOBUF_NDEBUG_INLINE PurchaseShopItemRequest::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+    [[maybe_unused]] const ::pandora::inventory::v1::PurchaseShopItemRequest& from_msg)
+      : _has_bits_{from._has_bits_},
+        _cached_size_{0},
+        idempotency_key_(arena, from.idempotency_key_) {}
+
+PurchaseShopItemRequest::PurchaseShopItemRequest(
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena,
+    const PurchaseShopItemRequest& from)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, PurchaseShopItemRequest_get_class_data()) {
+
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena) {
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  PurchaseShopItemRequest* const _this = this;
+  (void)_this;
+  _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+  new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  ::memcpy(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, player_id_),
+           reinterpret_cast<const char*>(&from._impl_) +
+               offsetof(Impl_, player_id_),
+           offsetof(Impl_, unit_count_) -
+               offsetof(Impl_, player_id_) +
+               sizeof(Impl_::unit_count_));
+
+  // @@protoc_insertion_point(copy_constructor:pandora.inventory.v1.PurchaseShopItemRequest)
+}
+PROTOBUF_NDEBUG_INLINE PurchaseShopItemRequest::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+      : _cached_size_{0},
+        idempotency_key_(arena) {}
+
+inline void PurchaseShopItemRequest::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
+  new (&_impl_) Impl_(internal_visibility(), arena);
+  ::memset(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, player_id_),
+           0,
+           offsetof(Impl_, unit_count_) -
+               offsetof(Impl_, player_id_) +
+               sizeof(Impl_::unit_count_));
+}
+PurchaseShopItemRequest::~PurchaseShopItemRequest() {
+  // @@protoc_insertion_point(destructor:pandora.inventory.v1.PurchaseShopItemRequest)
+  SharedDtor(*this);
+}
+inline void PurchaseShopItemRequest::SharedDtor(MessageLite& self) {
+  PurchaseShopItemRequest& this_ = static_cast<PurchaseShopItemRequest&>(self);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
+  ABSL_DCHECK(this_.GetArena() == nullptr);
+  this_._impl_.idempotency_key_.Destroy();
+  this_._impl_.~Impl_();
+}
+
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const
+    ::google::protobuf::internal::ClassDataFull PurchaseShopItemRequest_class_data_ =
+        PurchaseShopItemRequest::InternalGenerateClassData_(PurchaseShopItemRequest_globals_._default);
+
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+PurchaseShopItemRequest::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&PurchaseShopItemRequest_class_data_);
+  ::google::protobuf::internal::PrefetchToLocalCache(PurchaseShopItemRequest_class_data_.tc_table);
+  return PurchaseShopItemRequest_class_data_.base();
+}
+#else
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+PurchaseShopItemRequest::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&PurchaseShopItemRequest_globals_);
+  ::google::protobuf::internal::PrefetchToLocalCache(
+      ::google::protobuf::internal::MessageGlobalsBase::ToParseTableBase(&PurchaseShopItemRequest_globals_));
+  return PurchaseShopItemRequest_globals_.GetClassData();
+}
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT
+PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const PurchaseShopItemRequest::ParseTableT_
+    PurchaseShopItemRequest::_table_ =
+        PurchaseShopItemRequest::InternalGenerateParseTable_(PurchaseShopItemRequest_class_data_.base());
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_NOINLINE void PurchaseShopItemRequest::Clear() {
+// @@protoc_insertion_point(message_clear_start:pandora.inventory.v1.PurchaseShopItemRequest)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  cached_has_bits = _impl_._has_bits_[0];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    _impl_.idempotency_key_.ClearNonDefaultToEmpty();
+  }
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001eU)) {
+    ::memset(&_impl_.player_id_, 0, static_cast<::size_t>(
+        reinterpret_cast<char*>(&_impl_.unit_count_) -
+        reinterpret_cast<char*>(&_impl_.player_id_)) + sizeof(_impl_.unit_count_));
+  }
+  _impl_._has_bits_.Clear();
+  _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::uint8_t* PROTOBUF_NONNULL PurchaseShopItemRequest::_InternalSerialize(
+    const ::google::protobuf::MessageLite& base, ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) {
+  const PurchaseShopItemRequest& this_ = static_cast<const PurchaseShopItemRequest&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::uint8_t* PROTOBUF_NONNULL PurchaseShopItemRequest::_InternalSerialize(
+    ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+  const PurchaseShopItemRequest& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  // @@protoc_insertion_point(serialize_to_array_start:pandora.inventory.v1.PurchaseShopItemRequest)
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = this_._impl_._has_bits_[0];
+  // uint64 player_id = 1 [json_name = "playerId"];
+  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    if (this_._internal_player_id() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          1, this_._internal_player_id(), target);
+    }
+  }
+
+  // uint32 shop_id = 2 [json_name = "shopId"];
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    if (this_._internal_shop_id() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
+          2, this_._internal_shop_id(), target);
+    }
+  }
+
+  // uint32 item_config_id = 3 [json_name = "itemConfigId"];
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    if (this_._internal_item_config_id() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
+          3, this_._internal_item_config_id(), target);
+    }
+  }
+
+  // uint32 unit_count = 4 [json_name = "unitCount"];
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (this_._internal_unit_count() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt32ToArray(
+          4, this_._internal_unit_count(), target);
+    }
+  }
+
+  // string idempotency_key = 5 [json_name = "idempotencyKey"];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    if (!this_._internal_idempotency_key().empty()) {
+      const ::std::string& _s = this_._internal_idempotency_key();
+      ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
+          _s.data(), static_cast<int>(_s.length()), ::google::protobuf::internal::WireFormatLite::SERIALIZE, "pandora.inventory.v1.PurchaseShopItemRequest.idempotency_key");
+      target = stream->WriteStringMaybeAliased(5, _s, target);
+    }
+  }
+
+  if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
+    target =
+        ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+            this_._internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:pandora.inventory.v1.PurchaseShopItemRequest)
+  return target;
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::size_t PurchaseShopItemRequest::ByteSizeLong(const MessageLite& base) {
+  const PurchaseShopItemRequest& this_ = static_cast<const PurchaseShopItemRequest&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::size_t PurchaseShopItemRequest::ByteSizeLong() const {
+  const PurchaseShopItemRequest& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  // @@protoc_insertion_point(message_byte_size_start:pandora.inventory.v1.PurchaseShopItemRequest)
+  ::size_t total_size = 0;
+
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void)cached_has_bits;
+
+  ::_pbi::Prefetch5LinesFrom7Lines(&this_);
+  cached_has_bits = this_._impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+    // string idempotency_key = 5 [json_name = "idempotencyKey"];
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      if (!this_._internal_idempotency_key().empty()) {
+        total_size += 1 + ::google::protobuf::internal::WireFormatLite::StringSize(
+                                        this_._internal_idempotency_key());
+      }
+    }
+    // uint64 player_id = 1 [json_name = "playerId"];
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      if (this_._internal_player_id() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
+            this_._internal_player_id());
+      }
+    }
+    // uint32 shop_id = 2 [json_name = "shopId"];
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      if (this_._internal_shop_id() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
+            this_._internal_shop_id());
+      }
+    }
+    // uint32 item_config_id = 3 [json_name = "itemConfigId"];
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      if (this_._internal_item_config_id() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
+            this_._internal_item_config_id());
+      }
+    }
+    // uint32 unit_count = 4 [json_name = "unitCount"];
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (this_._internal_unit_count() != 0) {
+        total_size += ::_pbi::WireFormatLite::UInt32SizePlusOne(
+            this_._internal_unit_count());
+      }
+    }
+  }
+  return this_.MaybeComputeUnknownFieldsSize(total_size,
+                                             &this_._impl_._cached_size_);
+}
+
+void PurchaseShopItemRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
+                      const ::google::protobuf::MessageLite& from_msg) {
+   auto* const _this = static_cast<PurchaseShopItemRequest*>(&to_msg);
+  auto& from = static_cast<const PurchaseShopItemRequest&>(from_msg);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    from.CheckHasBitConsistency();
+  }
+  // @@protoc_insertion_point(class_specific_merge_from_start:pandora.inventory.v1.PurchaseShopItemRequest)
+  ABSL_DCHECK_NE(&from, _this);
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = from._impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      if (!from._internal_idempotency_key().empty()) {
+        _this->_internal_set_idempotency_key(from._internal_idempotency_key());
+      } else {
+        if (_this->_impl_.idempotency_key_.IsDefault()) {
+          _this->_internal_set_idempotency_key("");
+        }
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      if (from._internal_player_id() != 0) {
+        _this->_impl_.player_id_ = from._impl_.player_id_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      if (from._internal_shop_id() != 0) {
+        _this->_impl_.shop_id_ = from._impl_.shop_id_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      if (from._internal_item_config_id() != 0) {
+        _this->_impl_.item_config_id_ = from._impl_.item_config_id_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (from._internal_unit_count() != 0) {
+        _this->_impl_.unit_count_ = from._impl_.unit_count_;
+      }
+    }
+  }
+  _this->_impl_._has_bits_[0] |= cached_has_bits;
+  _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+}
+
+void PurchaseShopItemRequest::CopyFrom(const PurchaseShopItemRequest& from) {
+  // @@protoc_insertion_point(class_specific_copy_from_start:pandora.inventory.v1.PurchaseShopItemRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+
+void PurchaseShopItemRequest::InternalSwap(PurchaseShopItemRequest* PROTOBUF_RESTRICT PROTOBUF_NONNULL other) {
+  using ::std::swap;
+  auto* arena = GetArena();
+  ABSL_DCHECK_EQ(arena, other->GetArena());
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
+  ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.idempotency_key_, &other->_impl_.idempotency_key_, arena);
+  ::google::protobuf::internal::memswap<
+      PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.unit_count_)
+      + sizeof(PurchaseShopItemRequest::_impl_.unit_count_)
+      - PROTOBUF_FIELD_OFFSET(PurchaseShopItemRequest, _impl_.player_id_)>(
+          reinterpret_cast<char*>(&_impl_.player_id_),
+          reinterpret_cast<char*>(&other->_impl_.player_id_));
+}
+
+::google::protobuf::Metadata PurchaseShopItemRequest::GetMetadata() const {
+  return ::google::protobuf::Message::GetMetadataImpl(GetClassData()->full());
+}
+// ===================================================================
+
+void PurchaseShopItemResponse::clear_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.balance_ != nullptr) _impl_.balance_->Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+}
+void PurchaseShopItemResponse::clear_cost() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.cost_ != nullptr) _impl_.cost_->Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+}
+PurchaseShopItemResponse::PurchaseShopItemResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, PurchaseShopItemResponse_get_class_data()) {
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena) {
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  SharedCtor(arena);
+  // @@protoc_insertion_point(arena_constructor:pandora.inventory.v1.PurchaseShopItemResponse)
+}
+PROTOBUF_NDEBUG_INLINE PurchaseShopItemResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+    [[maybe_unused]] const ::pandora::inventory::v1::PurchaseShopItemResponse& from_msg)
+      : _has_bits_{from._has_bits_},
+        _cached_size_{0},
+        granted_items_ {
+          visibility, ::_pbi::InternalMetadataOffset::Build<
+              ::pandora::inventory::v1::PurchaseShopItemResponse,
+              PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.granted_items_)>()
+          , from.granted_items_
+        }
+        ,
+        granted_instances_ {
+          visibility, ::_pbi::InternalMetadataOffset::Build<
+              ::pandora::inventory::v1::PurchaseShopItemResponse,
+              PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.granted_instances_)>()
+          , from.granted_instances_
+        }
+     {}
+
+PurchaseShopItemResponse::PurchaseShopItemResponse(
+    ::google::protobuf::Arena* PROTOBUF_NULLABLE arena,
+    const PurchaseShopItemResponse& from)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+    : ::google::protobuf::Message(arena, PurchaseShopItemResponse_get_class_data()) {
+
+#else   // PROTOBUF_CUSTOM_VTABLE
+    : ::google::protobuf::Message(arena) {
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  PurchaseShopItemResponse* const _this = this;
+  (void)_this;
+  _internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+  new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
+  ::uint32_t cached_has_bits = _impl_._has_bits_[0];
+  _impl_.balance_ = (CheckHasBit(cached_has_bits, 0x00000004U))
+                ? ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.balance_)
+                : nullptr;
+  _impl_.cost_ = (CheckHasBit(cached_has_bits, 0x00000008U))
+                ? ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.cost_)
+                : nullptr;
+  _impl_.code_ = from._impl_.code_;
+
+  // @@protoc_insertion_point(copy_constructor:pandora.inventory.v1.PurchaseShopItemResponse)
+}
+PROTOBUF_NDEBUG_INLINE PurchaseShopItemResponse::Impl_::Impl_(
+    [[maybe_unused]] ::google::protobuf::internal::InternalVisibility visibility,
+    [[maybe_unused]] ::google::protobuf::Arena* PROTOBUF_NULLABLE arena)
+      : _cached_size_{0},
+        granted_items_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::PurchaseShopItemResponse,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.granted_items_)>()
+         }
+        ,
+        granted_instances_ { visibility, ::_pbi::InternalMetadataOffset::Build<
+            ::pandora::inventory::v1::PurchaseShopItemResponse,
+            PROTOBUF_FIELD_OFFSET(::pandora::inventory::v1::PurchaseShopItemResponse, _impl_.granted_instances_)>()
+         }
+     {}
+
+inline void PurchaseShopItemResponse::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
+  new (&_impl_) Impl_(internal_visibility(), arena);
+  ::memset(reinterpret_cast<char*>(&_impl_) +
+               offsetof(Impl_, balance_),
+           0,
+           offsetof(Impl_, code_) -
+               offsetof(Impl_, balance_) +
+               sizeof(Impl_::code_));
+}
+PurchaseShopItemResponse::~PurchaseShopItemResponse() {
+  // @@protoc_insertion_point(destructor:pandora.inventory.v1.PurchaseShopItemResponse)
+  SharedDtor(*this);
+}
+inline void PurchaseShopItemResponse::SharedDtor(MessageLite& self) {
+  PurchaseShopItemResponse& this_ = static_cast<PurchaseShopItemResponse&>(self);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  this_._internal_metadata_.Delete<::google::protobuf::UnknownFieldSet>();
+  ABSL_DCHECK(this_.GetArena() == nullptr);
+  delete this_._impl_.balance_;
+  delete this_._impl_.cost_;
+  this_._impl_.~Impl_();
+}
+
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const
+    ::google::protobuf::internal::ClassDataFull PurchaseShopItemResponse_class_data_ =
+        PurchaseShopItemResponse::InternalGenerateClassData_(PurchaseShopItemResponse_globals_._default);
+
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+PurchaseShopItemResponse::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&PurchaseShopItemResponse_class_data_);
+  ::google::protobuf::internal::PrefetchToLocalCache(PurchaseShopItemResponse_class_data_.tc_table);
+  return PurchaseShopItemResponse_class_data_.base();
+}
+#else
+PROTOBUF_ATTRIBUTE_WEAK const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+PurchaseShopItemResponse::GetClassData() const {
+  ::google::protobuf::internal::PrefetchToLocalCache(&PurchaseShopItemResponse_globals_);
+  ::google::protobuf::internal::PrefetchToLocalCache(
+      ::google::protobuf::internal::MessageGlobalsBase::ToParseTableBase(&PurchaseShopItemResponse_globals_));
+  return PurchaseShopItemResponse_globals_.GetClassData();
+}
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_CONSTINIT
+PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 const PurchaseShopItemResponse::ParseTableT_
+    PurchaseShopItemResponse::_table_ =
+        PurchaseShopItemResponse::InternalGenerateParseTable_(PurchaseShopItemResponse_class_data_.base());
+#endif  // !PROTOBUF_MESSAGE_GLOBALS
+PROTOBUF_NOINLINE void PurchaseShopItemResponse::Clear() {
+// @@protoc_insertion_point(message_clear_start:pandora.inventory.v1.PurchaseShopItemResponse)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  cached_has_bits = _impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000000fU)) {
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      _impl_.granted_items_.Clear();
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      _impl_.granted_instances_.Clear();
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      ABSL_DCHECK(_impl_.balance_ != nullptr);
+      _impl_.balance_->Clear();
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      ABSL_DCHECK(_impl_.cost_ != nullptr);
+      _impl_.cost_->Clear();
+    }
+  }
+  _impl_.code_ = 0;
+  _impl_._has_bits_.Clear();
+  _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::uint8_t* PROTOBUF_NONNULL PurchaseShopItemResponse::_InternalSerialize(
+    const ::google::protobuf::MessageLite& base, ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) {
+  const PurchaseShopItemResponse& this_ = static_cast<const PurchaseShopItemResponse&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::uint8_t* PROTOBUF_NONNULL PurchaseShopItemResponse::_InternalSerialize(
+    ::uint8_t* PROTOBUF_NONNULL target,
+    ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+  const PurchaseShopItemResponse& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    this_.CheckHasBitConsistency();
+  }
+  // @@protoc_insertion_point(serialize_to_array_start:pandora.inventory.v1.PurchaseShopItemResponse)
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = this_._impl_._has_bits_[0];
+  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (this_._internal_code() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteEnumToArray(
+          1, this_._internal_code(), target);
+    }
+  }
+
+  // .pandora.common.v1.CurrencyAmount balance = 2 [json_name = "balance"];
+  if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+    target = ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+        2, *this_._impl_.balance_, this_._impl_.balance_->GetCachedSize(), target,
+        stream);
+  }
+
+  // .pandora.common.v1.CurrencyAmount cost = 3 [json_name = "cost"];
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+    target = ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+        3, *this_._impl_.cost_, this_._impl_.cost_->GetCachedSize(), target,
+        stream);
+  }
+
+  // repeated .pandora.inventory.v1.ItemGrant granted_items = 4 [json_name = "grantedItems"];
+  if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+    for (unsigned i = 0, n = static_cast<unsigned>(
+                             this_._internal_granted_items_size());
+         i < n; i++) {
+      const auto& repfield = this_._internal_granted_items().Get(i);
+      target =
+          ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+              4, repfield, repfield.GetCachedSize(),
+              target, stream);
+    }
+  }
+
+  // repeated .pandora.inventory.v1.ItemInstance granted_instances = 5 [json_name = "grantedInstances"];
+  if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+    for (unsigned i = 0, n = static_cast<unsigned>(
+                             this_._internal_granted_instances_size());
+         i < n; i++) {
+      const auto& repfield = this_._internal_granted_instances().Get(i);
+      target =
+          ::google::protobuf::internal::WireFormatLite::InternalWriteMessage(
+              5, repfield, repfield.GetCachedSize(),
+              target, stream);
+    }
+  }
+
+  if (ABSL_PREDICT_FALSE(this_._internal_metadata_.have_unknown_fields())) {
+    target =
+        ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+            this_._internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:pandora.inventory.v1.PurchaseShopItemResponse)
+  return target;
+}
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+::size_t PurchaseShopItemResponse::ByteSizeLong(const MessageLite& base) {
+  const PurchaseShopItemResponse& this_ = static_cast<const PurchaseShopItemResponse&>(base);
+#else   // PROTOBUF_CUSTOM_VTABLE
+::size_t PurchaseShopItemResponse::ByteSizeLong() const {
+  const PurchaseShopItemResponse& this_ = *this;
+#endif  // PROTOBUF_CUSTOM_VTABLE
+  // @@protoc_insertion_point(message_byte_size_start:pandora.inventory.v1.PurchaseShopItemResponse)
+  ::size_t total_size = 0;
+
+  ::uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void)cached_has_bits;
+
+  ::_pbi::Prefetch5LinesFrom7Lines(&this_);
+  cached_has_bits = this_._impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+    // repeated .pandora.inventory.v1.ItemGrant granted_items = 4 [json_name = "grantedItems"];
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      total_size += 1UL * this_._internal_granted_items_size();
+      for (const auto& msg : this_._internal_granted_items()) {
+        total_size += ::google::protobuf::internal::WireFormatLite::MessageSize(msg);
+      }
+    }
+    // repeated .pandora.inventory.v1.ItemInstance granted_instances = 5 [json_name = "grantedInstances"];
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      total_size += 1UL * this_._internal_granted_instances_size();
+      for (const auto& msg : this_._internal_granted_instances()) {
+        total_size += ::google::protobuf::internal::WireFormatLite::MessageSize(msg);
+      }
+    }
+    // .pandora.common.v1.CurrencyAmount balance = 2 [json_name = "balance"];
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      total_size += 1 +
+                    ::google::protobuf::internal::WireFormatLite::MessageSize(*this_._impl_.balance_);
+    }
+    // .pandora.common.v1.CurrencyAmount cost = 3 [json_name = "cost"];
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      total_size += 1 +
+                    ::google::protobuf::internal::WireFormatLite::MessageSize(*this_._impl_.cost_);
+    }
+    // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (this_._internal_code() != 0) {
+        total_size += 1 +
+                      ::_pbi::WireFormatLite::EnumSize(this_._internal_code());
+      }
+    }
+  }
+  return this_.MaybeComputeUnknownFieldsSize(total_size,
+                                             &this_._impl_._cached_size_);
+}
+
+void PurchaseShopItemResponse::MergeImpl(::google::protobuf::MessageLite& to_msg,
+                      const ::google::protobuf::MessageLite& from_msg) {
+   auto* const _this = static_cast<PurchaseShopItemResponse*>(&to_msg);
+  auto& from = static_cast<const PurchaseShopItemResponse&>(from_msg);
+  if constexpr (::_pbi::DebugHardenCheckHasBitConsistency()) {
+    from.CheckHasBitConsistency();
+  }
+  ::google::protobuf::Arena* arena = _this->GetArena();
+  // @@protoc_insertion_point(class_specific_merge_from_start:pandora.inventory.v1.PurchaseShopItemResponse)
+  ABSL_DCHECK_NE(&from, _this);
+  ::uint32_t cached_has_bits = 0;
+  (void)cached_has_bits;
+
+  cached_has_bits = from._impl_._has_bits_[0];
+  if (BatchCheckHasBit(cached_has_bits, 0x0000001fU)) {
+    if (CheckHasBit(cached_has_bits, 0x00000001U)) {
+      _this->_internal_mutable_granted_items()->InternalMergeFromWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), arena,
+          from._internal_granted_items());
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000002U)) {
+      _this->_internal_mutable_granted_instances()->InternalMergeFromWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), arena,
+          from._internal_granted_instances());
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000004U)) {
+      ABSL_DCHECK(from._impl_.balance_ != nullptr);
+      if (_this->_impl_.balance_ == nullptr) {
+        _this->_impl_.balance_ = ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.balance_);
+      } else {
+        _this->_impl_.balance_->MergeFrom(*from._impl_.balance_);
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      ABSL_DCHECK(from._impl_.cost_ != nullptr);
+      if (_this->_impl_.cost_ == nullptr) {
+        _this->_impl_.cost_ = ::google::protobuf::Message::CopyConstruct(arena, *from._impl_.cost_);
+      } else {
+        _this->_impl_.cost_->MergeFrom(*from._impl_.cost_);
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (from._internal_code() != 0) {
+        _this->_impl_.code_ = from._impl_.code_;
+      }
+    }
+  }
+  _this->_impl_._has_bits_[0] |= cached_has_bits;
+  _this->_internal_metadata_.MergeFrom<::google::protobuf::UnknownFieldSet>(
+      from._internal_metadata_);
+}
+
+void PurchaseShopItemResponse::CopyFrom(const PurchaseShopItemResponse& from) {
+  // @@protoc_insertion_point(class_specific_copy_from_start:pandora.inventory.v1.PurchaseShopItemResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+
+void PurchaseShopItemResponse::InternalSwap(PurchaseShopItemResponse* PROTOBUF_RESTRICT PROTOBUF_NONNULL other) {
+  using ::std::swap;
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
+  _impl_.granted_items_.InternalSwap(&other->_impl_.granted_items_);
+  _impl_.granted_instances_.InternalSwap(&other->_impl_.granted_instances_);
+  ::google::protobuf::internal::memswap<
+      PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.code_)
+      + sizeof(PurchaseShopItemResponse::_impl_.code_)
+      - PROTOBUF_FIELD_OFFSET(PurchaseShopItemResponse, _impl_.balance_)>(
+          reinterpret_cast<char*>(&_impl_.balance_),
+          reinterpret_cast<char*>(&other->_impl_.balance_));
+}
+
+::google::protobuf::Metadata PurchaseShopItemResponse::GetMetadata() const {
   return ::google::protobuf::Message::GetMetadataImpl(GetClassData()->full());
 }
 // ===================================================================

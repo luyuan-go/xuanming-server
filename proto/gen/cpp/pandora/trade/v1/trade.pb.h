@@ -1985,14 +1985,14 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Order final : public ::google::prot
   void _internal_set_buyer_id(::uint64_t value);
 
   public:
-  // int64 price = 5 [json_name = "price"];
+  // uint64 price = 5 [json_name = "price"];
   void clear_price() ;
-  [[nodiscard]] ::int64_t price() const;
-  void set_price(::int64_t value);
+  [[nodiscard]] ::uint64_t price() const;
+  void set_price(::uint64_t value);
 
   private:
-  ::int64_t _internal_price() const;
-  void _internal_set_price(::int64_t value);
+  ::uint64_t _internal_price() const;
+  void _internal_set_price(::uint64_t value);
 
   public:
   // int64 created_at_ms = 7 [json_name = "createdAtMs"];
@@ -2063,7 +2063,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Order final : public ::google::prot
     ::uint64_t order_id_;
     ::uint64_t seller_id_;
     ::uint64_t buyer_id_;
-    ::int64_t price_;
+    ::uint64_t price_;
     ::int64_t created_at_ms_;
     ::int64_t expires_at_ms_;
     int state_;
@@ -2290,14 +2290,14 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED CreateOrderRequest final : public :
   void _internal_set_buyer_id(::uint64_t value);
 
   public:
-  // int64 price = 4 [json_name = "price"];
+  // uint64 price = 4 [json_name = "price"];
   void clear_price() ;
-  [[nodiscard]] ::int64_t price() const;
-  void set_price(::int64_t value);
+  [[nodiscard]] ::uint64_t price() const;
+  void set_price(::uint64_t value);
 
   private:
-  ::int64_t _internal_price() const;
-  void _internal_set_price(::int64_t value);
+  ::uint64_t _internal_price() const;
+  void _internal_set_price(::uint64_t value);
 
   public:
   // @@protoc_insertion_point(class_scope:pandora.trade.v1.CreateOrderRequest)
@@ -2337,7 +2337,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED CreateOrderRequest final : public :
     ::google::protobuf::RepeatedPtrField< ::pandora::trade::v1::TradeItem > buyer_items_;
     ::uint64_t seller_id_;
     ::uint64_t buyer_id_;
-    ::int64_t price_;
+    ::uint64_t price_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -2775,26 +2775,26 @@ Order::_internal_mutable_items() {
   return &_impl_.items_;
 }
 
-// int64 price = 5 [json_name = "price"];
+// uint64 price = 5 [json_name = "price"];
 inline void Order::clear_price() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.price_ = ::int64_t{0};
+  _impl_.price_ = ::uint64_t{0u};
   ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
 }
-inline ::int64_t Order::price() const {
+inline ::uint64_t Order::price() const {
   // @@protoc_insertion_point(field_get:pandora.trade.v1.Order.price)
   return _internal_price();
 }
-inline void Order::set_price(::int64_t value) {
+inline void Order::set_price(::uint64_t value) {
   _internal_set_price(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000020U);
   // @@protoc_insertion_point(field_set:pandora.trade.v1.Order.price)
 }
-inline ::int64_t Order::_internal_price() const {
+inline ::uint64_t Order::_internal_price() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.price_;
 }
-inline void Order::_internal_set_price(::int64_t value) {
+inline void Order::_internal_set_price(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.price_ = value;
 }
@@ -3033,26 +3033,26 @@ CreateOrderRequest::_internal_mutable_items() {
   return &_impl_.items_;
 }
 
-// int64 price = 4 [json_name = "price"];
+// uint64 price = 4 [json_name = "price"];
 inline void CreateOrderRequest::clear_price() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.price_ = ::int64_t{0};
+  _impl_.price_ = ::uint64_t{0u};
   ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
 }
-inline ::int64_t CreateOrderRequest::price() const {
+inline ::uint64_t CreateOrderRequest::price() const {
   // @@protoc_insertion_point(field_get:pandora.trade.v1.CreateOrderRequest.price)
   return _internal_price();
 }
-inline void CreateOrderRequest::set_price(::int64_t value) {
+inline void CreateOrderRequest::set_price(::uint64_t value) {
   _internal_set_price(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000010U);
   // @@protoc_insertion_point(field_set:pandora.trade.v1.CreateOrderRequest.price)
 }
-inline ::int64_t CreateOrderRequest::_internal_price() const {
+inline ::uint64_t CreateOrderRequest::_internal_price() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.price_;
 }
-inline void CreateOrderRequest::_internal_set_price(::int64_t value) {
+inline void CreateOrderRequest::_internal_set_price(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.price_ = value;
 }

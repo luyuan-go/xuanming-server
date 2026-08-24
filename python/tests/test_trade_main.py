@@ -317,7 +317,14 @@ def test_settle_ok_passes_and_carries_order_id_as_idempotency_key() -> None:
     req = ch.requests[0]
     # 幂等键恒为 order_id(不变量 §9.7);对错了会让重试变成第二次真扣减。
     assert req.order_id == 901
-    assert req.seller_id == 11 and req.buyer_id == 22 and req.price == 500
+    assert req.seller_id == 11 and req.buyer_id == 22
+    # 多币种改造后价格是 CurrencyAmount。★ kind 必须**显式**给金币:
+    # inventory 对 UNSPECIFIED 一律 fail-closed,不会回退成金币(currency.proto),
+    # 漏传会让每一笔 P2P 结算都报 ERR_INVALID_ARG。
+    from pandora.common.v1 import currency_pb2
+
+    assert req.price_amount.amount == 500
+    assert req.price_amount.kind == currency_pb2.CURRENCY_KIND_GOLD
     assert [(g.item_config_id, g.count) for g in req.seller_items] == [(1001, 2)]
     assert [(g.item_config_id, g.count) for g in req.buyer_items] == [(2002, 1)]
 

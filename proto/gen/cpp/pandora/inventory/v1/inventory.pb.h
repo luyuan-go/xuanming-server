@@ -32,6 +32,7 @@
 #include "google/protobuf/generated_enum_reflection.h"
 #include "google/protobuf/unknown_field_set.h"
 #include "pandora/common/v1/errcode.pb.h"
+#include "pandora/common/v1/currency.pb.h"
 #include "pandora/bag/v1/bag.pb.h"
 // @@protoc_insertion_point(includes)
 
@@ -59,8 +60,6 @@ extern const ::google::protobuf::internal::DescriptorTable descriptor_table_pand
 namespace pandora {
 namespace inventory {
 namespace v1 {
-enum CurrencyKind : int;
-extern const uint32_t CurrencyKind_internal_data_[];
 enum EscrowSide : int;
 extern const uint32_t EscrowSide_internal_data_[];
 class CheckInstancesOwnedRequest;
@@ -255,6 +254,22 @@ extern const ::google::protobuf::internal::ClassDataFull GetInventoryResponse_cl
 #else
 extern const GetInventoryResponseGlobalsTypeInternal GetInventoryResponse_globals_;
 #endif  // PROTOBUF_MESSAGE_GLOBALS
+class GetShopRequest;
+struct GetShopRequestGlobalsTypeInternal;
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+extern GetShopRequestGlobalsTypeInternal GetShopRequest_globals_;
+extern const ::google::protobuf::internal::ClassDataFull GetShopRequest_class_data_;
+#else
+extern const GetShopRequestGlobalsTypeInternal GetShopRequest_globals_;
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+class GetShopResponse;
+struct GetShopResponseGlobalsTypeInternal;
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+extern GetShopResponseGlobalsTypeInternal GetShopResponse_globals_;
+extern const ::google::protobuf::internal::ClassDataFull GetShopResponse_class_data_;
+#else
+extern const GetShopResponseGlobalsTypeInternal GetShopResponse_globals_;
+#endif  // PROTOBUF_MESSAGE_GLOBALS
 class GrantInstancesRequest;
 struct GrantInstancesRequestGlobalsTypeInternal;
 #ifndef PROTOBUF_MESSAGE_GLOBALS
@@ -375,6 +390,22 @@ extern const ::google::protobuf::internal::ClassDataFull MoveInstanceResponse_cl
 #else
 extern const MoveInstanceResponseGlobalsTypeInternal MoveInstanceResponse_globals_;
 #endif  // PROTOBUF_MESSAGE_GLOBALS
+class PurchaseShopItemRequest;
+struct PurchaseShopItemRequestGlobalsTypeInternal;
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+extern PurchaseShopItemRequestGlobalsTypeInternal PurchaseShopItemRequest_globals_;
+extern const ::google::protobuf::internal::ClassDataFull PurchaseShopItemRequest_class_data_;
+#else
+extern const PurchaseShopItemRequestGlobalsTypeInternal PurchaseShopItemRequest_globals_;
+#endif  // PROTOBUF_MESSAGE_GLOBALS
+class PurchaseShopItemResponse;
+struct PurchaseShopItemResponseGlobalsTypeInternal;
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+extern PurchaseShopItemResponseGlobalsTypeInternal PurchaseShopItemResponse_globals_;
+extern const ::google::protobuf::internal::ClassDataFull PurchaseShopItemResponse_class_data_;
+#else
+extern const PurchaseShopItemResponseGlobalsTypeInternal PurchaseShopItemResponse_globals_;
+#endif  // PROTOBUF_MESSAGE_GLOBALS
 class ReleaseEscrowRequest;
 struct ReleaseEscrowRequestGlobalsTypeInternal;
 #ifndef PROTOBUF_MESSAGE_GLOBALS
@@ -471,6 +502,14 @@ extern const ::google::protobuf::internal::ClassDataFull SettlePlayerTradeRespon
 #else
 extern const SettlePlayerTradeResponseGlobalsTypeInternal SettlePlayerTradeResponse_globals_;
 #endif  // PROTOBUF_MESSAGE_GLOBALS
+class ShopEntry;
+struct ShopEntryGlobalsTypeInternal;
+#ifndef PROTOBUF_MESSAGE_GLOBALS
+extern ShopEntryGlobalsTypeInternal ShopEntry_globals_;
+extern const ::google::protobuf::internal::ClassDataFull ShopEntry_class_data_;
+#else
+extern const ShopEntryGlobalsTypeInternal ShopEntry_globals_;
+#endif  // PROTOBUF_MESSAGE_GLOBALS
 class TransferClaimItem;
 struct TransferClaimItemGlobalsTypeInternal;
 #ifndef PROTOBUF_MESSAGE_GLOBALS
@@ -500,9 +539,6 @@ extern const UseItemResponseGlobalsTypeInternal UseItemResponse_globals_;
 }  // namespace pandora
 namespace google {
 namespace protobuf {
-template <>
-internal::EnumTraitsT<::pandora::inventory::v1::CurrencyKind_internal_data_>
-    internal::EnumTraitsImpl::value<::pandora::inventory::v1::CurrencyKind>;
 template <>
 internal::EnumTraitsT<::pandora::inventory::v1::EscrowSide_internal_data_>
     internal::EnumTraitsImpl::value<::pandora::inventory::v1::EscrowSide>;
@@ -551,46 +587,6 @@ template <>
 [[nodiscard]] inline bool EscrowSide_Parse(
     ::absl::string_view name, EscrowSide* PROTOBUF_NONNULL value) {
   return ::google::protobuf::internal::ParseNamedEnum<EscrowSide>(EscrowSide_descriptor(), name,
-                                           value);
-}
-enum CurrencyKind : int {
-  CURRENCY_KIND_UNSPECIFIED = 0,
-  CURRENCY_KIND_GOLD = 1,
-  CurrencyKind_INT_MIN_SENTINEL_DO_NOT_USE_ =
-      ::std::numeric_limits<::int32_t>::min(),
-  CurrencyKind_INT_MAX_SENTINEL_DO_NOT_USE_ =
-      ::std::numeric_limits<::int32_t>::max(),
-};
-
-extern const uint32_t CurrencyKind_internal_data_[];
-inline constexpr CurrencyKind CurrencyKind_MIN =
-    static_cast<CurrencyKind>(0);
-inline constexpr CurrencyKind CurrencyKind_MAX =
-    static_cast<CurrencyKind>(1);
-[[nodiscard]] inline bool CurrencyKind_IsValid(int value) {
-  return 0 <= value && value <= 1;
-}
-inline constexpr int CurrencyKind_ARRAYSIZE = 1 + 1;
-[[nodiscard]] const ::google::protobuf::EnumDescriptor* PROTOBUF_NONNULL
-CurrencyKind_descriptor();
-[[nodiscard]] inline auto ProtobufInternalGetEnumDescriptor(CurrencyKind) {
-  return CurrencyKind_descriptor();
-}
-template <typename T>
-[[nodiscard]] const ::std::string& CurrencyKind_Name(T value) {
-  static_assert(::std::is_same<T, CurrencyKind>::value ||
-                    ::std::is_integral<T>::value,
-                "Incorrect type passed to CurrencyKind_Name().");
-  return CurrencyKind_Name(static_cast<CurrencyKind>(value));
-}
-template <>
-[[nodiscard]] inline const ::std::string& CurrencyKind_Name(CurrencyKind value) {
-  return ::google::protobuf::internal::NameOfDenseEnum<CurrencyKind_descriptor, 0, 1>(
-      static_cast<int>(value));
-}
-[[nodiscard]] inline bool CurrencyKind_Parse(
-    ::absl::string_view name, CurrencyKind* PROTOBUF_NONNULL value) {
-  return ::google::protobuf::internal::ParseNamedEnum<CurrencyKind>(CurrencyKind_descriptor(), name,
                                            value);
 }
 using ::google::protobuf::internal::generated_enum::AbslParseFlag;
@@ -1112,7 +1108,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TransferClaimItem final : public ::
   [[nodiscard]] static const TransferClaimItem& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<TransferClaimItem>(&TransferClaimItem_globals_);
   }
-  static constexpr int kIndexInFileMessages = 47;
+  static constexpr int kIndexInFileMessages = 52;
   friend void swap(TransferClaimItem& a, TransferClaimItem& b) { a.Swap(&b); }
   inline void Swap(TransferClaimItem* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -1262,6 +1258,255 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TransferClaimItem final : public ::
     ::google::protobuf::internal::CachedSize _cached_size_;
     ::uint64_t instance_id_;
     ::uint32_t item_config_id_;
+    PROTOBUF_TSAN_DECLARE_MEMBER
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
+};
+// -------------------------------------------------------------------
+
+class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ShopEntry final : public ::google::protobuf::Message
+/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.ShopEntry) */ {
+ public:
+  inline ShopEntry() : ShopEntry(nullptr) {}
+  ~ShopEntry() PROTOBUF_FINAL;
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+  void operator delete(ShopEntry* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
+    SharedDtor(*msg);
+    ::google::protobuf::internal::SizedDelete(msg, sizeof(ShopEntry));
+  }
+#endif
+
+  template <typename = void>
+  explicit constexpr ShopEntry(::google::protobuf::internal::ConstantInitialized,
+                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+                               class_data);
+
+  inline ShopEntry(const ShopEntry& from) : ShopEntry(nullptr, from) {}
+  inline ShopEntry(ShopEntry&& from) noexcept : ShopEntry(nullptr, ::std::move(from)) {}
+  inline ShopEntry& operator=(const ShopEntry& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline ShopEntry& operator=(ShopEntry&& from) noexcept {
+    if (this == &from) return *this;
+    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
+      ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
+  }
+  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
+  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
+  }
+
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
+    return GetDescriptor();
+  }
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
+  GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  [[nodiscard]] static const ShopEntry& default_instance() {
+    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<ShopEntry>(&ShopEntry_globals_);
+  }
+  static constexpr int kIndexInFileMessages = 46;
+  friend void swap(ShopEntry& a, ShopEntry& b) { a.Swap(&b); }
+  inline void Swap(ShopEntry* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
+      InternalSwap(other);
+    } else {
+      ::google::protobuf::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(ShopEntry* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    ABSL_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  [[nodiscard]] ShopEntry* PROTOBUF_NONNULL
+  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
+    return ::google::protobuf::Message::DefaultConstruct<ShopEntry>(arena);
+  }
+  using ::google::protobuf::Message::CopyFrom;
+  void CopyFrom(const ShopEntry& from);
+  using ::google::protobuf::Message::MergeFrom;
+  void MergeFrom(const ShopEntry& from) { ShopEntry::MergeImpl(*this, from); }
+
+  private:
+  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
+                        const ::google::protobuf::MessageLite& from_msg);
+
+  public:
+  [[nodiscard]] bool IsInitialized() const {
+    return true;
+  }
+  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
+  #if defined(PROTOBUF_CUSTOM_VTABLE)
+  private:
+  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
+  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
+
+  public:
+  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+    return _InternalSerialize(*this, target, stream);
+  }
+  #else   // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] ::size_t ByteSizeLong() const final;
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
+  #endif  // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] int GetCachedSize() const {
+    return _impl_._cached_size_.Get();
+  }
+
+  private:
+  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static void SharedDtor(MessageLite& self);
+  void InternalSwap(ShopEntry* PROTOBUF_NONNULL other);
+ private:
+  template <typename T>
+  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
+  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.ShopEntry"; }
+
+  explicit ShopEntry(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  ShopEntry(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const ShopEntry& from);
+  ShopEntry(
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, ShopEntry&& from) noexcept
+      : ShopEntry(arena) {
+    *this = ::std::move(from);
+  }
+  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
+  static void* PROTOBUF_NONNULL PlacementNew_(
+      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static constexpr auto InternalNewImpl_();
+
+ public:
+  static constexpr auto InternalGenerateClassData_(
+      const MessageLite& prototype,
+      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
+
+  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+  enum : int {
+    kItemConfigIdFieldNumber = 1,
+    kCountPerUnitFieldNumber = 2,
+    kUnitPriceFieldNumber = 4,
+    kCurrencyKindFieldNumber = 3,
+    kSortOrderFieldNumber = 5,
+  };
+  // uint32 item_config_id = 1 [json_name = "itemConfigId"];
+  void clear_item_config_id() ;
+  [[nodiscard]] ::uint32_t item_config_id() const;
+  void set_item_config_id(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_item_config_id() const;
+  void _internal_set_item_config_id(::uint32_t value);
+
+  public:
+  // uint32 count_per_unit = 2 [json_name = "countPerUnit"];
+  void clear_count_per_unit() ;
+  [[nodiscard]] ::uint32_t count_per_unit() const;
+  void set_count_per_unit(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_count_per_unit() const;
+  void _internal_set_count_per_unit(::uint32_t value);
+
+  public:
+  // uint64 unit_price = 4 [json_name = "unitPrice"];
+  void clear_unit_price() ;
+  [[nodiscard]] ::uint64_t unit_price() const;
+  void set_unit_price(::uint64_t value);
+
+  private:
+  ::uint64_t _internal_unit_price() const;
+  void _internal_set_unit_price(::uint64_t value);
+
+  public:
+  // .pandora.common.v1.CurrencyKind currency_kind = 3 [json_name = "currencyKind"];
+  void clear_currency_kind() ;
+  [[nodiscard]] ::pandora::common::v1::CurrencyKind currency_kind() const;
+  void set_currency_kind(::pandora::common::v1::CurrencyKind value);
+
+  private:
+  ::pandora::common::v1::CurrencyKind _internal_currency_kind() const;
+  void _internal_set_currency_kind(::pandora::common::v1::CurrencyKind value);
+
+  public:
+  // uint32 sort_order = 5 [json_name = "sortOrder"];
+  void clear_sort_order() ;
+  [[nodiscard]] ::uint32_t sort_order() const;
+  void set_sort_order(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_sort_order() const;
+  void _internal_set_sort_order(::uint32_t value);
+
+  public:
+  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.ShopEntry)
+ private:
+  class _Internal;
+  using ParseTableT_ =
+      ::google::protobuf::internal::TcParseTable<3, 5,
+                          0, 0,
+                          2>;
+  static constexpr ParseTableT_ InternalGenerateParseTable_(
+      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
+  friend class ::google::protobuf::internal::TcParser;
+  #ifndef PROTOBUF_MESSAGE_GLOBALS
+  static const ParseTableT_ _table_;
+  #endif
+
+  friend class ::google::protobuf::MessageLite;
+  friend class ::google::protobuf::Arena;
+  friend ::google::protobuf::internal::PrivateAccess;
+  template <typename T>
+  friend class ::google::protobuf::Arena::InternalHelper;
+  using InternalArenaConstructable_ = void;
+  using DestructorSkippable_ = void;
+  struct Impl_ {
+    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
+                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+        const ShopEntry& from_msg);
+    ::google::protobuf::internal::HasBits<1> _has_bits_;
+    ::google::protobuf::internal::CachedSize _cached_size_;
+    ::uint32_t item_config_id_;
+    ::uint32_t count_per_unit_;
+    ::uint64_t unit_price_;
+    int currency_kind_;
+    ::uint32_t sort_order_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -1824,9 +2069,10 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SettleAuctionMatchRequest final : p
     kBuyerIdFieldNumber = 3,
     kQuantityFieldNumber = 5,
     kUnitPriceFieldNumber = 6,
+    kItemConfigIdFieldNumber = 4,
+    kCurrencyKindFieldNumber = 9,
     kSellOrderIdFieldNumber = 7,
     kBuyOrderIdFieldNumber = 8,
-    kItemConfigIdFieldNumber = 4,
   };
   // uint64 match_id = 1 [json_name = "matchId"];
   void clear_match_id() ;
@@ -1868,14 +2114,34 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SettleAuctionMatchRequest final : p
   void _internal_set_quantity(::int64_t value);
 
   public:
-  // int64 unit_price = 6 [json_name = "unitPrice"];
+  // uint64 unit_price = 6 [json_name = "unitPrice"];
   void clear_unit_price() ;
-  [[nodiscard]] ::int64_t unit_price() const;
-  void set_unit_price(::int64_t value);
+  [[nodiscard]] ::uint64_t unit_price() const;
+  void set_unit_price(::uint64_t value);
 
   private:
-  ::int64_t _internal_unit_price() const;
-  void _internal_set_unit_price(::int64_t value);
+  ::uint64_t _internal_unit_price() const;
+  void _internal_set_unit_price(::uint64_t value);
+
+  public:
+  // uint32 item_config_id = 4 [json_name = "itemConfigId"];
+  void clear_item_config_id() ;
+  [[nodiscard]] ::uint32_t item_config_id() const;
+  void set_item_config_id(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_item_config_id() const;
+  void _internal_set_item_config_id(::uint32_t value);
+
+  public:
+  // .pandora.common.v1.CurrencyKind currency_kind = 9 [json_name = "currencyKind"];
+  void clear_currency_kind() ;
+  [[nodiscard]] ::pandora::common::v1::CurrencyKind currency_kind() const;
+  void set_currency_kind(::pandora::common::v1::CurrencyKind value);
+
+  private:
+  ::pandora::common::v1::CurrencyKind _internal_currency_kind() const;
+  void _internal_set_currency_kind(::pandora::common::v1::CurrencyKind value);
 
   public:
   // uint64 sell_order_id = 7 [json_name = "sellOrderId"];
@@ -1898,21 +2164,11 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SettleAuctionMatchRequest final : p
   void _internal_set_buy_order_id(::uint64_t value);
 
   public:
-  // uint32 item_config_id = 4 [json_name = "itemConfigId"];
-  void clear_item_config_id() ;
-  [[nodiscard]] ::uint32_t item_config_id() const;
-  void set_item_config_id(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_item_config_id() const;
-  void _internal_set_item_config_id(::uint32_t value);
-
-  public:
   // @@protoc_insertion_point(class_scope:pandora.inventory.v1.SettleAuctionMatchRequest)
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<3, 8,
+      ::google::protobuf::internal::TcParseTable<4, 9,
                           0, 0,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
@@ -1945,235 +2201,11 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SettleAuctionMatchRequest final : p
     ::uint64_t seller_id_;
     ::uint64_t buyer_id_;
     ::int64_t quantity_;
-    ::int64_t unit_price_;
+    ::uint64_t unit_price_;
+    ::uint32_t item_config_id_;
+    int currency_kind_;
     ::uint64_t sell_order_id_;
     ::uint64_t buy_order_id_;
-    ::uint32_t item_config_id_;
-    PROTOBUF_TSAN_DECLARE_MEMBER
-  };
-  union { Impl_ _impl_; };
-  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
-};
-// -------------------------------------------------------------------
-
-class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SellItemResponse final : public ::google::protobuf::Message
-/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.SellItemResponse) */ {
- public:
-  inline SellItemResponse() : SellItemResponse(nullptr) {}
-  ~SellItemResponse() PROTOBUF_FINAL;
-
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-  void operator delete(SellItemResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
-    SharedDtor(*msg);
-    ::google::protobuf::internal::SizedDelete(msg, sizeof(SellItemResponse));
-  }
-#endif
-
-  template <typename = void>
-  explicit constexpr SellItemResponse(::google::protobuf::internal::ConstantInitialized,
-                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
-                               class_data);
-
-  inline SellItemResponse(const SellItemResponse& from) : SellItemResponse(nullptr, from) {}
-  inline SellItemResponse(SellItemResponse&& from) noexcept : SellItemResponse(nullptr, ::std::move(from)) {}
-  inline SellItemResponse& operator=(const SellItemResponse& from) {
-    CopyFrom(from);
-    return *this;
-  }
-  inline SellItemResponse& operator=(SellItemResponse&& from) noexcept {
-    if (this == &from) return *this;
-    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
-      InternalSwap(&from);
-    } else {
-      CopyFrom(from);
-    }
-    return *this;
-  }
-
-  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
-      ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
-  }
-  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
-  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
-  }
-
-  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
-    return GetDescriptor();
-  }
-  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
-  GetDescriptor() {
-    return default_instance().GetMetadata().descriptor;
-  }
-  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
-    return default_instance().GetMetadata().reflection;
-  }
-  [[nodiscard]] static const SellItemResponse& default_instance() {
-    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<SellItemResponse>(&SellItemResponse_globals_);
-  }
-  static constexpr int kIndexInFileMessages = 22;
-  friend void swap(SellItemResponse& a, SellItemResponse& b) { a.Swap(&b); }
-  inline void Swap(SellItemResponse* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
-      InternalSwap(other);
-    } else {
-      ::google::protobuf::internal::GenericSwap(this, other);
-    }
-  }
-  void UnsafeArenaSwap(SellItemResponse* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    ABSL_DCHECK(GetArena() == other->GetArena());
-    InternalSwap(other);
-  }
-
-  // implements Message ----------------------------------------------
-
-  [[nodiscard]] SellItemResponse* PROTOBUF_NONNULL
-  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
-    return ::google::protobuf::Message::DefaultConstruct<SellItemResponse>(arena);
-  }
-  using ::google::protobuf::Message::CopyFrom;
-  void CopyFrom(const SellItemResponse& from);
-  using ::google::protobuf::Message::MergeFrom;
-  void MergeFrom(const SellItemResponse& from) { SellItemResponse::MergeImpl(*this, from); }
-
-  private:
-  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
-                        const ::google::protobuf::MessageLite& from_msg);
-
-  public:
-  [[nodiscard]] bool IsInitialized() const {
-    return true;
-  }
-  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
-  #if defined(PROTOBUF_CUSTOM_VTABLE)
-  private:
-  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
-  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
-
-  public:
-  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
-    return _InternalSerialize(*this, target, stream);
-  }
-  #else   // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] ::size_t ByteSizeLong() const final;
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
-  #endif  // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] int GetCachedSize() const {
-    return _impl_._cached_size_.Get();
-  }
-
-  private:
-  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static void SharedDtor(MessageLite& self);
-  void InternalSwap(SellItemResponse* PROTOBUF_NONNULL other);
- private:
-  template <typename T>
-  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
-  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.SellItemResponse"; }
-
-  explicit SellItemResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  SellItemResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const SellItemResponse& from);
-  SellItemResponse(
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, SellItemResponse&& from) noexcept
-      : SellItemResponse(arena) {
-    *this = ::std::move(from);
-  }
-  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
-  static void* PROTOBUF_NONNULL PlacementNew_(
-      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static constexpr auto InternalNewImpl_();
-
- public:
-  static constexpr auto InternalGenerateClassData_(
-      const MessageLite& prototype,
-      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
-
-  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
-  // nested types ----------------------------------------------------
-
-  // accessors -------------------------------------------------------
-  enum : int {
-    kRemainingFieldNumber = 2,
-    kGoldFieldNumber = 3,
-    kCodeFieldNumber = 1,
-  };
-  // int64 remaining = 2 [json_name = "remaining"];
-  void clear_remaining() ;
-  [[nodiscard]] ::int64_t remaining() const;
-  void set_remaining(::int64_t value);
-
-  private:
-  ::int64_t _internal_remaining() const;
-  void _internal_set_remaining(::int64_t value);
-
-  public:
-  // int64 gold = 3 [json_name = "gold"];
-  void clear_gold() ;
-  [[nodiscard]] ::int64_t gold() const;
-  void set_gold(::int64_t value);
-
-  private:
-  ::int64_t _internal_gold() const;
-  void _internal_set_gold(::int64_t value);
-
-  public:
-  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-  void clear_code() ;
-  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
-  void set_code(::pandora::common::v1::ErrCode value);
-
-  private:
-  ::pandora::common::v1::ErrCode _internal_code() const;
-  void _internal_set_code(::pandora::common::v1::ErrCode value);
-
-  public:
-  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.SellItemResponse)
- private:
-  class _Internal;
-  using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<2, 3,
-                          0, 0,
-                          2>;
-  static constexpr ParseTableT_ InternalGenerateParseTable_(
-      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
-  friend class ::google::protobuf::internal::TcParser;
-  #ifndef PROTOBUF_MESSAGE_GLOBALS
-  static const ParseTableT_ _table_;
-  #endif
-
-  friend class ::google::protobuf::MessageLite;
-  friend class ::google::protobuf::Arena;
-  friend ::google::protobuf::internal::PrivateAccess;
-  template <typename T>
-  friend class ::google::protobuf::Arena::InternalHelper;
-  using InternalArenaConstructable_ = void;
-  using DestructorSkippable_ = void;
-  struct Impl_ {
-    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
-                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
-        const SellItemResponse& from_msg);
-    ::google::protobuf::internal::HasBits<1> _has_bits_;
-    ::google::protobuf::internal::CachedSize _cached_size_;
-    ::int64_t remaining_;
-    ::int64_t gold_;
-    int code_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -2416,219 +2448,6 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SellItemRequest final : public ::go
     ::uint64_t player_id_;
     ::int64_t count_;
     ::uint32_t item_config_id_;
-    PROTOBUF_TSAN_DECLARE_MEMBER
-  };
-  union { Impl_ _impl_; };
-  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
-};
-// -------------------------------------------------------------------
-
-class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SellInstanceResponse final : public ::google::protobuf::Message
-/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.SellInstanceResponse) */ {
- public:
-  inline SellInstanceResponse() : SellInstanceResponse(nullptr) {}
-  ~SellInstanceResponse() PROTOBUF_FINAL;
-
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-  void operator delete(SellInstanceResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
-    SharedDtor(*msg);
-    ::google::protobuf::internal::SizedDelete(msg, sizeof(SellInstanceResponse));
-  }
-#endif
-
-  template <typename = void>
-  explicit constexpr SellInstanceResponse(::google::protobuf::internal::ConstantInitialized,
-                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
-                               class_data);
-
-  inline SellInstanceResponse(const SellInstanceResponse& from) : SellInstanceResponse(nullptr, from) {}
-  inline SellInstanceResponse(SellInstanceResponse&& from) noexcept : SellInstanceResponse(nullptr, ::std::move(from)) {}
-  inline SellInstanceResponse& operator=(const SellInstanceResponse& from) {
-    CopyFrom(from);
-    return *this;
-  }
-  inline SellInstanceResponse& operator=(SellInstanceResponse&& from) noexcept {
-    if (this == &from) return *this;
-    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
-      InternalSwap(&from);
-    } else {
-      CopyFrom(from);
-    }
-    return *this;
-  }
-
-  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
-      ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
-  }
-  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
-  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
-  }
-
-  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
-    return GetDescriptor();
-  }
-  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
-  GetDescriptor() {
-    return default_instance().GetMetadata().descriptor;
-  }
-  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
-    return default_instance().GetMetadata().reflection;
-  }
-  [[nodiscard]] static const SellInstanceResponse& default_instance() {
-    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<SellInstanceResponse>(&SellInstanceResponse_globals_);
-  }
-  static constexpr int kIndexInFileMessages = 44;
-  friend void swap(SellInstanceResponse& a, SellInstanceResponse& b) { a.Swap(&b); }
-  inline void Swap(SellInstanceResponse* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
-      InternalSwap(other);
-    } else {
-      ::google::protobuf::internal::GenericSwap(this, other);
-    }
-  }
-  void UnsafeArenaSwap(SellInstanceResponse* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    ABSL_DCHECK(GetArena() == other->GetArena());
-    InternalSwap(other);
-  }
-
-  // implements Message ----------------------------------------------
-
-  [[nodiscard]] SellInstanceResponse* PROTOBUF_NONNULL
-  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
-    return ::google::protobuf::Message::DefaultConstruct<SellInstanceResponse>(arena);
-  }
-  using ::google::protobuf::Message::CopyFrom;
-  void CopyFrom(const SellInstanceResponse& from);
-  using ::google::protobuf::Message::MergeFrom;
-  void MergeFrom(const SellInstanceResponse& from) { SellInstanceResponse::MergeImpl(*this, from); }
-
-  private:
-  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
-                        const ::google::protobuf::MessageLite& from_msg);
-
-  public:
-  [[nodiscard]] bool IsInitialized() const {
-    return true;
-  }
-  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
-  #if defined(PROTOBUF_CUSTOM_VTABLE)
-  private:
-  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
-  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
-
-  public:
-  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
-    return _InternalSerialize(*this, target, stream);
-  }
-  #else   // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] ::size_t ByteSizeLong() const final;
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
-  #endif  // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] int GetCachedSize() const {
-    return _impl_._cached_size_.Get();
-  }
-
-  private:
-  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static void SharedDtor(MessageLite& self);
-  void InternalSwap(SellInstanceResponse* PROTOBUF_NONNULL other);
- private:
-  template <typename T>
-  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
-  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.SellInstanceResponse"; }
-
-  explicit SellInstanceResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  SellInstanceResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const SellInstanceResponse& from);
-  SellInstanceResponse(
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, SellInstanceResponse&& from) noexcept
-      : SellInstanceResponse(arena) {
-    *this = ::std::move(from);
-  }
-  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
-  static void* PROTOBUF_NONNULL PlacementNew_(
-      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static constexpr auto InternalNewImpl_();
-
- public:
-  static constexpr auto InternalGenerateClassData_(
-      const MessageLite& prototype,
-      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
-
-  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
-  // nested types ----------------------------------------------------
-
-  // accessors -------------------------------------------------------
-  enum : int {
-    kGoldFieldNumber = 2,
-    kCodeFieldNumber = 1,
-  };
-  // int64 gold = 2 [json_name = "gold"];
-  void clear_gold() ;
-  [[nodiscard]] ::int64_t gold() const;
-  void set_gold(::int64_t value);
-
-  private:
-  ::int64_t _internal_gold() const;
-  void _internal_set_gold(::int64_t value);
-
-  public:
-  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-  void clear_code() ;
-  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
-  void set_code(::pandora::common::v1::ErrCode value);
-
-  private:
-  ::pandora::common::v1::ErrCode _internal_code() const;
-  void _internal_set_code(::pandora::common::v1::ErrCode value);
-
-  public:
-  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.SellInstanceResponse)
- private:
-  class _Internal;
-  using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<1, 2,
-                          0, 0,
-                          2>;
-  static constexpr ParseTableT_ InternalGenerateParseTable_(
-      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
-  friend class ::google::protobuf::internal::TcParser;
-  #ifndef PROTOBUF_MESSAGE_GLOBALS
-  static const ParseTableT_ _table_;
-  #endif
-
-  friend class ::google::protobuf::MessageLite;
-  friend class ::google::protobuf::Arena;
-  friend ::google::protobuf::internal::PrivateAccess;
-  template <typename T>
-  friend class ::google::protobuf::Arena::InternalHelper;
-  using InternalArenaConstructable_ = void;
-  using DestructorSkippable_ = void;
-  struct Impl_ {
-    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
-                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
-        const SellInstanceResponse& from_msg);
-    ::google::protobuf::internal::HasBits<1> _has_bits_;
-    ::google::protobuf::internal::CachedSize _cached_size_;
-    ::int64_t gold_;
-    int code_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -2934,7 +2753,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ReleaseTransferEscrowResponse final
   [[nodiscard]] static const ReleaseTransferEscrowResponse& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<ReleaseTransferEscrowResponse>(&ReleaseTransferEscrowResponse_globals_);
   }
-  static constexpr int kIndexInFileMessages = 51;
+  static constexpr int kIndexInFileMessages = 56;
   friend void swap(ReleaseTransferEscrowResponse& a, ReleaseTransferEscrowResponse& b) { a.Swap(&b); }
   inline void Swap(ReleaseTransferEscrowResponse* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -3135,7 +2954,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ReleaseTransferEscrowRequest final 
   [[nodiscard]] static const ReleaseTransferEscrowRequest& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<ReleaseTransferEscrowRequest>(&ReleaseTransferEscrowRequest_globals_);
   }
-  static constexpr int kIndexInFileMessages = 50;
+  static constexpr int kIndexInFileMessages = 55;
   friend void swap(ReleaseTransferEscrowRequest& a, ReleaseTransferEscrowRequest& b) { a.Swap(&b); }
   inline void Swap(ReleaseTransferEscrowRequest* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -3698,6 +3517,260 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ReleaseEscrowRequest final : public
     ::google::protobuf::internal::CachedSize _cached_size_;
     ::uint64_t player_id_;
     ::uint64_t order_id_;
+    PROTOBUF_TSAN_DECLARE_MEMBER
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
+};
+// -------------------------------------------------------------------
+
+class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED PurchaseShopItemRequest final : public ::google::protobuf::Message
+/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.PurchaseShopItemRequest) */ {
+ public:
+  inline PurchaseShopItemRequest() : PurchaseShopItemRequest(nullptr) {}
+  ~PurchaseShopItemRequest() PROTOBUF_FINAL;
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+  void operator delete(PurchaseShopItemRequest* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
+    SharedDtor(*msg);
+    ::google::protobuf::internal::SizedDelete(msg, sizeof(PurchaseShopItemRequest));
+  }
+#endif
+
+  template <typename = void>
+  explicit constexpr PurchaseShopItemRequest(::google::protobuf::internal::ConstantInitialized,
+                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+                               class_data);
+
+  inline PurchaseShopItemRequest(const PurchaseShopItemRequest& from) : PurchaseShopItemRequest(nullptr, from) {}
+  inline PurchaseShopItemRequest(PurchaseShopItemRequest&& from) noexcept : PurchaseShopItemRequest(nullptr, ::std::move(from)) {}
+  inline PurchaseShopItemRequest& operator=(const PurchaseShopItemRequest& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline PurchaseShopItemRequest& operator=(PurchaseShopItemRequest&& from) noexcept {
+    if (this == &from) return *this;
+    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
+      ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
+  }
+  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
+  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
+  }
+
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
+    return GetDescriptor();
+  }
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
+  GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  [[nodiscard]] static const PurchaseShopItemRequest& default_instance() {
+    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<PurchaseShopItemRequest>(&PurchaseShopItemRequest_globals_);
+  }
+  static constexpr int kIndexInFileMessages = 48;
+  friend void swap(PurchaseShopItemRequest& a, PurchaseShopItemRequest& b) { a.Swap(&b); }
+  inline void Swap(PurchaseShopItemRequest* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
+      InternalSwap(other);
+    } else {
+      ::google::protobuf::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(PurchaseShopItemRequest* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    ABSL_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  [[nodiscard]] PurchaseShopItemRequest* PROTOBUF_NONNULL
+  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
+    return ::google::protobuf::Message::DefaultConstruct<PurchaseShopItemRequest>(arena);
+  }
+  using ::google::protobuf::Message::CopyFrom;
+  void CopyFrom(const PurchaseShopItemRequest& from);
+  using ::google::protobuf::Message::MergeFrom;
+  void MergeFrom(const PurchaseShopItemRequest& from) { PurchaseShopItemRequest::MergeImpl(*this, from); }
+
+  private:
+  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
+                        const ::google::protobuf::MessageLite& from_msg);
+
+  public:
+  [[nodiscard]] bool IsInitialized() const {
+    return true;
+  }
+  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
+  #if defined(PROTOBUF_CUSTOM_VTABLE)
+  private:
+  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
+  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
+
+  public:
+  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+    return _InternalSerialize(*this, target, stream);
+  }
+  #else   // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] ::size_t ByteSizeLong() const final;
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
+  #endif  // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] int GetCachedSize() const {
+    return _impl_._cached_size_.Get();
+  }
+
+  private:
+  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static void SharedDtor(MessageLite& self);
+  void InternalSwap(PurchaseShopItemRequest* PROTOBUF_NONNULL other);
+ private:
+  template <typename T>
+  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
+  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.PurchaseShopItemRequest"; }
+
+  explicit PurchaseShopItemRequest(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  PurchaseShopItemRequest(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const PurchaseShopItemRequest& from);
+  PurchaseShopItemRequest(
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, PurchaseShopItemRequest&& from) noexcept
+      : PurchaseShopItemRequest(arena) {
+    *this = ::std::move(from);
+  }
+  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
+  static void* PROTOBUF_NONNULL PlacementNew_(
+      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static constexpr auto InternalNewImpl_();
+
+ public:
+  static constexpr auto InternalGenerateClassData_(
+      const MessageLite& prototype,
+      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
+
+  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+  enum : int {
+    kIdempotencyKeyFieldNumber = 5,
+    kPlayerIdFieldNumber = 1,
+    kShopIdFieldNumber = 2,
+    kItemConfigIdFieldNumber = 3,
+    kUnitCountFieldNumber = 4,
+  };
+  // string idempotency_key = 5 [json_name = "idempotencyKey"];
+  void clear_idempotency_key() ;
+  [[nodiscard]] const ::std::string& idempotency_key() const;
+  template <typename Arg_ = const ::std::string&, typename... Args_>
+  void set_idempotency_key(Arg_&& arg, Args_... args);
+  ::std::string* PROTOBUF_NONNULL mutable_idempotency_key();
+  [[nodiscard]] ::std::string* PROTOBUF_NULLABLE release_idempotency_key();
+  void set_allocated_idempotency_key(::std::string* PROTOBUF_NULLABLE value);
+
+  private:
+  const ::std::string& _internal_idempotency_key() const;
+  PROTOBUF_ALWAYS_INLINE void _internal_set_idempotency_key(const ::std::string& value);
+  ::std::string* PROTOBUF_NONNULL _internal_mutable_idempotency_key();
+
+  public:
+  // uint64 player_id = 1 [json_name = "playerId"];
+  void clear_player_id() ;
+  [[nodiscard]] ::uint64_t player_id() const;
+  void set_player_id(::uint64_t value);
+
+  private:
+  ::uint64_t _internal_player_id() const;
+  void _internal_set_player_id(::uint64_t value);
+
+  public:
+  // uint32 shop_id = 2 [json_name = "shopId"];
+  void clear_shop_id() ;
+  [[nodiscard]] ::uint32_t shop_id() const;
+  void set_shop_id(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_shop_id() const;
+  void _internal_set_shop_id(::uint32_t value);
+
+  public:
+  // uint32 item_config_id = 3 [json_name = "itemConfigId"];
+  void clear_item_config_id() ;
+  [[nodiscard]] ::uint32_t item_config_id() const;
+  void set_item_config_id(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_item_config_id() const;
+  void _internal_set_item_config_id(::uint32_t value);
+
+  public:
+  // uint32 unit_count = 4 [json_name = "unitCount"];
+  void clear_unit_count() ;
+  [[nodiscard]] ::uint32_t unit_count() const;
+  void set_unit_count(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_unit_count() const;
+  void _internal_set_unit_count(::uint32_t value);
+
+  public:
+  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.PurchaseShopItemRequest)
+ private:
+  class _Internal;
+  using ParseTableT_ =
+      ::google::protobuf::internal::TcParseTable<3, 5,
+                          0, 68,
+                          2>;
+  static constexpr ParseTableT_ InternalGenerateParseTable_(
+      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
+  friend class ::google::protobuf::internal::TcParser;
+  #ifndef PROTOBUF_MESSAGE_GLOBALS
+  static const ParseTableT_ _table_;
+  #endif
+
+  friend class ::google::protobuf::MessageLite;
+  friend class ::google::protobuf::Arena;
+  friend ::google::protobuf::internal::PrivateAccess;
+  template <typename T>
+  friend class ::google::protobuf::Arena::InternalHelper;
+  using InternalArenaConstructable_ = void;
+  using DestructorSkippable_ = void;
+  struct Impl_ {
+    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
+                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+        const PurchaseShopItemRequest& from_msg);
+    ::google::protobuf::internal::HasBits<1> _has_bits_;
+    ::google::protobuf::internal::CachedSize _cached_size_;
+    ::google::protobuf::internal::ArenaStringPtr idempotency_key_;
+    ::uint64_t player_id_;
+    ::uint32_t shop_id_;
+    ::uint32_t item_config_id_;
+    ::uint32_t unit_count_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -5196,219 +5269,6 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED IdentifyItemRequest final : public 
 };
 // -------------------------------------------------------------------
 
-class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GrantItemsResponse final : public ::google::protobuf::Message
-/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.GrantItemsResponse) */ {
- public:
-  inline GrantItemsResponse() : GrantItemsResponse(nullptr) {}
-  ~GrantItemsResponse() PROTOBUF_FINAL;
-
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-  void operator delete(GrantItemsResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
-    SharedDtor(*msg);
-    ::google::protobuf::internal::SizedDelete(msg, sizeof(GrantItemsResponse));
-  }
-#endif
-
-  template <typename = void>
-  explicit constexpr GrantItemsResponse(::google::protobuf::internal::ConstantInitialized,
-                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
-                               class_data);
-
-  inline GrantItemsResponse(const GrantItemsResponse& from) : GrantItemsResponse(nullptr, from) {}
-  inline GrantItemsResponse(GrantItemsResponse&& from) noexcept : GrantItemsResponse(nullptr, ::std::move(from)) {}
-  inline GrantItemsResponse& operator=(const GrantItemsResponse& from) {
-    CopyFrom(from);
-    return *this;
-  }
-  inline GrantItemsResponse& operator=(GrantItemsResponse&& from) noexcept {
-    if (this == &from) return *this;
-    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
-      InternalSwap(&from);
-    } else {
-      CopyFrom(from);
-    }
-    return *this;
-  }
-
-  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
-      ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
-  }
-  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
-  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
-  }
-
-  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
-    return GetDescriptor();
-  }
-  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
-  GetDescriptor() {
-    return default_instance().GetMetadata().descriptor;
-  }
-  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
-    return default_instance().GetMetadata().reflection;
-  }
-  [[nodiscard]] static const GrantItemsResponse& default_instance() {
-    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<GrantItemsResponse>(&GrantItemsResponse_globals_);
-  }
-  static constexpr int kIndexInFileMessages = 9;
-  friend void swap(GrantItemsResponse& a, GrantItemsResponse& b) { a.Swap(&b); }
-  inline void Swap(GrantItemsResponse* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
-      InternalSwap(other);
-    } else {
-      ::google::protobuf::internal::GenericSwap(this, other);
-    }
-  }
-  void UnsafeArenaSwap(GrantItemsResponse* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    ABSL_DCHECK(GetArena() == other->GetArena());
-    InternalSwap(other);
-  }
-
-  // implements Message ----------------------------------------------
-
-  [[nodiscard]] GrantItemsResponse* PROTOBUF_NONNULL
-  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
-    return ::google::protobuf::Message::DefaultConstruct<GrantItemsResponse>(arena);
-  }
-  using ::google::protobuf::Message::CopyFrom;
-  void CopyFrom(const GrantItemsResponse& from);
-  using ::google::protobuf::Message::MergeFrom;
-  void MergeFrom(const GrantItemsResponse& from) { GrantItemsResponse::MergeImpl(*this, from); }
-
-  private:
-  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
-                        const ::google::protobuf::MessageLite& from_msg);
-
-  public:
-  [[nodiscard]] bool IsInitialized() const {
-    return true;
-  }
-  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
-  #if defined(PROTOBUF_CUSTOM_VTABLE)
-  private:
-  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
-  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
-
-  public:
-  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
-    return _InternalSerialize(*this, target, stream);
-  }
-  #else   // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] ::size_t ByteSizeLong() const final;
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
-  #endif  // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] int GetCachedSize() const {
-    return _impl_._cached_size_.Get();
-  }
-
-  private:
-  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static void SharedDtor(MessageLite& self);
-  void InternalSwap(GrantItemsResponse* PROTOBUF_NONNULL other);
- private:
-  template <typename T>
-  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
-  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.GrantItemsResponse"; }
-
-  explicit GrantItemsResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  GrantItemsResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const GrantItemsResponse& from);
-  GrantItemsResponse(
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, GrantItemsResponse&& from) noexcept
-      : GrantItemsResponse(arena) {
-    *this = ::std::move(from);
-  }
-  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
-  static void* PROTOBUF_NONNULL PlacementNew_(
-      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static constexpr auto InternalNewImpl_();
-
- public:
-  static constexpr auto InternalGenerateClassData_(
-      const MessageLite& prototype,
-      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
-
-  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
-  // nested types ----------------------------------------------------
-
-  // accessors -------------------------------------------------------
-  enum : int {
-    kGoldFieldNumber = 2,
-    kCodeFieldNumber = 1,
-  };
-  // int64 gold = 2 [json_name = "gold"];
-  void clear_gold() ;
-  [[nodiscard]] ::int64_t gold() const;
-  void set_gold(::int64_t value);
-
-  private:
-  ::int64_t _internal_gold() const;
-  void _internal_set_gold(::int64_t value);
-
-  public:
-  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
-  void clear_code() ;
-  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
-  void set_code(::pandora::common::v1::ErrCode value);
-
-  private:
-  ::pandora::common::v1::ErrCode _internal_code() const;
-  void _internal_set_code(::pandora::common::v1::ErrCode value);
-
-  public:
-  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.GrantItemsResponse)
- private:
-  class _Internal;
-  using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<1, 2,
-                          0, 0,
-                          2>;
-  static constexpr ParseTableT_ InternalGenerateParseTable_(
-      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
-  friend class ::google::protobuf::internal::TcParser;
-  #ifndef PROTOBUF_MESSAGE_GLOBALS
-  static const ParseTableT_ _table_;
-  #endif
-
-  friend class ::google::protobuf::MessageLite;
-  friend class ::google::protobuf::Arena;
-  friend ::google::protobuf::internal::PrivateAccess;
-  template <typename T>
-  friend class ::google::protobuf::Arena::InternalHelper;
-  using InternalArenaConstructable_ = void;
-  using DestructorSkippable_ = void;
-  struct Impl_ {
-    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
-                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
-        const GrantItemsResponse& from_msg);
-    ::google::protobuf::internal::HasBits<1> _has_bits_;
-    ::google::protobuf::internal::CachedSize _cached_size_;
-    ::int64_t gold_;
-    int code_;
-    PROTOBUF_TSAN_DECLARE_MEMBER
-  };
-  union { Impl_ _impl_; };
-  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
-};
-// -------------------------------------------------------------------
-
 class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GrantInstancesRequest final : public ::google::protobuf::Message
 /* @@protoc_insertion_point(class_definition:pandora.inventory.v1.GrantInstancesRequest) */ {
  public:
@@ -5643,6 +5503,207 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GrantInstancesRequest final : publi
     ::google::protobuf::internal::CachedSize _item_config_ids_cached_byte_size_;
     ::google::protobuf::internal::ArenaStringPtr idempotency_key_;
     ::uint64_t player_id_;
+    PROTOBUF_TSAN_DECLARE_MEMBER
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
+};
+// -------------------------------------------------------------------
+
+class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GetShopRequest final : public ::google::protobuf::Message
+/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.GetShopRequest) */ {
+ public:
+  inline GetShopRequest() : GetShopRequest(nullptr) {}
+  ~GetShopRequest() PROTOBUF_FINAL;
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+  void operator delete(GetShopRequest* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
+    SharedDtor(*msg);
+    ::google::protobuf::internal::SizedDelete(msg, sizeof(GetShopRequest));
+  }
+#endif
+
+  template <typename = void>
+  explicit constexpr GetShopRequest(::google::protobuf::internal::ConstantInitialized,
+                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+                               class_data);
+
+  inline GetShopRequest(const GetShopRequest& from) : GetShopRequest(nullptr, from) {}
+  inline GetShopRequest(GetShopRequest&& from) noexcept : GetShopRequest(nullptr, ::std::move(from)) {}
+  inline GetShopRequest& operator=(const GetShopRequest& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline GetShopRequest& operator=(GetShopRequest&& from) noexcept {
+    if (this == &from) return *this;
+    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
+      ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
+  }
+  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
+  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
+  }
+
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
+    return GetDescriptor();
+  }
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
+  GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  [[nodiscard]] static const GetShopRequest& default_instance() {
+    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<GetShopRequest>(&GetShopRequest_globals_);
+  }
+  static constexpr int kIndexInFileMessages = 45;
+  friend void swap(GetShopRequest& a, GetShopRequest& b) { a.Swap(&b); }
+  inline void Swap(GetShopRequest* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
+      InternalSwap(other);
+    } else {
+      ::google::protobuf::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(GetShopRequest* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    ABSL_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  [[nodiscard]] GetShopRequest* PROTOBUF_NONNULL
+  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
+    return ::google::protobuf::Message::DefaultConstruct<GetShopRequest>(arena);
+  }
+  using ::google::protobuf::Message::CopyFrom;
+  void CopyFrom(const GetShopRequest& from);
+  using ::google::protobuf::Message::MergeFrom;
+  void MergeFrom(const GetShopRequest& from) { GetShopRequest::MergeImpl(*this, from); }
+
+  private:
+  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
+                        const ::google::protobuf::MessageLite& from_msg);
+
+  public:
+  [[nodiscard]] bool IsInitialized() const {
+    return true;
+  }
+  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
+  #if defined(PROTOBUF_CUSTOM_VTABLE)
+  private:
+  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
+  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
+
+  public:
+  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+    return _InternalSerialize(*this, target, stream);
+  }
+  #else   // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] ::size_t ByteSizeLong() const final;
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
+  #endif  // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] int GetCachedSize() const {
+    return _impl_._cached_size_.Get();
+  }
+
+  private:
+  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static void SharedDtor(MessageLite& self);
+  void InternalSwap(GetShopRequest* PROTOBUF_NONNULL other);
+ private:
+  template <typename T>
+  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
+  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.GetShopRequest"; }
+
+  explicit GetShopRequest(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  GetShopRequest(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const GetShopRequest& from);
+  GetShopRequest(
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, GetShopRequest&& from) noexcept
+      : GetShopRequest(arena) {
+    *this = ::std::move(from);
+  }
+  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
+  static void* PROTOBUF_NONNULL PlacementNew_(
+      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static constexpr auto InternalNewImpl_();
+
+ public:
+  static constexpr auto InternalGenerateClassData_(
+      const MessageLite& prototype,
+      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
+
+  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+  enum : int {
+    kShopIdFieldNumber = 1,
+  };
+  // uint32 shop_id = 1 [json_name = "shopId"];
+  void clear_shop_id() ;
+  [[nodiscard]] ::uint32_t shop_id() const;
+  void set_shop_id(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_shop_id() const;
+  void _internal_set_shop_id(::uint32_t value);
+
+  public:
+  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.GetShopRequest)
+ private:
+  class _Internal;
+  using ParseTableT_ =
+      ::google::protobuf::internal::TcParseTable<0, 1,
+                          0, 0,
+                          2>;
+  static constexpr ParseTableT_ InternalGenerateParseTable_(
+      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
+  friend class ::google::protobuf::internal::TcParser;
+  #ifndef PROTOBUF_MESSAGE_GLOBALS
+  static const ParseTableT_ _table_;
+  #endif
+
+  friend class ::google::protobuf::MessageLite;
+  friend class ::google::protobuf::Arena;
+  friend ::google::protobuf::internal::PrivateAccess;
+  template <typename T>
+  friend class ::google::protobuf::Arena::InternalHelper;
+  using InternalArenaConstructable_ = void;
+  using DestructorSkippable_ = void;
+  struct Impl_ {
+    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
+                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+        const GetShopRequest& from_msg);
+    ::google::protobuf::internal::HasBits<1> _has_bits_;
+    ::google::protobuf::internal::CachedSize _cached_size_;
+    ::uint32_t shop_id_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -6206,6 +6267,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED FreezeForOrderRequest final : publi
     kItemConfigIdFieldNumber = 4,
     kQuantityFieldNumber = 5,
     kUnitPriceFieldNumber = 6,
+    kCurrencyKindFieldNumber = 7,
   };
   // uint64 player_id = 1 [json_name = "playerId"];
   void clear_player_id() ;
@@ -6257,21 +6319,31 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED FreezeForOrderRequest final : publi
   void _internal_set_quantity(::int64_t value);
 
   public:
-  // int64 unit_price = 6 [json_name = "unitPrice"];
+  // uint64 unit_price = 6 [json_name = "unitPrice"];
   void clear_unit_price() ;
-  [[nodiscard]] ::int64_t unit_price() const;
-  void set_unit_price(::int64_t value);
+  [[nodiscard]] ::uint64_t unit_price() const;
+  void set_unit_price(::uint64_t value);
 
   private:
-  ::int64_t _internal_unit_price() const;
-  void _internal_set_unit_price(::int64_t value);
+  ::uint64_t _internal_unit_price() const;
+  void _internal_set_unit_price(::uint64_t value);
+
+  public:
+  // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+  void clear_currency_kind() ;
+  [[nodiscard]] ::pandora::common::v1::CurrencyKind currency_kind() const;
+  void set_currency_kind(::pandora::common::v1::CurrencyKind value);
+
+  private:
+  ::pandora::common::v1::CurrencyKind _internal_currency_kind() const;
+  void _internal_set_currency_kind(::pandora::common::v1::CurrencyKind value);
 
   public:
   // @@protoc_insertion_point(class_scope:pandora.inventory.v1.FreezeForOrderRequest)
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<3, 6,
+      ::google::protobuf::internal::TcParseTable<3, 7,
                           0, 0,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
@@ -6305,7 +6377,8 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED FreezeForOrderRequest final : publi
     int side_;
     ::uint32_t item_config_id_;
     ::int64_t quantity_;
-    ::int64_t unit_price_;
+    ::uint64_t unit_price_;
+    int currency_kind_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -6369,7 +6442,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED EscrowOutInstancesRequest final : p
   [[nodiscard]] static const EscrowOutInstancesRequest& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<EscrowOutInstancesRequest>(&EscrowOutInstancesRequest_globals_);
   }
-  static constexpr int kIndexInFileMessages = 45;
+  static constexpr int kIndexInFileMessages = 50;
   friend void swap(EscrowOutInstancesRequest& a, EscrowOutInstancesRequest& b) { a.Swap(&b); }
   inline void Swap(EscrowOutInstancesRequest* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -6921,6 +6994,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED EnsureAuctionEscrowRequest final : 
     kItemConfigIdFieldNumber = 4,
     kRemainingQuantityFieldNumber = 5,
     kUnitPriceFieldNumber = 6,
+    kCurrencyKindFieldNumber = 7,
   };
   // uint64 player_id = 1 [json_name = "playerId"];
   void clear_player_id() ;
@@ -6982,11 +7056,21 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED EnsureAuctionEscrowRequest final : 
   void _internal_set_unit_price(::uint64_t value);
 
   public:
+  // .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+  void clear_currency_kind() ;
+  [[nodiscard]] ::pandora::common::v1::CurrencyKind currency_kind() const;
+  void set_currency_kind(::pandora::common::v1::CurrencyKind value);
+
+  private:
+  ::pandora::common::v1::CurrencyKind _internal_currency_kind() const;
+  void _internal_set_currency_kind(::pandora::common::v1::CurrencyKind value);
+
+  public:
   // @@protoc_insertion_point(class_scope:pandora.inventory.v1.EnsureAuctionEscrowRequest)
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<3, 6,
+      ::google::protobuf::internal::TcParseTable<3, 7,
                           0, 0,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
@@ -7021,6 +7105,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED EnsureAuctionEscrowRequest final : 
     ::uint32_t item_config_id_;
     ::uint64_t remaining_quantity_;
     ::uint64_t unit_price_;
+    int currency_kind_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -8408,7 +8493,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ConsumeTransferEscrowResponse final
   [[nodiscard]] static const ConsumeTransferEscrowResponse& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<ConsumeTransferEscrowResponse>(&ConsumeTransferEscrowResponse_globals_);
   }
-  static constexpr int kIndexInFileMessages = 53;
+  static constexpr int kIndexInFileMessages = 58;
   friend void swap(ConsumeTransferEscrowResponse& a, ConsumeTransferEscrowResponse& b) { a.Swap(&b); }
   inline void Swap(ConsumeTransferEscrowResponse* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -8609,7 +8694,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ConsumeTransferEscrowRequest final 
   [[nodiscard]] static const ConsumeTransferEscrowRequest& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<ConsumeTransferEscrowRequest>(&ConsumeTransferEscrowRequest_globals_);
   }
-  static constexpr int kIndexInFileMessages = 52;
+  static constexpr int kIndexInFileMessages = 57;
   friend void swap(ConsumeTransferEscrowRequest& a, ConsumeTransferEscrowRequest& b) { a.Swap(&b); }
   inline void Swap(ConsumeTransferEscrowRequest* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -9288,7 +9373,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ClaimTransferInstancesResponse fina
   [[nodiscard]] static const ClaimTransferInstancesResponse& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<ClaimTransferInstancesResponse>(&ClaimTransferInstancesResponse_globals_);
   }
-  static constexpr int kIndexInFileMessages = 49;
+  static constexpr int kIndexInFileMessages = 54;
   friend void swap(ClaimTransferInstancesResponse& a, ClaimTransferInstancesResponse& b) { a.Swap(&b); }
   inline void Swap(ClaimTransferInstancesResponse* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -10031,10 +10116,10 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SettlePlayerTradeRequest final : pu
   enum : int {
     kSellerItemsFieldNumber = 4,
     kBuyerItemsFieldNumber = 5,
+    kPriceAmountFieldNumber = 7,
     kOrderIdFieldNumber = 1,
     kSellerIdFieldNumber = 2,
     kBuyerIdFieldNumber = 3,
-    kPriceFieldNumber = 6,
   };
   // repeated .pandora.inventory.v1.ItemGrant seller_items = 4 [json_name = "sellerItems"];
   [[nodiscard]] int seller_items_size()
@@ -10078,6 +10163,22 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SettlePlayerTradeRequest final : pu
   ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>* PROTOBUF_NONNULL _internal_mutable_buyer_items();
 
   public:
+  // .pandora.common.v1.CurrencyAmount price_amount = 7 [json_name = "priceAmount"];
+  [[nodiscard]] bool has_price_amount()
+      const;
+  void clear_price_amount() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& price_amount() const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE release_price_amount();
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_price_amount();
+  void set_allocated_price_amount(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  void unsafe_arena_set_allocated_price_amount(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE unsafe_arena_release_price_amount();
+
+  private:
+  const ::pandora::common::v1::CurrencyAmount& _internal_price_amount() const;
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL _internal_mutable_price_amount();
+
+  public:
   // uint64 order_id = 1 [json_name = "orderId"];
   void clear_order_id() ;
   [[nodiscard]] ::uint64_t order_id() const;
@@ -10108,22 +10209,12 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SettlePlayerTradeRequest final : pu
   void _internal_set_buyer_id(::uint64_t value);
 
   public:
-  // int64 price = 6 [json_name = "price"];
-  void clear_price() ;
-  [[nodiscard]] ::int64_t price() const;
-  void set_price(::int64_t value);
-
-  private:
-  ::int64_t _internal_price() const;
-  void _internal_set_price(::int64_t value);
-
-  public:
   // @@protoc_insertion_point(class_scope:pandora.inventory.v1.SettlePlayerTradeRequest)
  private:
   class _Internal;
   using ParseTableT_ =
       ::google::protobuf::internal::TcParseTable<3, 6,
-                          2, 0,
+                          3, 0,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
       const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
@@ -10153,10 +10244,496 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SettlePlayerTradeRequest final : pu
     ::google::protobuf::internal::CachedSize _cached_size_;
     ::google::protobuf::RepeatedPtrField< ::pandora::inventory::v1::ItemGrant > seller_items_;
     ::google::protobuf::RepeatedPtrField< ::pandora::inventory::v1::ItemGrant > buyer_items_;
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE price_amount_;
     ::uint64_t order_id_;
     ::uint64_t seller_id_;
     ::uint64_t buyer_id_;
-    ::int64_t price_;
+    PROTOBUF_TSAN_DECLARE_MEMBER
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
+};
+// -------------------------------------------------------------------
+
+class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SellItemResponse final : public ::google::protobuf::Message
+/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.SellItemResponse) */ {
+ public:
+  inline SellItemResponse() : SellItemResponse(nullptr) {}
+  ~SellItemResponse() PROTOBUF_FINAL;
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+  void operator delete(SellItemResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
+    SharedDtor(*msg);
+    ::google::protobuf::internal::SizedDelete(msg, sizeof(SellItemResponse));
+  }
+#endif
+
+  template <typename = void>
+  explicit constexpr SellItemResponse(::google::protobuf::internal::ConstantInitialized,
+                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+                               class_data);
+
+  inline SellItemResponse(const SellItemResponse& from) : SellItemResponse(nullptr, from) {}
+  inline SellItemResponse(SellItemResponse&& from) noexcept : SellItemResponse(nullptr, ::std::move(from)) {}
+  inline SellItemResponse& operator=(const SellItemResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline SellItemResponse& operator=(SellItemResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
+      ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
+  }
+  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
+  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
+  }
+
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
+    return GetDescriptor();
+  }
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
+  GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  [[nodiscard]] static const SellItemResponse& default_instance() {
+    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<SellItemResponse>(&SellItemResponse_globals_);
+  }
+  static constexpr int kIndexInFileMessages = 22;
+  friend void swap(SellItemResponse& a, SellItemResponse& b) { a.Swap(&b); }
+  inline void Swap(SellItemResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
+      InternalSwap(other);
+    } else {
+      ::google::protobuf::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(SellItemResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    ABSL_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  [[nodiscard]] SellItemResponse* PROTOBUF_NONNULL
+  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
+    return ::google::protobuf::Message::DefaultConstruct<SellItemResponse>(arena);
+  }
+  using ::google::protobuf::Message::CopyFrom;
+  void CopyFrom(const SellItemResponse& from);
+  using ::google::protobuf::Message::MergeFrom;
+  void MergeFrom(const SellItemResponse& from) { SellItemResponse::MergeImpl(*this, from); }
+
+  private:
+  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
+                        const ::google::protobuf::MessageLite& from_msg);
+
+  public:
+  [[nodiscard]] bool IsInitialized() const {
+    return true;
+  }
+  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
+  #if defined(PROTOBUF_CUSTOM_VTABLE)
+  private:
+  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
+  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
+
+  public:
+  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+    return _InternalSerialize(*this, target, stream);
+  }
+  #else   // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] ::size_t ByteSizeLong() const final;
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
+  #endif  // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] int GetCachedSize() const {
+    return _impl_._cached_size_.Get();
+  }
+
+  private:
+  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static void SharedDtor(MessageLite& self);
+  void InternalSwap(SellItemResponse* PROTOBUF_NONNULL other);
+ private:
+  template <typename T>
+  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
+  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.SellItemResponse"; }
+
+  explicit SellItemResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  SellItemResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const SellItemResponse& from);
+  SellItemResponse(
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, SellItemResponse&& from) noexcept
+      : SellItemResponse(arena) {
+    *this = ::std::move(from);
+  }
+  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
+  static void* PROTOBUF_NONNULL PlacementNew_(
+      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static constexpr auto InternalNewImpl_();
+
+ public:
+  static constexpr auto InternalGenerateClassData_(
+      const MessageLite& prototype,
+      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
+
+  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+  enum : int {
+    kBalanceFieldNumber = 4,
+    kEarnedFieldNumber = 5,
+    kRemainingFieldNumber = 2,
+    kCodeFieldNumber = 1,
+  };
+  // .pandora.common.v1.CurrencyAmount balance = 4 [json_name = "balance"];
+  [[nodiscard]] bool has_balance()
+      const;
+  void clear_balance() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& balance() const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE release_balance();
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_balance();
+  void set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  void unsafe_arena_set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE unsafe_arena_release_balance();
+
+  private:
+  const ::pandora::common::v1::CurrencyAmount& _internal_balance() const;
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL _internal_mutable_balance();
+
+  public:
+  // .pandora.common.v1.CurrencyAmount earned = 5 [json_name = "earned"];
+  [[nodiscard]] bool has_earned()
+      const;
+  void clear_earned() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& earned() const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE release_earned();
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_earned();
+  void set_allocated_earned(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  void unsafe_arena_set_allocated_earned(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE unsafe_arena_release_earned();
+
+  private:
+  const ::pandora::common::v1::CurrencyAmount& _internal_earned() const;
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL _internal_mutable_earned();
+
+  public:
+  // int64 remaining = 2 [json_name = "remaining"];
+  void clear_remaining() ;
+  [[nodiscard]] ::int64_t remaining() const;
+  void set_remaining(::int64_t value);
+
+  private:
+  ::int64_t _internal_remaining() const;
+  void _internal_set_remaining(::int64_t value);
+
+  public:
+  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+  void clear_code() ;
+  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
+  void set_code(::pandora::common::v1::ErrCode value);
+
+  private:
+  ::pandora::common::v1::ErrCode _internal_code() const;
+  void _internal_set_code(::pandora::common::v1::ErrCode value);
+
+  public:
+  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.SellItemResponse)
+ private:
+  class _Internal;
+  using ParseTableT_ =
+      ::google::protobuf::internal::TcParseTable<3, 4,
+                          2, 0,
+                          2>;
+  static constexpr ParseTableT_ InternalGenerateParseTable_(
+      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
+  friend class ::google::protobuf::internal::TcParser;
+  #ifndef PROTOBUF_MESSAGE_GLOBALS
+  static const ParseTableT_ _table_;
+  #endif
+
+  friend class ::google::protobuf::MessageLite;
+  friend class ::google::protobuf::Arena;
+  friend ::google::protobuf::internal::PrivateAccess;
+  template <typename T>
+  friend class ::google::protobuf::Arena::InternalHelper;
+  using InternalArenaConstructable_ = void;
+  using DestructorSkippable_ = void;
+  struct Impl_ {
+    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
+                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+        const SellItemResponse& from_msg);
+    ::google::protobuf::internal::HasBits<1> _has_bits_;
+    ::google::protobuf::internal::CachedSize _cached_size_;
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE balance_;
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE earned_;
+    ::int64_t remaining_;
+    int code_;
+    PROTOBUF_TSAN_DECLARE_MEMBER
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
+};
+// -------------------------------------------------------------------
+
+class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SellInstanceResponse final : public ::google::protobuf::Message
+/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.SellInstanceResponse) */ {
+ public:
+  inline SellInstanceResponse() : SellInstanceResponse(nullptr) {}
+  ~SellInstanceResponse() PROTOBUF_FINAL;
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+  void operator delete(SellInstanceResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
+    SharedDtor(*msg);
+    ::google::protobuf::internal::SizedDelete(msg, sizeof(SellInstanceResponse));
+  }
+#endif
+
+  template <typename = void>
+  explicit constexpr SellInstanceResponse(::google::protobuf::internal::ConstantInitialized,
+                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+                               class_data);
+
+  inline SellInstanceResponse(const SellInstanceResponse& from) : SellInstanceResponse(nullptr, from) {}
+  inline SellInstanceResponse(SellInstanceResponse&& from) noexcept : SellInstanceResponse(nullptr, ::std::move(from)) {}
+  inline SellInstanceResponse& operator=(const SellInstanceResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline SellInstanceResponse& operator=(SellInstanceResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
+      ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
+  }
+  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
+  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
+  }
+
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
+    return GetDescriptor();
+  }
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
+  GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  [[nodiscard]] static const SellInstanceResponse& default_instance() {
+    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<SellInstanceResponse>(&SellInstanceResponse_globals_);
+  }
+  static constexpr int kIndexInFileMessages = 44;
+  friend void swap(SellInstanceResponse& a, SellInstanceResponse& b) { a.Swap(&b); }
+  inline void Swap(SellInstanceResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
+      InternalSwap(other);
+    } else {
+      ::google::protobuf::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(SellInstanceResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    ABSL_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  [[nodiscard]] SellInstanceResponse* PROTOBUF_NONNULL
+  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
+    return ::google::protobuf::Message::DefaultConstruct<SellInstanceResponse>(arena);
+  }
+  using ::google::protobuf::Message::CopyFrom;
+  void CopyFrom(const SellInstanceResponse& from);
+  using ::google::protobuf::Message::MergeFrom;
+  void MergeFrom(const SellInstanceResponse& from) { SellInstanceResponse::MergeImpl(*this, from); }
+
+  private:
+  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
+                        const ::google::protobuf::MessageLite& from_msg);
+
+  public:
+  [[nodiscard]] bool IsInitialized() const {
+    return true;
+  }
+  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
+  #if defined(PROTOBUF_CUSTOM_VTABLE)
+  private:
+  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
+  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
+
+  public:
+  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+    return _InternalSerialize(*this, target, stream);
+  }
+  #else   // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] ::size_t ByteSizeLong() const final;
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
+  #endif  // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] int GetCachedSize() const {
+    return _impl_._cached_size_.Get();
+  }
+
+  private:
+  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static void SharedDtor(MessageLite& self);
+  void InternalSwap(SellInstanceResponse* PROTOBUF_NONNULL other);
+ private:
+  template <typename T>
+  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
+  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.SellInstanceResponse"; }
+
+  explicit SellInstanceResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  SellInstanceResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const SellInstanceResponse& from);
+  SellInstanceResponse(
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, SellInstanceResponse&& from) noexcept
+      : SellInstanceResponse(arena) {
+    *this = ::std::move(from);
+  }
+  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
+  static void* PROTOBUF_NONNULL PlacementNew_(
+      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static constexpr auto InternalNewImpl_();
+
+ public:
+  static constexpr auto InternalGenerateClassData_(
+      const MessageLite& prototype,
+      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
+
+  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+  enum : int {
+    kBalanceFieldNumber = 3,
+    kEarnedFieldNumber = 4,
+    kCodeFieldNumber = 1,
+  };
+  // .pandora.common.v1.CurrencyAmount balance = 3 [json_name = "balance"];
+  [[nodiscard]] bool has_balance()
+      const;
+  void clear_balance() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& balance() const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE release_balance();
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_balance();
+  void set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  void unsafe_arena_set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE unsafe_arena_release_balance();
+
+  private:
+  const ::pandora::common::v1::CurrencyAmount& _internal_balance() const;
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL _internal_mutable_balance();
+
+  public:
+  // .pandora.common.v1.CurrencyAmount earned = 4 [json_name = "earned"];
+  [[nodiscard]] bool has_earned()
+      const;
+  void clear_earned() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& earned() const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE release_earned();
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_earned();
+  void set_allocated_earned(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  void unsafe_arena_set_allocated_earned(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE unsafe_arena_release_earned();
+
+  private:
+  const ::pandora::common::v1::CurrencyAmount& _internal_earned() const;
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL _internal_mutable_earned();
+
+  public:
+  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+  void clear_code() ;
+  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
+  void set_code(::pandora::common::v1::ErrCode value);
+
+  private:
+  ::pandora::common::v1::ErrCode _internal_code() const;
+  void _internal_set_code(::pandora::common::v1::ErrCode value);
+
+  public:
+  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.SellInstanceResponse)
+ private:
+  class _Internal;
+  using ParseTableT_ =
+      ::google::protobuf::internal::TcParseTable<2, 3,
+                          2, 0,
+                          2>;
+  static constexpr ParseTableT_ InternalGenerateParseTable_(
+      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
+  friend class ::google::protobuf::internal::TcParser;
+  #ifndef PROTOBUF_MESSAGE_GLOBALS
+  static const ParseTableT_ _table_;
+  #endif
+
+  friend class ::google::protobuf::MessageLite;
+  friend class ::google::protobuf::Arena;
+  friend ::google::protobuf::internal::PrivateAccess;
+  template <typename T>
+  friend class ::google::protobuf::Arena::InternalHelper;
+  using InternalArenaConstructable_ = void;
+  using DestructorSkippable_ = void;
+  struct Impl_ {
+    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
+                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+        const SellInstanceResponse& from_msg);
+    ::google::protobuf::internal::HasBits<1> _has_bits_;
+    ::google::protobuf::internal::CachedSize _cached_size_;
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE balance_;
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE earned_;
+    int code_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -10648,6 +11225,230 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ItemInstance final : public ::googl
 };
 // -------------------------------------------------------------------
 
+class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GrantItemsResponse final : public ::google::protobuf::Message
+/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.GrantItemsResponse) */ {
+ public:
+  inline GrantItemsResponse() : GrantItemsResponse(nullptr) {}
+  ~GrantItemsResponse() PROTOBUF_FINAL;
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+  void operator delete(GrantItemsResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
+    SharedDtor(*msg);
+    ::google::protobuf::internal::SizedDelete(msg, sizeof(GrantItemsResponse));
+  }
+#endif
+
+  template <typename = void>
+  explicit constexpr GrantItemsResponse(::google::protobuf::internal::ConstantInitialized,
+                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+                               class_data);
+
+  inline GrantItemsResponse(const GrantItemsResponse& from) : GrantItemsResponse(nullptr, from) {}
+  inline GrantItemsResponse(GrantItemsResponse&& from) noexcept : GrantItemsResponse(nullptr, ::std::move(from)) {}
+  inline GrantItemsResponse& operator=(const GrantItemsResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline GrantItemsResponse& operator=(GrantItemsResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
+      ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
+  }
+  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
+  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
+  }
+
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
+    return GetDescriptor();
+  }
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
+  GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  [[nodiscard]] static const GrantItemsResponse& default_instance() {
+    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<GrantItemsResponse>(&GrantItemsResponse_globals_);
+  }
+  static constexpr int kIndexInFileMessages = 9;
+  friend void swap(GrantItemsResponse& a, GrantItemsResponse& b) { a.Swap(&b); }
+  inline void Swap(GrantItemsResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
+      InternalSwap(other);
+    } else {
+      ::google::protobuf::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(GrantItemsResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    ABSL_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  [[nodiscard]] GrantItemsResponse* PROTOBUF_NONNULL
+  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
+    return ::google::protobuf::Message::DefaultConstruct<GrantItemsResponse>(arena);
+  }
+  using ::google::protobuf::Message::CopyFrom;
+  void CopyFrom(const GrantItemsResponse& from);
+  using ::google::protobuf::Message::MergeFrom;
+  void MergeFrom(const GrantItemsResponse& from) { GrantItemsResponse::MergeImpl(*this, from); }
+
+  private:
+  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
+                        const ::google::protobuf::MessageLite& from_msg);
+
+  public:
+  [[nodiscard]] bool IsInitialized() const {
+    return true;
+  }
+  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
+  #if defined(PROTOBUF_CUSTOM_VTABLE)
+  private:
+  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
+  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
+
+  public:
+  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+    return _InternalSerialize(*this, target, stream);
+  }
+  #else   // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] ::size_t ByteSizeLong() const final;
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
+  #endif  // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] int GetCachedSize() const {
+    return _impl_._cached_size_.Get();
+  }
+
+  private:
+  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static void SharedDtor(MessageLite& self);
+  void InternalSwap(GrantItemsResponse* PROTOBUF_NONNULL other);
+ private:
+  template <typename T>
+  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
+  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.GrantItemsResponse"; }
+
+  explicit GrantItemsResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  GrantItemsResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const GrantItemsResponse& from);
+  GrantItemsResponse(
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, GrantItemsResponse&& from) noexcept
+      : GrantItemsResponse(arena) {
+    *this = ::std::move(from);
+  }
+  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
+  static void* PROTOBUF_NONNULL PlacementNew_(
+      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static constexpr auto InternalNewImpl_();
+
+ public:
+  static constexpr auto InternalGenerateClassData_(
+      const MessageLite& prototype,
+      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
+
+  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+  enum : int {
+    kCurrenciesFieldNumber = 3,
+    kCodeFieldNumber = 1,
+  };
+  // repeated .pandora.common.v1.CurrencyAmount currencies = 3 [json_name = "currencies"];
+  [[nodiscard]] int currencies_size()
+      const;
+  private:
+  int _internal_currencies_size() const;
+
+  public:
+  void clear_currencies() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& currencies(int index) const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_currencies(int index);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL add_currencies();
+  [[nodiscard]] const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>&
+  currencies() const;
+  [[nodiscard]] ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL
+  mutable_currencies();
+
+  private:
+  const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>& _internal_currencies() const;
+  ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL _internal_mutable_currencies();
+
+  public:
+  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+  void clear_code() ;
+  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
+  void set_code(::pandora::common::v1::ErrCode value);
+
+  private:
+  ::pandora::common::v1::ErrCode _internal_code() const;
+  void _internal_set_code(::pandora::common::v1::ErrCode value);
+
+  public:
+  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.GrantItemsResponse)
+ private:
+  class _Internal;
+  using ParseTableT_ =
+      ::google::protobuf::internal::TcParseTable<2, 2,
+                          1, 0,
+                          2>;
+  static constexpr ParseTableT_ InternalGenerateParseTable_(
+      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
+  friend class ::google::protobuf::internal::TcParser;
+  #ifndef PROTOBUF_MESSAGE_GLOBALS
+  static const ParseTableT_ _table_;
+  #endif
+
+  friend class ::google::protobuf::MessageLite;
+  friend class ::google::protobuf::Arena;
+  friend ::google::protobuf::internal::PrivateAccess;
+  template <typename T>
+  friend class ::google::protobuf::Arena::InternalHelper;
+  using InternalArenaConstructable_ = void;
+  using DestructorSkippable_ = void;
+  struct Impl_ {
+    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
+                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+        const GrantItemsResponse& from_msg);
+    ::google::protobuf::internal::HasBits<1> _has_bits_;
+    ::google::protobuf::internal::CachedSize _cached_size_;
+    ::google::protobuf::RepeatedPtrField< ::pandora::common::v1::CurrencyAmount > currencies_;
+    int code_;
+    PROTOBUF_TSAN_DECLARE_MEMBER
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
+};
+// -------------------------------------------------------------------
+
 class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GrantItemsRequest final : public ::google::protobuf::Message
 /* @@protoc_insertion_point(class_definition:pandora.inventory.v1.GrantItemsRequest) */ {
  public:
@@ -10797,9 +11598,9 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GrantItemsRequest final : public ::
   // accessors -------------------------------------------------------
   enum : int {
     kItemsFieldNumber = 2,
+    kCurrenciesFieldNumber = 5,
     kIdempotencyKeyFieldNumber = 4,
     kPlayerIdFieldNumber = 1,
-    kGoldFieldNumber = 3,
   };
   // repeated .pandora.inventory.v1.ItemGrant items = 2 [json_name = "items"];
   [[nodiscard]] int items_size()
@@ -10820,6 +11621,27 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GrantItemsRequest final : public ::
   private:
   const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>& _internal_items() const;
   ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>* PROTOBUF_NONNULL _internal_mutable_items();
+
+  public:
+  // repeated .pandora.common.v1.CurrencyAmount currencies = 5 [json_name = "currencies"];
+  [[nodiscard]] int currencies_size()
+      const;
+  private:
+  int _internal_currencies_size() const;
+
+  public:
+  void clear_currencies() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& currencies(int index) const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_currencies(int index);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL add_currencies();
+  [[nodiscard]] const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>&
+  currencies() const;
+  [[nodiscard]] ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL
+  mutable_currencies();
+
+  private:
+  const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>& _internal_currencies() const;
+  ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL _internal_mutable_currencies();
 
   public:
   // string idempotency_key = 4 [json_name = "idempotencyKey"];
@@ -10847,22 +11669,12 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GrantItemsRequest final : public ::
   void _internal_set_player_id(::uint64_t value);
 
   public:
-  // int64 gold = 3 [json_name = "gold"];
-  void clear_gold() ;
-  [[nodiscard]] ::int64_t gold() const;
-  void set_gold(::int64_t value);
-
-  private:
-  ::int64_t _internal_gold() const;
-  void _internal_set_gold(::int64_t value);
-
-  public:
   // @@protoc_insertion_point(class_scope:pandora.inventory.v1.GrantItemsRequest)
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<2, 4,
-                          1, 62,
+      ::google::protobuf::internal::TcParseTable<3, 4,
+                          2, 62,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
       const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
@@ -10891,9 +11703,245 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GrantItemsRequest final : public ::
     ::google::protobuf::internal::HasBits<1> _has_bits_;
     ::google::protobuf::internal::CachedSize _cached_size_;
     ::google::protobuf::RepeatedPtrField< ::pandora::inventory::v1::ItemGrant > items_;
+    ::google::protobuf::RepeatedPtrField< ::pandora::common::v1::CurrencyAmount > currencies_;
     ::google::protobuf::internal::ArenaStringPtr idempotency_key_;
     ::uint64_t player_id_;
-    ::int64_t gold_;
+    PROTOBUF_TSAN_DECLARE_MEMBER
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
+};
+// -------------------------------------------------------------------
+
+class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GetShopResponse final : public ::google::protobuf::Message
+/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.GetShopResponse) */ {
+ public:
+  inline GetShopResponse() : GetShopResponse(nullptr) {}
+  ~GetShopResponse() PROTOBUF_FINAL;
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+  void operator delete(GetShopResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
+    SharedDtor(*msg);
+    ::google::protobuf::internal::SizedDelete(msg, sizeof(GetShopResponse));
+  }
+#endif
+
+  template <typename = void>
+  explicit constexpr GetShopResponse(::google::protobuf::internal::ConstantInitialized,
+                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+                               class_data);
+
+  inline GetShopResponse(const GetShopResponse& from) : GetShopResponse(nullptr, from) {}
+  inline GetShopResponse(GetShopResponse&& from) noexcept : GetShopResponse(nullptr, ::std::move(from)) {}
+  inline GetShopResponse& operator=(const GetShopResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline GetShopResponse& operator=(GetShopResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
+      ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
+  }
+  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
+  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
+  }
+
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
+    return GetDescriptor();
+  }
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
+  GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  [[nodiscard]] static const GetShopResponse& default_instance() {
+    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<GetShopResponse>(&GetShopResponse_globals_);
+  }
+  static constexpr int kIndexInFileMessages = 47;
+  friend void swap(GetShopResponse& a, GetShopResponse& b) { a.Swap(&b); }
+  inline void Swap(GetShopResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
+      InternalSwap(other);
+    } else {
+      ::google::protobuf::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(GetShopResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    ABSL_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  [[nodiscard]] GetShopResponse* PROTOBUF_NONNULL
+  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
+    return ::google::protobuf::Message::DefaultConstruct<GetShopResponse>(arena);
+  }
+  using ::google::protobuf::Message::CopyFrom;
+  void CopyFrom(const GetShopResponse& from);
+  using ::google::protobuf::Message::MergeFrom;
+  void MergeFrom(const GetShopResponse& from) { GetShopResponse::MergeImpl(*this, from); }
+
+  private:
+  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
+                        const ::google::protobuf::MessageLite& from_msg);
+
+  public:
+  [[nodiscard]] bool IsInitialized() const {
+    return true;
+  }
+  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
+  #if defined(PROTOBUF_CUSTOM_VTABLE)
+  private:
+  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
+  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
+
+  public:
+  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+    return _InternalSerialize(*this, target, stream);
+  }
+  #else   // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] ::size_t ByteSizeLong() const final;
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
+  #endif  // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] int GetCachedSize() const {
+    return _impl_._cached_size_.Get();
+  }
+
+  private:
+  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static void SharedDtor(MessageLite& self);
+  void InternalSwap(GetShopResponse* PROTOBUF_NONNULL other);
+ private:
+  template <typename T>
+  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
+  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.GetShopResponse"; }
+
+  explicit GetShopResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  GetShopResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const GetShopResponse& from);
+  GetShopResponse(
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, GetShopResponse&& from) noexcept
+      : GetShopResponse(arena) {
+    *this = ::std::move(from);
+  }
+  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
+  static void* PROTOBUF_NONNULL PlacementNew_(
+      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static constexpr auto InternalNewImpl_();
+
+ public:
+  static constexpr auto InternalGenerateClassData_(
+      const MessageLite& prototype,
+      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
+
+  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+  enum : int {
+    kEntriesFieldNumber = 3,
+    kCodeFieldNumber = 1,
+    kShopIdFieldNumber = 2,
+  };
+  // repeated .pandora.inventory.v1.ShopEntry entries = 3 [json_name = "entries"];
+  [[nodiscard]] int entries_size()
+      const;
+  private:
+  int _internal_entries_size() const;
+
+  public:
+  void clear_entries() ;
+  [[nodiscard]] const ::pandora::inventory::v1::ShopEntry& entries(int index) const;
+  [[nodiscard]] ::pandora::inventory::v1::ShopEntry* PROTOBUF_NONNULL mutable_entries(int index);
+  ::pandora::inventory::v1::ShopEntry* PROTOBUF_NONNULL add_entries();
+  [[nodiscard]] const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ShopEntry>&
+  entries() const;
+  [[nodiscard]] ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ShopEntry>* PROTOBUF_NONNULL
+  mutable_entries();
+
+  private:
+  const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ShopEntry>& _internal_entries() const;
+  ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ShopEntry>* PROTOBUF_NONNULL _internal_mutable_entries();
+
+  public:
+  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+  void clear_code() ;
+  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
+  void set_code(::pandora::common::v1::ErrCode value);
+
+  private:
+  ::pandora::common::v1::ErrCode _internal_code() const;
+  void _internal_set_code(::pandora::common::v1::ErrCode value);
+
+  public:
+  // uint32 shop_id = 2 [json_name = "shopId"];
+  void clear_shop_id() ;
+  [[nodiscard]] ::uint32_t shop_id() const;
+  void set_shop_id(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_shop_id() const;
+  void _internal_set_shop_id(::uint32_t value);
+
+  public:
+  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.GetShopResponse)
+ private:
+  class _Internal;
+  using ParseTableT_ =
+      ::google::protobuf::internal::TcParseTable<2, 3,
+                          1, 0,
+                          2>;
+  static constexpr ParseTableT_ InternalGenerateParseTable_(
+      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
+  friend class ::google::protobuf::internal::TcParser;
+  #ifndef PROTOBUF_MESSAGE_GLOBALS
+  static const ParseTableT_ _table_;
+  #endif
+
+  friend class ::google::protobuf::MessageLite;
+  friend class ::google::protobuf::Arena;
+  friend ::google::protobuf::internal::PrivateAccess;
+  template <typename T>
+  friend class ::google::protobuf::Arena::InternalHelper;
+  using InternalArenaConstructable_ = void;
+  using DestructorSkippable_ = void;
+  struct Impl_ {
+    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
+                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+        const GetShopResponse& from_msg);
+    ::google::protobuf::internal::HasBits<1> _has_bits_;
+    ::google::protobuf::internal::CachedSize _cached_size_;
+    ::google::protobuf::RepeatedPtrField< ::pandora::inventory::v1::ShopEntry > entries_;
+    int code_;
+    ::uint32_t shop_id_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -10957,7 +12005,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ClaimTransferInstancesRequest final
   [[nodiscard]] static const ClaimTransferInstancesRequest& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<ClaimTransferInstancesRequest>(&ClaimTransferInstancesRequest_globals_);
   }
-  static constexpr int kIndexInFileMessages = 48;
+  static constexpr int kIndexInFileMessages = 53;
   friend void swap(ClaimTransferInstancesRequest& a, ClaimTransferInstancesRequest& b) { a.Swap(&b); }
   inline void Swap(ClaimTransferInstancesRequest* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -11366,6 +12414,289 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED CheckInstancesOwnedRequest final : 
 };
 // -------------------------------------------------------------------
 
+class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED PurchaseShopItemResponse final : public ::google::protobuf::Message
+/* @@protoc_insertion_point(class_definition:pandora.inventory.v1.PurchaseShopItemResponse) */ {
+ public:
+  inline PurchaseShopItemResponse() : PurchaseShopItemResponse(nullptr) {}
+  ~PurchaseShopItemResponse() PROTOBUF_FINAL;
+
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+  void operator delete(PurchaseShopItemResponse* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
+    SharedDtor(*msg);
+    ::google::protobuf::internal::SizedDelete(msg, sizeof(PurchaseShopItemResponse));
+  }
+#endif
+
+  template <typename = void>
+  explicit constexpr PurchaseShopItemResponse(::google::protobuf::internal::ConstantInitialized,
+                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
+                               class_data);
+
+  inline PurchaseShopItemResponse(const PurchaseShopItemResponse& from) : PurchaseShopItemResponse(nullptr, from) {}
+  inline PurchaseShopItemResponse(PurchaseShopItemResponse&& from) noexcept : PurchaseShopItemResponse(nullptr, ::std::move(from)) {}
+  inline PurchaseShopItemResponse& operator=(const PurchaseShopItemResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline PurchaseShopItemResponse& operator=(PurchaseShopItemResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] inline const ::google::protobuf::UnknownFieldSet& unknown_fields() const
+      ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.unknown_fields<::google::protobuf::UnknownFieldSet>(::google::protobuf::UnknownFieldSet::default_instance);
+  }
+  [[nodiscard]] inline ::google::protobuf::UnknownFieldSet* PROTOBUF_NONNULL
+  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return _internal_metadata_.mutable_unknown_fields<::google::protobuf::UnknownFieldSet>();
+  }
+
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL descriptor() {
+    return GetDescriptor();
+  }
+  [[nodiscard]] static const ::google::protobuf::Descriptor* PROTOBUF_NONNULL
+  GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  [[nodiscard]] static const ::google::protobuf::Reflection* PROTOBUF_NONNULL GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  [[nodiscard]] static const PurchaseShopItemResponse& default_instance() {
+    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<PurchaseShopItemResponse>(&PurchaseShopItemResponse_globals_);
+  }
+  static constexpr int kIndexInFileMessages = 49;
+  friend void swap(PurchaseShopItemResponse& a, PurchaseShopItemResponse& b) { a.Swap(&b); }
+  inline void Swap(PurchaseShopItemResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
+      InternalSwap(other);
+    } else {
+      ::google::protobuf::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(PurchaseShopItemResponse* PROTOBUF_NONNULL other) {
+    if (other == this) return;
+    ABSL_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  [[nodiscard]] PurchaseShopItemResponse* PROTOBUF_NONNULL
+  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
+    return ::google::protobuf::Message::DefaultConstruct<PurchaseShopItemResponse>(arena);
+  }
+  using ::google::protobuf::Message::CopyFrom;
+  void CopyFrom(const PurchaseShopItemResponse& from);
+  using ::google::protobuf::Message::MergeFrom;
+  void MergeFrom(const PurchaseShopItemResponse& from) { PurchaseShopItemResponse::MergeImpl(*this, from); }
+
+  private:
+  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
+                        const ::google::protobuf::MessageLite& from_msg);
+
+  public:
+  [[nodiscard]] bool IsInitialized() const {
+    return true;
+  }
+  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
+  #if defined(PROTOBUF_CUSTOM_VTABLE)
+  private:
+  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
+  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
+
+  public:
+  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
+    return _InternalSerialize(*this, target, stream);
+  }
+  #else   // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] ::size_t ByteSizeLong() const final;
+  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
+      ::uint8_t* PROTOBUF_NONNULL target,
+      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
+  #endif  // PROTOBUF_CUSTOM_VTABLE
+  [[nodiscard]] int GetCachedSize() const {
+    return _impl_._cached_size_.Get();
+  }
+
+  private:
+  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static void SharedDtor(MessageLite& self);
+  void InternalSwap(PurchaseShopItemResponse* PROTOBUF_NONNULL other);
+ private:
+  template <typename T>
+  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
+  static ::absl::string_view FullMessageName() { return "pandora.inventory.v1.PurchaseShopItemResponse"; }
+
+  explicit PurchaseShopItemResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  PurchaseShopItemResponse(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const PurchaseShopItemResponse& from);
+  PurchaseShopItemResponse(
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, PurchaseShopItemResponse&& from) noexcept
+      : PurchaseShopItemResponse(arena) {
+    *this = ::std::move(from);
+  }
+  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
+  static void* PROTOBUF_NONNULL PlacementNew_(
+      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
+      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+  static constexpr auto InternalNewImpl_();
+
+ public:
+  static constexpr auto InternalGenerateClassData_(
+      const MessageLite& prototype,
+      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
+
+  [[nodiscard]] ::google::protobuf::Metadata GetMetadata() const;
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+  enum : int {
+    kGrantedItemsFieldNumber = 4,
+    kGrantedInstancesFieldNumber = 5,
+    kBalanceFieldNumber = 2,
+    kCostFieldNumber = 3,
+    kCodeFieldNumber = 1,
+  };
+  // repeated .pandora.inventory.v1.ItemGrant granted_items = 4 [json_name = "grantedItems"];
+  [[nodiscard]] int granted_items_size()
+      const;
+  private:
+  int _internal_granted_items_size() const;
+
+  public:
+  void clear_granted_items() ;
+  [[nodiscard]] const ::pandora::inventory::v1::ItemGrant& granted_items(int index) const;
+  [[nodiscard]] ::pandora::inventory::v1::ItemGrant* PROTOBUF_NONNULL mutable_granted_items(int index);
+  ::pandora::inventory::v1::ItemGrant* PROTOBUF_NONNULL add_granted_items();
+  [[nodiscard]] const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>&
+  granted_items() const;
+  [[nodiscard]] ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>* PROTOBUF_NONNULL
+  mutable_granted_items();
+
+  private:
+  const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>& _internal_granted_items() const;
+  ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>* PROTOBUF_NONNULL _internal_mutable_granted_items();
+
+  public:
+  // repeated .pandora.inventory.v1.ItemInstance granted_instances = 5 [json_name = "grantedInstances"];
+  [[nodiscard]] int granted_instances_size()
+      const;
+  private:
+  int _internal_granted_instances_size() const;
+
+  public:
+  void clear_granted_instances() ;
+  [[nodiscard]] const ::pandora::inventory::v1::ItemInstance& granted_instances(int index) const;
+  [[nodiscard]] ::pandora::inventory::v1::ItemInstance* PROTOBUF_NONNULL mutable_granted_instances(int index);
+  ::pandora::inventory::v1::ItemInstance* PROTOBUF_NONNULL add_granted_instances();
+  [[nodiscard]] const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstance>&
+  granted_instances() const;
+  [[nodiscard]] ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstance>* PROTOBUF_NONNULL
+  mutable_granted_instances();
+
+  private:
+  const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstance>& _internal_granted_instances() const;
+  ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstance>* PROTOBUF_NONNULL _internal_mutable_granted_instances();
+
+  public:
+  // .pandora.common.v1.CurrencyAmount balance = 2 [json_name = "balance"];
+  [[nodiscard]] bool has_balance()
+      const;
+  void clear_balance() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& balance() const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE release_balance();
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_balance();
+  void set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  void unsafe_arena_set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE unsafe_arena_release_balance();
+
+  private:
+  const ::pandora::common::v1::CurrencyAmount& _internal_balance() const;
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL _internal_mutable_balance();
+
+  public:
+  // .pandora.common.v1.CurrencyAmount cost = 3 [json_name = "cost"];
+  [[nodiscard]] bool has_cost()
+      const;
+  void clear_cost() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& cost() const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE release_cost();
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_cost();
+  void set_allocated_cost(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  void unsafe_arena_set_allocated_cost(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE unsafe_arena_release_cost();
+
+  private:
+  const ::pandora::common::v1::CurrencyAmount& _internal_cost() const;
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL _internal_mutable_cost();
+
+  public:
+  // .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+  void clear_code() ;
+  [[nodiscard]] ::pandora::common::v1::ErrCode code() const;
+  void set_code(::pandora::common::v1::ErrCode value);
+
+  private:
+  ::pandora::common::v1::ErrCode _internal_code() const;
+  void _internal_set_code(::pandora::common::v1::ErrCode value);
+
+  public:
+  // @@protoc_insertion_point(class_scope:pandora.inventory.v1.PurchaseShopItemResponse)
+ private:
+  class _Internal;
+  using ParseTableT_ =
+      ::google::protobuf::internal::TcParseTable<3, 5,
+                          4, 0,
+                          2>;
+  static constexpr ParseTableT_ InternalGenerateParseTable_(
+      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
+  friend class ::google::protobuf::internal::TcParser;
+  #ifndef PROTOBUF_MESSAGE_GLOBALS
+  static const ParseTableT_ _table_;
+  #endif
+
+  friend class ::google::protobuf::MessageLite;
+  friend class ::google::protobuf::Arena;
+  friend ::google::protobuf::internal::PrivateAccess;
+  template <typename T>
+  friend class ::google::protobuf::Arena::InternalHelper;
+  using InternalArenaConstructable_ = void;
+  using DestructorSkippable_ = void;
+  struct Impl_ {
+    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
+                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
+    inline explicit Impl_(
+        ::google::protobuf::internal::InternalVisibility visibility,
+        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
+        const PurchaseShopItemResponse& from_msg);
+    ::google::protobuf::internal::HasBits<1> _has_bits_;
+    ::google::protobuf::internal::CachedSize _cached_size_;
+    ::google::protobuf::RepeatedPtrField< ::pandora::inventory::v1::ItemGrant > granted_items_;
+    ::google::protobuf::RepeatedPtrField< ::pandora::inventory::v1::ItemInstance > granted_instances_;
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE balance_;
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE cost_;
+    int code_;
+    PROTOBUF_TSAN_DECLARE_MEMBER
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_pandora_2finventory_2fv1_2finventory_2eproto;
+};
+// -------------------------------------------------------------------
+
 class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Inventory final : public ::google::protobuf::Message
 /* @@protoc_insertion_point(class_definition:pandora.inventory.v1.Inventory) */ {
  public:
@@ -11516,8 +12847,8 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Inventory final : public ::google::
   enum : int {
     kItemsFieldNumber = 3,
     kInstancesFieldNumber = 5,
+    kCurrenciesFieldNumber = 6,
     kPlayerIdFieldNumber = 1,
-    kGoldFieldNumber = 2,
     kCapacityFieldNumber = 4,
   };
   // repeated .pandora.inventory.v1.ItemStack items = 3 [json_name = "items"];
@@ -11562,6 +12893,27 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Inventory final : public ::google::
   ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstance>* PROTOBUF_NONNULL _internal_mutable_instances();
 
   public:
+  // repeated .pandora.common.v1.CurrencyAmount currencies = 6 [json_name = "currencies"];
+  [[nodiscard]] int currencies_size()
+      const;
+  private:
+  int _internal_currencies_size() const;
+
+  public:
+  void clear_currencies() ;
+  [[nodiscard]] const ::pandora::common::v1::CurrencyAmount& currencies(int index) const;
+  [[nodiscard]] ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL mutable_currencies(int index);
+  ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL add_currencies();
+  [[nodiscard]] const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>&
+  currencies() const;
+  [[nodiscard]] ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL
+  mutable_currencies();
+
+  private:
+  const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>& _internal_currencies() const;
+  ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL _internal_mutable_currencies();
+
+  public:
   // uint64 player_id = 1 [json_name = "playerId"];
   void clear_player_id() ;
   [[nodiscard]] ::uint64_t player_id() const;
@@ -11570,16 +12922,6 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Inventory final : public ::google::
   private:
   ::uint64_t _internal_player_id() const;
   void _internal_set_player_id(::uint64_t value);
-
-  public:
-  // int64 gold = 2 [json_name = "gold"];
-  void clear_gold() ;
-  [[nodiscard]] ::int64_t gold() const;
-  void set_gold(::int64_t value);
-
-  private:
-  ::int64_t _internal_gold() const;
-  void _internal_set_gold(::int64_t value);
 
   public:
   // int32 capacity = 4 [json_name = "capacity"];
@@ -11597,7 +12939,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Inventory final : public ::google::
   class _Internal;
   using ParseTableT_ =
       ::google::protobuf::internal::TcParseTable<3, 5,
-                          2, 0,
+                          3, 0,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
       const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
@@ -11627,8 +12969,8 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Inventory final : public ::google::
     ::google::protobuf::internal::CachedSize _cached_size_;
     ::google::protobuf::RepeatedPtrField< ::pandora::inventory::v1::ItemStack > items_;
     ::google::protobuf::RepeatedPtrField< ::pandora::inventory::v1::ItemInstance > instances_;
+    ::google::protobuf::RepeatedPtrField< ::pandora::common::v1::CurrencyAmount > currencies_;
     ::uint64_t player_id_;
-    ::int64_t gold_;
     ::int32_t capacity_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
@@ -12136,7 +13478,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED EscrowOutInstancesResponse final : 
   [[nodiscard]] static const EscrowOutInstancesResponse& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<EscrowOutInstancesResponse>(&EscrowOutInstancesResponse_globals_);
   }
-  static constexpr int kIndexInFileMessages = 46;
+  static constexpr int kIndexInFileMessages = 51;
   friend void swap(EscrowOutInstancesResponse& a, EscrowOutInstancesResponse& b) { a.Swap(&b); }
   inline void Swap(EscrowOutInstancesResponse* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -12893,7 +14235,7 @@ inline void ItemGrant::_internal_set_count(::int64_t value) {
 inline void Inventory::clear_player_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.player_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
 }
 inline ::uint64_t Inventory::player_id() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.Inventory.player_id)
@@ -12901,7 +14243,7 @@ inline ::uint64_t Inventory::player_id() const {
 }
 inline void Inventory::set_player_id(::uint64_t value) {
   _internal_set_player_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.Inventory.player_id)
 }
 inline ::uint64_t Inventory::_internal_player_id() const {
@@ -12911,30 +14253,6 @@ inline ::uint64_t Inventory::_internal_player_id() const {
 inline void Inventory::_internal_set_player_id(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.player_id_ = value;
-}
-
-// int64 gold = 2 [json_name = "gold"];
-inline void Inventory::clear_gold() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
-}
-inline ::int64_t Inventory::gold() const {
-  // @@protoc_insertion_point(field_get:pandora.inventory.v1.Inventory.gold)
-  return _internal_gold();
-}
-inline void Inventory::set_gold(::int64_t value) {
-  _internal_set_gold(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
-  // @@protoc_insertion_point(field_set:pandora.inventory.v1.Inventory.gold)
-}
-inline ::int64_t Inventory::_internal_gold() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.gold_;
-}
-inline void Inventory::_internal_set_gold(::int64_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = value;
 }
 
 // repeated .pandora.inventory.v1.ItemStack items = 3 [json_name = "items"];
@@ -13069,6 +14387,56 @@ inline ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstan
 Inventory::_internal_mutable_instances() {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return &_impl_.instances_;
+}
+
+// repeated .pandora.common.v1.CurrencyAmount currencies = 6 [json_name = "currencies"];
+inline int Inventory::_internal_currencies_size() const {
+  return _internal_currencies().size();
+}
+inline int Inventory::currencies_size() const {
+  return _internal_currencies_size();
+}
+inline const ::pandora::common::v1::CurrencyAmount& Inventory::currencies(int index) const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.Inventory.currencies)
+  return _internal_currencies().Get(index);
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL Inventory::mutable_currencies(int index)
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.Inventory.currencies)
+  return _internal_mutable_currencies()->Mutable(index);
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL Inventory::add_currencies()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::pandora::common::v1::CurrencyAmount* _add =
+      _internal_mutable_currencies()->InternalAddWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), GetArena());
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  // @@protoc_insertion_point(field_add:pandora.inventory.v1.Inventory.currencies)
+  return _add;
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>& Inventory::currencies() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_list:pandora.inventory.v1.Inventory.currencies)
+  return _internal_currencies();
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL
+Inventory::mutable_currencies() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  // @@protoc_insertion_point(field_mutable_list:pandora.inventory.v1.Inventory.currencies)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  return _internal_mutable_currencies();
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>&
+Inventory::_internal_currencies() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.currencies_;
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL
+Inventory::_internal_mutable_currencies() {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return &_impl_.currencies_;
 }
 
 // -------------------------------------------------------------------
@@ -13523,7 +14891,7 @@ inline void GetInventoryResponse::set_allocated_inventory(::pandora::inventory::
 inline void GrantItemsRequest::clear_player_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.player_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
 }
 inline ::uint64_t GrantItemsRequest::player_id() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.GrantItemsRequest.player_id)
@@ -13531,7 +14899,7 @@ inline ::uint64_t GrantItemsRequest::player_id() const {
 }
 inline void GrantItemsRequest::set_player_id(::uint64_t value) {
   _internal_set_player_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.GrantItemsRequest.player_id)
 }
 inline ::uint64_t GrantItemsRequest::_internal_player_id() const {
@@ -13598,35 +14966,11 @@ GrantItemsRequest::_internal_mutable_items() {
   return &_impl_.items_;
 }
 
-// int64 gold = 3 [json_name = "gold"];
-inline void GrantItemsRequest::clear_gold() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
-}
-inline ::int64_t GrantItemsRequest::gold() const {
-  // @@protoc_insertion_point(field_get:pandora.inventory.v1.GrantItemsRequest.gold)
-  return _internal_gold();
-}
-inline void GrantItemsRequest::set_gold(::int64_t value) {
-  _internal_set_gold(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
-  // @@protoc_insertion_point(field_set:pandora.inventory.v1.GrantItemsRequest.gold)
-}
-inline ::int64_t GrantItemsRequest::_internal_gold() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.gold_;
-}
-inline void GrantItemsRequest::_internal_set_gold(::int64_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = value;
-}
-
 // string idempotency_key = 4 [json_name = "idempotencyKey"];
 inline void GrantItemsRequest::clear_idempotency_key() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.idempotency_key_.ClearToEmpty();
-  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
 }
 inline const ::std::string& GrantItemsRequest::idempotency_key() const
     ABSL_ATTRIBUTE_LIFETIME_BOUND {
@@ -13636,13 +14980,13 @@ inline const ::std::string& GrantItemsRequest::idempotency_key() const
 template <typename Arg_, typename... Args_>
 PROTOBUF_ALWAYS_INLINE void GrantItemsRequest::set_idempotency_key(Arg_&& arg, Args_... args) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
   _impl_.idempotency_key_.Set(static_cast<Arg_&&>(arg), args..., GetArena());
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.GrantItemsRequest.idempotency_key)
 }
 inline ::std::string* PROTOBUF_NONNULL GrantItemsRequest::mutable_idempotency_key()
     ABSL_ATTRIBUTE_LIFETIME_BOUND {
-  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
   ::std::string* _s = _internal_mutable_idempotency_key();
   // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.GrantItemsRequest.idempotency_key)
   return _s;
@@ -13662,10 +15006,10 @@ inline ::std::string* PROTOBUF_NONNULL GrantItemsRequest::_internal_mutable_idem
 inline ::std::string* PROTOBUF_NULLABLE GrantItemsRequest::release_idempotency_key() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   // @@protoc_insertion_point(field_release:pandora.inventory.v1.GrantItemsRequest.idempotency_key)
-  if (!CheckHasBit(_impl_._has_bits_[0], 0x00000002U)) {
+  if (!CheckHasBit(_impl_._has_bits_[0], 0x00000004U)) {
     return nullptr;
   }
-  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
   auto* released = _impl_.idempotency_key_.Release();
   if (::google::protobuf::internal::DebugHardenForceCopyDefaultString()) {
     _impl_.idempotency_key_.Set("", GetArena());
@@ -13675,15 +15019,65 @@ inline ::std::string* PROTOBUF_NULLABLE GrantItemsRequest::release_idempotency_k
 inline void GrantItemsRequest::set_allocated_idempotency_key(::std::string* PROTOBUF_NULLABLE value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   if (value != nullptr) {
-    SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+    SetHasBit(_impl_._has_bits_[0], 0x00000004U);
   } else {
-    ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+    ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
   }
   _impl_.idempotency_key_.SetAllocated(value, GetArena());
   if (::google::protobuf::internal::DebugHardenForceCopyDefaultString() && _impl_.idempotency_key_.IsDefault()) {
     _impl_.idempotency_key_.Set("", GetArena());
   }
   // @@protoc_insertion_point(field_set_allocated:pandora.inventory.v1.GrantItemsRequest.idempotency_key)
+}
+
+// repeated .pandora.common.v1.CurrencyAmount currencies = 5 [json_name = "currencies"];
+inline int GrantItemsRequest::_internal_currencies_size() const {
+  return _internal_currencies().size();
+}
+inline int GrantItemsRequest::currencies_size() const {
+  return _internal_currencies_size();
+}
+inline const ::pandora::common::v1::CurrencyAmount& GrantItemsRequest::currencies(int index) const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.GrantItemsRequest.currencies)
+  return _internal_currencies().Get(index);
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL GrantItemsRequest::mutable_currencies(int index)
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.GrantItemsRequest.currencies)
+  return _internal_mutable_currencies()->Mutable(index);
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL GrantItemsRequest::add_currencies()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::pandora::common::v1::CurrencyAmount* _add =
+      _internal_mutable_currencies()->InternalAddWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), GetArena());
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  // @@protoc_insertion_point(field_add:pandora.inventory.v1.GrantItemsRequest.currencies)
+  return _add;
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>& GrantItemsRequest::currencies() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_list:pandora.inventory.v1.GrantItemsRequest.currencies)
+  return _internal_currencies();
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL
+GrantItemsRequest::mutable_currencies() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  // @@protoc_insertion_point(field_mutable_list:pandora.inventory.v1.GrantItemsRequest.currencies)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  return _internal_mutable_currencies();
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>&
+GrantItemsRequest::_internal_currencies() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.currencies_;
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL
+GrantItemsRequest::_internal_mutable_currencies() {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return &_impl_.currencies_;
 }
 
 // -------------------------------------------------------------------
@@ -13714,28 +15108,54 @@ inline void GrantItemsResponse::_internal_set_code(::pandora::common::v1::ErrCod
   _impl_.code_ = value;
 }
 
-// int64 gold = 2 [json_name = "gold"];
-inline void GrantItemsResponse::clear_gold() {
+// repeated .pandora.common.v1.CurrencyAmount currencies = 3 [json_name = "currencies"];
+inline int GrantItemsResponse::_internal_currencies_size() const {
+  return _internal_currencies().size();
+}
+inline int GrantItemsResponse::currencies_size() const {
+  return _internal_currencies_size();
+}
+inline const ::pandora::common::v1::CurrencyAmount& GrantItemsResponse::currencies(int index) const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.GrantItemsResponse.currencies)
+  return _internal_currencies().Get(index);
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL GrantItemsResponse::mutable_currencies(int index)
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.GrantItemsResponse.currencies)
+  return _internal_mutable_currencies()->Mutable(index);
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL GrantItemsResponse::add_currencies()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
-}
-inline ::int64_t GrantItemsResponse::gold() const {
-  // @@protoc_insertion_point(field_get:pandora.inventory.v1.GrantItemsResponse.gold)
-  return _internal_gold();
-}
-inline void GrantItemsResponse::set_gold(::int64_t value) {
-  _internal_set_gold(value);
+  ::pandora::common::v1::CurrencyAmount* _add =
+      _internal_mutable_currencies()->InternalAddWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), GetArena());
   SetHasBit(_impl_._has_bits_[0], 0x00000001U);
-  // @@protoc_insertion_point(field_set:pandora.inventory.v1.GrantItemsResponse.gold)
+  // @@protoc_insertion_point(field_add:pandora.inventory.v1.GrantItemsResponse.currencies)
+  return _add;
 }
-inline ::int64_t GrantItemsResponse::_internal_gold() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.gold_;
+inline const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>& GrantItemsResponse::currencies() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_list:pandora.inventory.v1.GrantItemsResponse.currencies)
+  return _internal_currencies();
 }
-inline void GrantItemsResponse::_internal_set_gold(::int64_t value) {
+inline ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL
+GrantItemsResponse::mutable_currencies() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  // @@protoc_insertion_point(field_mutable_list:pandora.inventory.v1.GrantItemsResponse.currencies)
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = value;
+  return _internal_mutable_currencies();
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>&
+GrantItemsResponse::_internal_currencies() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.currencies_;
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::common::v1::CurrencyAmount>* PROTOBUF_NONNULL
+GrantItemsResponse::_internal_mutable_currencies() {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return &_impl_.currencies_;
 }
 
 // -------------------------------------------------------------------
@@ -14889,7 +16309,7 @@ inline void SellItemRequest::set_allocated_idempotency_key(::std::string* PROTOB
 inline void SellItemResponse::clear_code() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.code_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
 }
 inline ::pandora::common::v1::ErrCode SellItemResponse::code() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SellItemResponse.code)
@@ -14897,7 +16317,7 @@ inline ::pandora::common::v1::ErrCode SellItemResponse::code() const {
 }
 inline void SellItemResponse::set_code(::pandora::common::v1::ErrCode value) {
   _internal_set_code(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SellItemResponse.code)
 }
 inline ::pandora::common::v1::ErrCode SellItemResponse::_internal_code() const {
@@ -14913,7 +16333,7 @@ inline void SellItemResponse::_internal_set_code(::pandora::common::v1::ErrCode 
 inline void SellItemResponse::clear_remaining() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.remaining_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
 }
 inline ::int64_t SellItemResponse::remaining() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SellItemResponse.remaining)
@@ -14921,7 +16341,7 @@ inline ::int64_t SellItemResponse::remaining() const {
 }
 inline void SellItemResponse::set_remaining(::int64_t value) {
   _internal_set_remaining(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SellItemResponse.remaining)
 }
 inline ::int64_t SellItemResponse::_internal_remaining() const {
@@ -14933,28 +16353,190 @@ inline void SellItemResponse::_internal_set_remaining(::int64_t value) {
   _impl_.remaining_ = value;
 }
 
-// int64 gold = 3 [json_name = "gold"];
-inline void SellItemResponse::clear_gold() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+// .pandora.common.v1.CurrencyAmount balance = 4 [json_name = "balance"];
+inline bool SellItemResponse::has_balance() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000001U);
+  PROTOBUF_ASSUME(!value || _impl_.balance_ != nullptr);
+  return value;
 }
-inline ::int64_t SellItemResponse::gold() const {
-  // @@protoc_insertion_point(field_get:pandora.inventory.v1.SellItemResponse.gold)
-  return _internal_gold();
-}
-inline void SellItemResponse::set_gold(::int64_t value) {
-  _internal_set_gold(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
-  // @@protoc_insertion_point(field_set:pandora.inventory.v1.SellItemResponse.gold)
-}
-inline ::int64_t SellItemResponse::_internal_gold() const {
+inline const ::pandora::common::v1::CurrencyAmount& SellItemResponse::_internal_balance() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.gold_;
+  const ::pandora::common::v1::CurrencyAmount* p = _impl_.balance_;
+  return p != nullptr ? *p : *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<::pandora::common::v1::CurrencyAmount>(&::pandora::common::v1::CurrencyAmount_globals_);
 }
-inline void SellItemResponse::_internal_set_gold(::int64_t value) {
+inline const ::pandora::common::v1::CurrencyAmount& SellItemResponse::balance() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.SellItemResponse.balance)
+  return _internal_balance();
+}
+inline void SellItemResponse::unsafe_arena_set_allocated_balance(
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = value;
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.balance_);
+  }
+  _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:pandora.inventory.v1.SellItemResponse.balance)
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SellItemResponse::release_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::pandora::common::v1::CurrencyAmount* released = _impl_.balance_;
+  _impl_.balance_ = nullptr;
+  if (::google::protobuf::internal::DebugHardenForceCopyInRelease()) {
+    auto* old = reinterpret_cast<::google::protobuf::MessageLite*>(released);
+    released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    if (GetArena() == nullptr) {
+      delete old;
+    }
+  } else {
+    if (GetArena() != nullptr) {
+      released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    }
+  }
+  return released;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SellItemResponse::unsafe_arena_release_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.inventory.v1.SellItemResponse.balance)
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::pandora::common::v1::CurrencyAmount* temp = _impl_.balance_;
+  _impl_.balance_ = nullptr;
+  return temp;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SellItemResponse::_internal_mutable_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.balance_ == nullptr) {
+    auto* p = ::google::protobuf::Message::DefaultConstruct<::pandora::common::v1::CurrencyAmount>(GetArena());
+    _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(p);
+  }
+  return _impl_.balance_;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SellItemResponse::mutable_balance()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::pandora::common::v1::CurrencyAmount* _msg = _internal_mutable_balance();
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.SellItemResponse.balance)
+  return _msg;
+}
+inline void SellItemResponse::set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::Arena* message_arena = GetArena();
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (message_arena == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.balance_);
+  }
+
+  if (value != nullptr) {
+    ::google::protobuf::Arena* submessage_arena = reinterpret_cast<::google::protobuf::Message*>(value)->GetArena();
+    if (message_arena != submessage_arena) {
+      value = ::google::protobuf::internal::GetOwnedMessage(message_arena, value, submessage_arena);
+    }
+    SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  }
+
+  _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  // @@protoc_insertion_point(field_set_allocated:pandora.inventory.v1.SellItemResponse.balance)
+}
+
+// .pandora.common.v1.CurrencyAmount earned = 5 [json_name = "earned"];
+inline bool SellItemResponse::has_earned() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000002U);
+  PROTOBUF_ASSUME(!value || _impl_.earned_ != nullptr);
+  return value;
+}
+inline const ::pandora::common::v1::CurrencyAmount& SellItemResponse::_internal_earned() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  const ::pandora::common::v1::CurrencyAmount* p = _impl_.earned_;
+  return p != nullptr ? *p : *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<::pandora::common::v1::CurrencyAmount>(&::pandora::common::v1::CurrencyAmount_globals_);
+}
+inline const ::pandora::common::v1::CurrencyAmount& SellItemResponse::earned() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.SellItemResponse.earned)
+  return _internal_earned();
+}
+inline void SellItemResponse::unsafe_arena_set_allocated_earned(
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.earned_);
+  }
+  _impl_.earned_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:pandora.inventory.v1.SellItemResponse.earned)
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SellItemResponse::release_earned() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ::pandora::common::v1::CurrencyAmount* released = _impl_.earned_;
+  _impl_.earned_ = nullptr;
+  if (::google::protobuf::internal::DebugHardenForceCopyInRelease()) {
+    auto* old = reinterpret_cast<::google::protobuf::MessageLite*>(released);
+    released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    if (GetArena() == nullptr) {
+      delete old;
+    }
+  } else {
+    if (GetArena() != nullptr) {
+      released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    }
+  }
+  return released;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SellItemResponse::unsafe_arena_release_earned() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.inventory.v1.SellItemResponse.earned)
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ::pandora::common::v1::CurrencyAmount* temp = _impl_.earned_;
+  _impl_.earned_ = nullptr;
+  return temp;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SellItemResponse::_internal_mutable_earned() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.earned_ == nullptr) {
+    auto* p = ::google::protobuf::Message::DefaultConstruct<::pandora::common::v1::CurrencyAmount>(GetArena());
+    _impl_.earned_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(p);
+  }
+  return _impl_.earned_;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SellItemResponse::mutable_earned()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ::pandora::common::v1::CurrencyAmount* _msg = _internal_mutable_earned();
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.SellItemResponse.earned)
+  return _msg;
+}
+inline void SellItemResponse::set_allocated_earned(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::Arena* message_arena = GetArena();
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (message_arena == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.earned_);
+  }
+
+  if (value != nullptr) {
+    ::google::protobuf::Arena* submessage_arena = reinterpret_cast<::google::protobuf::Message*>(value)->GetArena();
+    if (message_arena != submessage_arena) {
+      value = ::google::protobuf::internal::GetOwnedMessage(message_arena, value, submessage_arena);
+    }
+    SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  }
+
+  _impl_.earned_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  // @@protoc_insertion_point(field_set_allocated:pandora.inventory.v1.SellItemResponse.earned)
 }
 
 // -------------------------------------------------------------------
@@ -15229,7 +16811,7 @@ inline void SettleAuctionMatchRequest::_internal_set_buyer_id(::uint64_t value) 
 inline void SettleAuctionMatchRequest::clear_item_config_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.item_config_id_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000080U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
 }
 inline ::uint32_t SettleAuctionMatchRequest::item_config_id() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettleAuctionMatchRequest.item_config_id)
@@ -15237,7 +16819,7 @@ inline ::uint32_t SettleAuctionMatchRequest::item_config_id() const {
 }
 inline void SettleAuctionMatchRequest::set_item_config_id(::uint32_t value) {
   _internal_set_item_config_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000080U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SettleAuctionMatchRequest.item_config_id)
 }
 inline ::uint32_t SettleAuctionMatchRequest::_internal_item_config_id() const {
@@ -15273,26 +16855,26 @@ inline void SettleAuctionMatchRequest::_internal_set_quantity(::int64_t value) {
   _impl_.quantity_ = value;
 }
 
-// int64 unit_price = 6 [json_name = "unitPrice"];
+// uint64 unit_price = 6 [json_name = "unitPrice"];
 inline void SettleAuctionMatchRequest::clear_unit_price() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.unit_price_ = ::int64_t{0};
+  _impl_.unit_price_ = ::uint64_t{0u};
   ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
 }
-inline ::int64_t SettleAuctionMatchRequest::unit_price() const {
+inline ::uint64_t SettleAuctionMatchRequest::unit_price() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettleAuctionMatchRequest.unit_price)
   return _internal_unit_price();
 }
-inline void SettleAuctionMatchRequest::set_unit_price(::int64_t value) {
+inline void SettleAuctionMatchRequest::set_unit_price(::uint64_t value) {
   _internal_set_unit_price(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000010U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SettleAuctionMatchRequest.unit_price)
 }
-inline ::int64_t SettleAuctionMatchRequest::_internal_unit_price() const {
+inline ::uint64_t SettleAuctionMatchRequest::_internal_unit_price() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.unit_price_;
 }
-inline void SettleAuctionMatchRequest::_internal_set_unit_price(::int64_t value) {
+inline void SettleAuctionMatchRequest::_internal_set_unit_price(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.unit_price_ = value;
 }
@@ -15301,7 +16883,7 @@ inline void SettleAuctionMatchRequest::_internal_set_unit_price(::int64_t value)
 inline void SettleAuctionMatchRequest::clear_sell_order_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.sell_order_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000080U);
 }
 inline ::uint64_t SettleAuctionMatchRequest::sell_order_id() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettleAuctionMatchRequest.sell_order_id)
@@ -15309,7 +16891,7 @@ inline ::uint64_t SettleAuctionMatchRequest::sell_order_id() const {
 }
 inline void SettleAuctionMatchRequest::set_sell_order_id(::uint64_t value) {
   _internal_set_sell_order_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000080U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SettleAuctionMatchRequest.sell_order_id)
 }
 inline ::uint64_t SettleAuctionMatchRequest::_internal_sell_order_id() const {
@@ -15325,7 +16907,7 @@ inline void SettleAuctionMatchRequest::_internal_set_sell_order_id(::uint64_t va
 inline void SettleAuctionMatchRequest::clear_buy_order_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.buy_order_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000040U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000100U);
 }
 inline ::uint64_t SettleAuctionMatchRequest::buy_order_id() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettleAuctionMatchRequest.buy_order_id)
@@ -15333,7 +16915,7 @@ inline ::uint64_t SettleAuctionMatchRequest::buy_order_id() const {
 }
 inline void SettleAuctionMatchRequest::set_buy_order_id(::uint64_t value) {
   _internal_set_buy_order_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000040U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000100U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SettleAuctionMatchRequest.buy_order_id)
 }
 inline ::uint64_t SettleAuctionMatchRequest::_internal_buy_order_id() const {
@@ -15343,6 +16925,30 @@ inline ::uint64_t SettleAuctionMatchRequest::_internal_buy_order_id() const {
 inline void SettleAuctionMatchRequest::_internal_set_buy_order_id(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.buy_order_id_ = value;
+}
+
+// .pandora.common.v1.CurrencyKind currency_kind = 9 [json_name = "currencyKind"];
+inline void SettleAuctionMatchRequest::clear_currency_kind() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currency_kind_ = 0;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000040U);
+}
+inline ::pandora::common::v1::CurrencyKind SettleAuctionMatchRequest::currency_kind() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettleAuctionMatchRequest.currency_kind)
+  return _internal_currency_kind();
+}
+inline void SettleAuctionMatchRequest::set_currency_kind(::pandora::common::v1::CurrencyKind value) {
+  _internal_set_currency_kind(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000040U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.SettleAuctionMatchRequest.currency_kind)
+}
+inline ::pandora::common::v1::CurrencyKind SettleAuctionMatchRequest::_internal_currency_kind() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return static_cast<::pandora::common::v1::CurrencyKind>(_impl_.currency_kind_);
+}
+inline void SettleAuctionMatchRequest::_internal_set_currency_kind(::pandora::common::v1::CurrencyKind value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currency_kind_ = value;
 }
 
 // -------------------------------------------------------------------
@@ -15381,7 +16987,7 @@ inline void SettleAuctionMatchResponse::_internal_set_code(::pandora::common::v1
 inline void SettlePlayerTradeRequest::clear_order_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.order_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
 }
 inline ::uint64_t SettlePlayerTradeRequest::order_id() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettlePlayerTradeRequest.order_id)
@@ -15389,7 +16995,7 @@ inline ::uint64_t SettlePlayerTradeRequest::order_id() const {
 }
 inline void SettlePlayerTradeRequest::set_order_id(::uint64_t value) {
   _internal_set_order_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SettlePlayerTradeRequest.order_id)
 }
 inline ::uint64_t SettlePlayerTradeRequest::_internal_order_id() const {
@@ -15405,7 +17011,7 @@ inline void SettlePlayerTradeRequest::_internal_set_order_id(::uint64_t value) {
 inline void SettlePlayerTradeRequest::clear_seller_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.seller_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
 }
 inline ::uint64_t SettlePlayerTradeRequest::seller_id() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettlePlayerTradeRequest.seller_id)
@@ -15413,7 +17019,7 @@ inline ::uint64_t SettlePlayerTradeRequest::seller_id() const {
 }
 inline void SettlePlayerTradeRequest::set_seller_id(::uint64_t value) {
   _internal_set_seller_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SettlePlayerTradeRequest.seller_id)
 }
 inline ::uint64_t SettlePlayerTradeRequest::_internal_seller_id() const {
@@ -15429,7 +17035,7 @@ inline void SettlePlayerTradeRequest::_internal_set_seller_id(::uint64_t value) 
 inline void SettlePlayerTradeRequest::clear_buyer_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.buyer_id_ = ::uint64_t{0u};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
 }
 inline ::uint64_t SettlePlayerTradeRequest::buyer_id() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettlePlayerTradeRequest.buyer_id)
@@ -15437,7 +17043,7 @@ inline ::uint64_t SettlePlayerTradeRequest::buyer_id() const {
 }
 inline void SettlePlayerTradeRequest::set_buyer_id(::uint64_t value) {
   _internal_set_buyer_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SettlePlayerTradeRequest.buyer_id)
 }
 inline ::uint64_t SettlePlayerTradeRequest::_internal_buyer_id() const {
@@ -15559,28 +17165,97 @@ SettlePlayerTradeRequest::_internal_mutable_buyer_items() {
   return &_impl_.buyer_items_;
 }
 
-// int64 price = 6 [json_name = "price"];
-inline void SettlePlayerTradeRequest::clear_price() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.price_ = ::int64_t{0};
-  ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
+// .pandora.common.v1.CurrencyAmount price_amount = 7 [json_name = "priceAmount"];
+inline bool SettlePlayerTradeRequest::has_price_amount() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000004U);
+  PROTOBUF_ASSUME(!value || _impl_.price_amount_ != nullptr);
+  return value;
 }
-inline ::int64_t SettlePlayerTradeRequest::price() const {
-  // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettlePlayerTradeRequest.price)
-  return _internal_price();
-}
-inline void SettlePlayerTradeRequest::set_price(::int64_t value) {
-  _internal_set_price(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
-  // @@protoc_insertion_point(field_set:pandora.inventory.v1.SettlePlayerTradeRequest.price)
-}
-inline ::int64_t SettlePlayerTradeRequest::_internal_price() const {
+inline const ::pandora::common::v1::CurrencyAmount& SettlePlayerTradeRequest::_internal_price_amount() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.price_;
+  const ::pandora::common::v1::CurrencyAmount* p = _impl_.price_amount_;
+  return p != nullptr ? *p : *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<::pandora::common::v1::CurrencyAmount>(&::pandora::common::v1::CurrencyAmount_globals_);
 }
-inline void SettlePlayerTradeRequest::_internal_set_price(::int64_t value) {
+inline const ::pandora::common::v1::CurrencyAmount& SettlePlayerTradeRequest::price_amount() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.SettlePlayerTradeRequest.price_amount)
+  return _internal_price_amount();
+}
+inline void SettlePlayerTradeRequest::unsafe_arena_set_allocated_price_amount(
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.price_ = value;
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.price_amount_);
+  }
+  _impl_.price_amount_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:pandora.inventory.v1.SettlePlayerTradeRequest.price_amount)
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SettlePlayerTradeRequest::release_price_amount() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ::pandora::common::v1::CurrencyAmount* released = _impl_.price_amount_;
+  _impl_.price_amount_ = nullptr;
+  if (::google::protobuf::internal::DebugHardenForceCopyInRelease()) {
+    auto* old = reinterpret_cast<::google::protobuf::MessageLite*>(released);
+    released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    if (GetArena() == nullptr) {
+      delete old;
+    }
+  } else {
+    if (GetArena() != nullptr) {
+      released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    }
+  }
+  return released;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SettlePlayerTradeRequest::unsafe_arena_release_price_amount() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.inventory.v1.SettlePlayerTradeRequest.price_amount)
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ::pandora::common::v1::CurrencyAmount* temp = _impl_.price_amount_;
+  _impl_.price_amount_ = nullptr;
+  return temp;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SettlePlayerTradeRequest::_internal_mutable_price_amount() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.price_amount_ == nullptr) {
+    auto* p = ::google::protobuf::Message::DefaultConstruct<::pandora::common::v1::CurrencyAmount>(GetArena());
+    _impl_.price_amount_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(p);
+  }
+  return _impl_.price_amount_;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SettlePlayerTradeRequest::mutable_price_amount()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ::pandora::common::v1::CurrencyAmount* _msg = _internal_mutable_price_amount();
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.SettlePlayerTradeRequest.price_amount)
+  return _msg;
+}
+inline void SettlePlayerTradeRequest::set_allocated_price_amount(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::Arena* message_arena = GetArena();
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (message_arena == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.price_amount_);
+  }
+
+  if (value != nullptr) {
+    ::google::protobuf::Arena* submessage_arena = reinterpret_cast<::google::protobuf::Message*>(value)->GetArena();
+    if (message_arena != submessage_arena) {
+      value = ::google::protobuf::internal::GetOwnedMessage(message_arena, value, submessage_arena);
+    }
+    SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  }
+
+  _impl_.price_amount_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  // @@protoc_insertion_point(field_set_allocated:pandora.inventory.v1.SettlePlayerTradeRequest.price_amount)
 }
 
 // -------------------------------------------------------------------
@@ -15735,28 +17410,52 @@ inline void FreezeForOrderRequest::_internal_set_quantity(::int64_t value) {
   _impl_.quantity_ = value;
 }
 
-// int64 unit_price = 6 [json_name = "unitPrice"];
+// uint64 unit_price = 6 [json_name = "unitPrice"];
 inline void FreezeForOrderRequest::clear_unit_price() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.unit_price_ = ::int64_t{0};
+  _impl_.unit_price_ = ::uint64_t{0u};
   ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
 }
-inline ::int64_t FreezeForOrderRequest::unit_price() const {
+inline ::uint64_t FreezeForOrderRequest::unit_price() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.FreezeForOrderRequest.unit_price)
   return _internal_unit_price();
 }
-inline void FreezeForOrderRequest::set_unit_price(::int64_t value) {
+inline void FreezeForOrderRequest::set_unit_price(::uint64_t value) {
   _internal_set_unit_price(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000020U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.FreezeForOrderRequest.unit_price)
 }
-inline ::int64_t FreezeForOrderRequest::_internal_unit_price() const {
+inline ::uint64_t FreezeForOrderRequest::_internal_unit_price() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.unit_price_;
 }
-inline void FreezeForOrderRequest::_internal_set_unit_price(::int64_t value) {
+inline void FreezeForOrderRequest::_internal_set_unit_price(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.unit_price_ = value;
+}
+
+// .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+inline void FreezeForOrderRequest::clear_currency_kind() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currency_kind_ = 0;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000040U);
+}
+inline ::pandora::common::v1::CurrencyKind FreezeForOrderRequest::currency_kind() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.FreezeForOrderRequest.currency_kind)
+  return _internal_currency_kind();
+}
+inline void FreezeForOrderRequest::set_currency_kind(::pandora::common::v1::CurrencyKind value) {
+  _internal_set_currency_kind(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000040U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.FreezeForOrderRequest.currency_kind)
+}
+inline ::pandora::common::v1::CurrencyKind FreezeForOrderRequest::_internal_currency_kind() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return static_cast<::pandora::common::v1::CurrencyKind>(_impl_.currency_kind_);
+}
+inline void FreezeForOrderRequest::_internal_set_currency_kind(::pandora::common::v1::CurrencyKind value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currency_kind_ = value;
 }
 
 // -------------------------------------------------------------------
@@ -15933,6 +17632,30 @@ inline ::uint64_t EnsureAuctionEscrowRequest::_internal_unit_price() const {
 inline void EnsureAuctionEscrowRequest::_internal_set_unit_price(::uint64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.unit_price_ = value;
+}
+
+// .pandora.common.v1.CurrencyKind currency_kind = 7 [json_name = "currencyKind"];
+inline void EnsureAuctionEscrowRequest::clear_currency_kind() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currency_kind_ = 0;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000040U);
+}
+inline ::pandora::common::v1::CurrencyKind EnsureAuctionEscrowRequest::currency_kind() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.EnsureAuctionEscrowRequest.currency_kind)
+  return _internal_currency_kind();
+}
+inline void EnsureAuctionEscrowRequest::set_currency_kind(::pandora::common::v1::CurrencyKind value) {
+  _internal_set_currency_kind(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000040U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.EnsureAuctionEscrowRequest.currency_kind)
+}
+inline ::pandora::common::v1::CurrencyKind EnsureAuctionEscrowRequest::_internal_currency_kind() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return static_cast<::pandora::common::v1::CurrencyKind>(_impl_.currency_kind_);
+}
+inline void EnsureAuctionEscrowRequest::_internal_set_currency_kind(::pandora::common::v1::CurrencyKind value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currency_kind_ = value;
 }
 
 // -------------------------------------------------------------------
@@ -16779,7 +18502,7 @@ inline void SellInstanceRequest::set_allocated_idempotency_key(::std::string* PR
 inline void SellInstanceResponse::clear_code() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.code_ = 0;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
 }
 inline ::pandora::common::v1::ErrCode SellInstanceResponse::code() const {
   // @@protoc_insertion_point(field_get:pandora.inventory.v1.SellInstanceResponse.code)
@@ -16787,7 +18510,7 @@ inline ::pandora::common::v1::ErrCode SellInstanceResponse::code() const {
 }
 inline void SellInstanceResponse::set_code(::pandora::common::v1::ErrCode value) {
   _internal_set_code(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
   // @@protoc_insertion_point(field_set:pandora.inventory.v1.SellInstanceResponse.code)
 }
 inline ::pandora::common::v1::ErrCode SellInstanceResponse::_internal_code() const {
@@ -16799,28 +18522,937 @@ inline void SellInstanceResponse::_internal_set_code(::pandora::common::v1::ErrC
   _impl_.code_ = value;
 }
 
-// int64 gold = 2 [json_name = "gold"];
-inline void SellInstanceResponse::clear_gold() {
+// .pandora.common.v1.CurrencyAmount balance = 3 [json_name = "balance"];
+inline bool SellInstanceResponse::has_balance() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000001U);
+  PROTOBUF_ASSUME(!value || _impl_.balance_ != nullptr);
+  return value;
+}
+inline const ::pandora::common::v1::CurrencyAmount& SellInstanceResponse::_internal_balance() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  const ::pandora::common::v1::CurrencyAmount* p = _impl_.balance_;
+  return p != nullptr ? *p : *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<::pandora::common::v1::CurrencyAmount>(&::pandora::common::v1::CurrencyAmount_globals_);
+}
+inline const ::pandora::common::v1::CurrencyAmount& SellInstanceResponse::balance() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.SellInstanceResponse.balance)
+  return _internal_balance();
+}
+inline void SellInstanceResponse::unsafe_arena_set_allocated_balance(
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = ::int64_t{0};
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.balance_);
+  }
+  _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:pandora.inventory.v1.SellInstanceResponse.balance)
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SellInstanceResponse::release_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::pandora::common::v1::CurrencyAmount* released = _impl_.balance_;
+  _impl_.balance_ = nullptr;
+  if (::google::protobuf::internal::DebugHardenForceCopyInRelease()) {
+    auto* old = reinterpret_cast<::google::protobuf::MessageLite*>(released);
+    released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    if (GetArena() == nullptr) {
+      delete old;
+    }
+  } else {
+    if (GetArena() != nullptr) {
+      released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    }
+  }
+  return released;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SellInstanceResponse::unsafe_arena_release_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.inventory.v1.SellInstanceResponse.balance)
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::pandora::common::v1::CurrencyAmount* temp = _impl_.balance_;
+  _impl_.balance_ = nullptr;
+  return temp;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SellInstanceResponse::_internal_mutable_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.balance_ == nullptr) {
+    auto* p = ::google::protobuf::Message::DefaultConstruct<::pandora::common::v1::CurrencyAmount>(GetArena());
+    _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(p);
+  }
+  return _impl_.balance_;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SellInstanceResponse::mutable_balance()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::pandora::common::v1::CurrencyAmount* _msg = _internal_mutable_balance();
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.SellInstanceResponse.balance)
+  return _msg;
+}
+inline void SellInstanceResponse::set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::Arena* message_arena = GetArena();
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (message_arena == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.balance_);
+  }
+
+  if (value != nullptr) {
+    ::google::protobuf::Arena* submessage_arena = reinterpret_cast<::google::protobuf::Message*>(value)->GetArena();
+    if (message_arena != submessage_arena) {
+      value = ::google::protobuf::internal::GetOwnedMessage(message_arena, value, submessage_arena);
+    }
+    SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  }
+
+  _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  // @@protoc_insertion_point(field_set_allocated:pandora.inventory.v1.SellInstanceResponse.balance)
+}
+
+// .pandora.common.v1.CurrencyAmount earned = 4 [json_name = "earned"];
+inline bool SellInstanceResponse::has_earned() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000002U);
+  PROTOBUF_ASSUME(!value || _impl_.earned_ != nullptr);
+  return value;
+}
+inline const ::pandora::common::v1::CurrencyAmount& SellInstanceResponse::_internal_earned() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  const ::pandora::common::v1::CurrencyAmount* p = _impl_.earned_;
+  return p != nullptr ? *p : *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<::pandora::common::v1::CurrencyAmount>(&::pandora::common::v1::CurrencyAmount_globals_);
+}
+inline const ::pandora::common::v1::CurrencyAmount& SellInstanceResponse::earned() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.SellInstanceResponse.earned)
+  return _internal_earned();
+}
+inline void SellInstanceResponse::unsafe_arena_set_allocated_earned(
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.earned_);
+  }
+  _impl_.earned_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:pandora.inventory.v1.SellInstanceResponse.earned)
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SellInstanceResponse::release_earned() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ::pandora::common::v1::CurrencyAmount* released = _impl_.earned_;
+  _impl_.earned_ = nullptr;
+  if (::google::protobuf::internal::DebugHardenForceCopyInRelease()) {
+    auto* old = reinterpret_cast<::google::protobuf::MessageLite*>(released);
+    released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    if (GetArena() == nullptr) {
+      delete old;
+    }
+  } else {
+    if (GetArena() != nullptr) {
+      released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    }
+  }
+  return released;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE SellInstanceResponse::unsafe_arena_release_earned() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.inventory.v1.SellInstanceResponse.earned)
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ::pandora::common::v1::CurrencyAmount* temp = _impl_.earned_;
+  _impl_.earned_ = nullptr;
+  return temp;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SellInstanceResponse::_internal_mutable_earned() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.earned_ == nullptr) {
+    auto* p = ::google::protobuf::Message::DefaultConstruct<::pandora::common::v1::CurrencyAmount>(GetArena());
+    _impl_.earned_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(p);
+  }
+  return _impl_.earned_;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL SellInstanceResponse::mutable_earned()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  ::pandora::common::v1::CurrencyAmount* _msg = _internal_mutable_earned();
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.SellInstanceResponse.earned)
+  return _msg;
+}
+inline void SellInstanceResponse::set_allocated_earned(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::Arena* message_arena = GetArena();
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (message_arena == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.earned_);
+  }
+
+  if (value != nullptr) {
+    ::google::protobuf::Arena* submessage_arena = reinterpret_cast<::google::protobuf::Message*>(value)->GetArena();
+    if (message_arena != submessage_arena) {
+      value = ::google::protobuf::internal::GetOwnedMessage(message_arena, value, submessage_arena);
+    }
+    SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+  }
+
+  _impl_.earned_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  // @@protoc_insertion_point(field_set_allocated:pandora.inventory.v1.SellInstanceResponse.earned)
+}
+
+// -------------------------------------------------------------------
+
+// GetShopRequest
+
+// uint32 shop_id = 1 [json_name = "shopId"];
+inline void GetShopRequest::clear_shop_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.shop_id_ = 0u;
   ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
 }
-inline ::int64_t SellInstanceResponse::gold() const {
-  // @@protoc_insertion_point(field_get:pandora.inventory.v1.SellInstanceResponse.gold)
-  return _internal_gold();
+inline ::uint32_t GetShopRequest::shop_id() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.GetShopRequest.shop_id)
+  return _internal_shop_id();
 }
-inline void SellInstanceResponse::set_gold(::int64_t value) {
-  _internal_set_gold(value);
+inline void GetShopRequest::set_shop_id(::uint32_t value) {
+  _internal_set_shop_id(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000001U);
-  // @@protoc_insertion_point(field_set:pandora.inventory.v1.SellInstanceResponse.gold)
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.GetShopRequest.shop_id)
 }
-inline ::int64_t SellInstanceResponse::_internal_gold() const {
+inline ::uint32_t GetShopRequest::_internal_shop_id() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.gold_;
+  return _impl_.shop_id_;
 }
-inline void SellInstanceResponse::_internal_set_gold(::int64_t value) {
+inline void GetShopRequest::_internal_set_shop_id(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.gold_ = value;
+  _impl_.shop_id_ = value;
+}
+
+// -------------------------------------------------------------------
+
+// ShopEntry
+
+// uint32 item_config_id = 1 [json_name = "itemConfigId"];
+inline void ShopEntry::clear_item_config_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.item_config_id_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
+inline ::uint32_t ShopEntry::item_config_id() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.ShopEntry.item_config_id)
+  return _internal_item_config_id();
+}
+inline void ShopEntry::set_item_config_id(::uint32_t value) {
+  _internal_set_item_config_id(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.ShopEntry.item_config_id)
+}
+inline ::uint32_t ShopEntry::_internal_item_config_id() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.item_config_id_;
+}
+inline void ShopEntry::_internal_set_item_config_id(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.item_config_id_ = value;
+}
+
+// uint32 count_per_unit = 2 [json_name = "countPerUnit"];
+inline void ShopEntry::clear_count_per_unit() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.count_per_unit_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+}
+inline ::uint32_t ShopEntry::count_per_unit() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.ShopEntry.count_per_unit)
+  return _internal_count_per_unit();
+}
+inline void ShopEntry::set_count_per_unit(::uint32_t value) {
+  _internal_set_count_per_unit(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.ShopEntry.count_per_unit)
+}
+inline ::uint32_t ShopEntry::_internal_count_per_unit() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.count_per_unit_;
+}
+inline void ShopEntry::_internal_set_count_per_unit(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.count_per_unit_ = value;
+}
+
+// .pandora.common.v1.CurrencyKind currency_kind = 3 [json_name = "currencyKind"];
+inline void ShopEntry::clear_currency_kind() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currency_kind_ = 0;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+}
+inline ::pandora::common::v1::CurrencyKind ShopEntry::currency_kind() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.ShopEntry.currency_kind)
+  return _internal_currency_kind();
+}
+inline void ShopEntry::set_currency_kind(::pandora::common::v1::CurrencyKind value) {
+  _internal_set_currency_kind(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.ShopEntry.currency_kind)
+}
+inline ::pandora::common::v1::CurrencyKind ShopEntry::_internal_currency_kind() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return static_cast<::pandora::common::v1::CurrencyKind>(_impl_.currency_kind_);
+}
+inline void ShopEntry::_internal_set_currency_kind(::pandora::common::v1::CurrencyKind value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.currency_kind_ = value;
+}
+
+// uint64 unit_price = 4 [json_name = "unitPrice"];
+inline void ShopEntry::clear_unit_price() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.unit_price_ = ::uint64_t{0u};
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+}
+inline ::uint64_t ShopEntry::unit_price() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.ShopEntry.unit_price)
+  return _internal_unit_price();
+}
+inline void ShopEntry::set_unit_price(::uint64_t value) {
+  _internal_set_unit_price(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.ShopEntry.unit_price)
+}
+inline ::uint64_t ShopEntry::_internal_unit_price() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.unit_price_;
+}
+inline void ShopEntry::_internal_set_unit_price(::uint64_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.unit_price_ = value;
+}
+
+// uint32 sort_order = 5 [json_name = "sortOrder"];
+inline void ShopEntry::clear_sort_order() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.sort_order_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
+}
+inline ::uint32_t ShopEntry::sort_order() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.ShopEntry.sort_order)
+  return _internal_sort_order();
+}
+inline void ShopEntry::set_sort_order(::uint32_t value) {
+  _internal_set_sort_order(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.ShopEntry.sort_order)
+}
+inline ::uint32_t ShopEntry::_internal_sort_order() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.sort_order_;
+}
+inline void ShopEntry::_internal_set_sort_order(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.sort_order_ = value;
+}
+
+// -------------------------------------------------------------------
+
+// GetShopResponse
+
+// .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+inline void GetShopResponse::clear_code() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.code_ = 0;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+}
+inline ::pandora::common::v1::ErrCode GetShopResponse::code() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.GetShopResponse.code)
+  return _internal_code();
+}
+inline void GetShopResponse::set_code(::pandora::common::v1::ErrCode value) {
+  _internal_set_code(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.GetShopResponse.code)
+}
+inline ::pandora::common::v1::ErrCode GetShopResponse::_internal_code() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return static_cast<::pandora::common::v1::ErrCode>(_impl_.code_);
+}
+inline void GetShopResponse::_internal_set_code(::pandora::common::v1::ErrCode value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.code_ = value;
+}
+
+// uint32 shop_id = 2 [json_name = "shopId"];
+inline void GetShopResponse::clear_shop_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.shop_id_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+}
+inline ::uint32_t GetShopResponse::shop_id() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.GetShopResponse.shop_id)
+  return _internal_shop_id();
+}
+inline void GetShopResponse::set_shop_id(::uint32_t value) {
+  _internal_set_shop_id(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.GetShopResponse.shop_id)
+}
+inline ::uint32_t GetShopResponse::_internal_shop_id() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.shop_id_;
+}
+inline void GetShopResponse::_internal_set_shop_id(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.shop_id_ = value;
+}
+
+// repeated .pandora.inventory.v1.ShopEntry entries = 3 [json_name = "entries"];
+inline int GetShopResponse::_internal_entries_size() const {
+  return _internal_entries().size();
+}
+inline int GetShopResponse::entries_size() const {
+  return _internal_entries_size();
+}
+inline void GetShopResponse::clear_entries() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.entries_.Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
+inline const ::pandora::inventory::v1::ShopEntry& GetShopResponse::entries(int index) const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.GetShopResponse.entries)
+  return _internal_entries().Get(index);
+}
+inline ::pandora::inventory::v1::ShopEntry* PROTOBUF_NONNULL GetShopResponse::mutable_entries(int index)
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.GetShopResponse.entries)
+  return _internal_mutable_entries()->Mutable(index);
+}
+inline ::pandora::inventory::v1::ShopEntry* PROTOBUF_NONNULL GetShopResponse::add_entries()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::pandora::inventory::v1::ShopEntry* _add =
+      _internal_mutable_entries()->InternalAddWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), GetArena());
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  // @@protoc_insertion_point(field_add:pandora.inventory.v1.GetShopResponse.entries)
+  return _add;
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ShopEntry>& GetShopResponse::entries() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_list:pandora.inventory.v1.GetShopResponse.entries)
+  return _internal_entries();
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ShopEntry>* PROTOBUF_NONNULL
+GetShopResponse::mutable_entries() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  // @@protoc_insertion_point(field_mutable_list:pandora.inventory.v1.GetShopResponse.entries)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  return _internal_mutable_entries();
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ShopEntry>&
+GetShopResponse::_internal_entries() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.entries_;
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ShopEntry>* PROTOBUF_NONNULL
+GetShopResponse::_internal_mutable_entries() {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return &_impl_.entries_;
+}
+
+// -------------------------------------------------------------------
+
+// PurchaseShopItemRequest
+
+// uint64 player_id = 1 [json_name = "playerId"];
+inline void PurchaseShopItemRequest::clear_player_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.player_id_ = ::uint64_t{0u};
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+}
+inline ::uint64_t PurchaseShopItemRequest::player_id() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemRequest.player_id)
+  return _internal_player_id();
+}
+inline void PurchaseShopItemRequest::set_player_id(::uint64_t value) {
+  _internal_set_player_id(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.PurchaseShopItemRequest.player_id)
+}
+inline ::uint64_t PurchaseShopItemRequest::_internal_player_id() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.player_id_;
+}
+inline void PurchaseShopItemRequest::_internal_set_player_id(::uint64_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.player_id_ = value;
+}
+
+// uint32 shop_id = 2 [json_name = "shopId"];
+inline void PurchaseShopItemRequest::clear_shop_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.shop_id_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+}
+inline ::uint32_t PurchaseShopItemRequest::shop_id() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemRequest.shop_id)
+  return _internal_shop_id();
+}
+inline void PurchaseShopItemRequest::set_shop_id(::uint32_t value) {
+  _internal_set_shop_id(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.PurchaseShopItemRequest.shop_id)
+}
+inline ::uint32_t PurchaseShopItemRequest::_internal_shop_id() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.shop_id_;
+}
+inline void PurchaseShopItemRequest::_internal_set_shop_id(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.shop_id_ = value;
+}
+
+// uint32 item_config_id = 3 [json_name = "itemConfigId"];
+inline void PurchaseShopItemRequest::clear_item_config_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.item_config_id_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+}
+inline ::uint32_t PurchaseShopItemRequest::item_config_id() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemRequest.item_config_id)
+  return _internal_item_config_id();
+}
+inline void PurchaseShopItemRequest::set_item_config_id(::uint32_t value) {
+  _internal_set_item_config_id(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.PurchaseShopItemRequest.item_config_id)
+}
+inline ::uint32_t PurchaseShopItemRequest::_internal_item_config_id() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.item_config_id_;
+}
+inline void PurchaseShopItemRequest::_internal_set_item_config_id(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.item_config_id_ = value;
+}
+
+// uint32 unit_count = 4 [json_name = "unitCount"];
+inline void PurchaseShopItemRequest::clear_unit_count() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.unit_count_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
+}
+inline ::uint32_t PurchaseShopItemRequest::unit_count() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemRequest.unit_count)
+  return _internal_unit_count();
+}
+inline void PurchaseShopItemRequest::set_unit_count(::uint32_t value) {
+  _internal_set_unit_count(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.PurchaseShopItemRequest.unit_count)
+}
+inline ::uint32_t PurchaseShopItemRequest::_internal_unit_count() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.unit_count_;
+}
+inline void PurchaseShopItemRequest::_internal_set_unit_count(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.unit_count_ = value;
+}
+
+// string idempotency_key = 5 [json_name = "idempotencyKey"];
+inline void PurchaseShopItemRequest::clear_idempotency_key() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.idempotency_key_.ClearToEmpty();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
+inline const ::std::string& PurchaseShopItemRequest::idempotency_key() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemRequest.idempotency_key)
+  return _internal_idempotency_key();
+}
+template <typename Arg_, typename... Args_>
+PROTOBUF_ALWAYS_INLINE void PurchaseShopItemRequest::set_idempotency_key(Arg_&& arg, Args_... args) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  _impl_.idempotency_key_.Set(static_cast<Arg_&&>(arg), args..., GetArena());
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.PurchaseShopItemRequest.idempotency_key)
+}
+inline ::std::string* PROTOBUF_NONNULL PurchaseShopItemRequest::mutable_idempotency_key()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  ::std::string* _s = _internal_mutable_idempotency_key();
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.PurchaseShopItemRequest.idempotency_key)
+  return _s;
+}
+inline const ::std::string& PurchaseShopItemRequest::_internal_idempotency_key() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.idempotency_key_.Get();
+}
+inline void PurchaseShopItemRequest::_internal_set_idempotency_key(const ::std::string& value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.idempotency_key_.Set(value, GetArena());
+}
+inline ::std::string* PROTOBUF_NONNULL PurchaseShopItemRequest::_internal_mutable_idempotency_key() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  return _impl_.idempotency_key_.Mutable( GetArena());
+}
+inline ::std::string* PROTOBUF_NULLABLE PurchaseShopItemRequest::release_idempotency_key() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.inventory.v1.PurchaseShopItemRequest.idempotency_key)
+  if (!CheckHasBit(_impl_._has_bits_[0], 0x00000001U)) {
+    return nullptr;
+  }
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  auto* released = _impl_.idempotency_key_.Release();
+  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString()) {
+    _impl_.idempotency_key_.Set("", GetArena());
+  }
+  return released;
+}
+inline void PurchaseShopItemRequest::set_allocated_idempotency_key(::std::string* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+  }
+  _impl_.idempotency_key_.SetAllocated(value, GetArena());
+  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString() && _impl_.idempotency_key_.IsDefault()) {
+    _impl_.idempotency_key_.Set("", GetArena());
+  }
+  // @@protoc_insertion_point(field_set_allocated:pandora.inventory.v1.PurchaseShopItemRequest.idempotency_key)
+}
+
+// -------------------------------------------------------------------
+
+// PurchaseShopItemResponse
+
+// .pandora.common.v1.ErrCode code = 1 [json_name = "code"];
+inline void PurchaseShopItemResponse::clear_code() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.code_ = 0;
+  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
+}
+inline ::pandora::common::v1::ErrCode PurchaseShopItemResponse::code() const {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemResponse.code)
+  return _internal_code();
+}
+inline void PurchaseShopItemResponse::set_code(::pandora::common::v1::ErrCode value) {
+  _internal_set_code(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  // @@protoc_insertion_point(field_set:pandora.inventory.v1.PurchaseShopItemResponse.code)
+}
+inline ::pandora::common::v1::ErrCode PurchaseShopItemResponse::_internal_code() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return static_cast<::pandora::common::v1::ErrCode>(_impl_.code_);
+}
+inline void PurchaseShopItemResponse::_internal_set_code(::pandora::common::v1::ErrCode value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.code_ = value;
+}
+
+// .pandora.common.v1.CurrencyAmount balance = 2 [json_name = "balance"];
+inline bool PurchaseShopItemResponse::has_balance() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000004U);
+  PROTOBUF_ASSUME(!value || _impl_.balance_ != nullptr);
+  return value;
+}
+inline const ::pandora::common::v1::CurrencyAmount& PurchaseShopItemResponse::_internal_balance() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  const ::pandora::common::v1::CurrencyAmount* p = _impl_.balance_;
+  return p != nullptr ? *p : *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<::pandora::common::v1::CurrencyAmount>(&::pandora::common::v1::CurrencyAmount_globals_);
+}
+inline const ::pandora::common::v1::CurrencyAmount& PurchaseShopItemResponse::balance() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemResponse.balance)
+  return _internal_balance();
+}
+inline void PurchaseShopItemResponse::unsafe_arena_set_allocated_balance(
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.balance_);
+  }
+  _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:pandora.inventory.v1.PurchaseShopItemResponse.balance)
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE PurchaseShopItemResponse::release_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ::pandora::common::v1::CurrencyAmount* released = _impl_.balance_;
+  _impl_.balance_ = nullptr;
+  if (::google::protobuf::internal::DebugHardenForceCopyInRelease()) {
+    auto* old = reinterpret_cast<::google::protobuf::MessageLite*>(released);
+    released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    if (GetArena() == nullptr) {
+      delete old;
+    }
+  } else {
+    if (GetArena() != nullptr) {
+      released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    }
+  }
+  return released;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE PurchaseShopItemResponse::unsafe_arena_release_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.inventory.v1.PurchaseShopItemResponse.balance)
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ::pandora::common::v1::CurrencyAmount* temp = _impl_.balance_;
+  _impl_.balance_ = nullptr;
+  return temp;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL PurchaseShopItemResponse::_internal_mutable_balance() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.balance_ == nullptr) {
+    auto* p = ::google::protobuf::Message::DefaultConstruct<::pandora::common::v1::CurrencyAmount>(GetArena());
+    _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(p);
+  }
+  return _impl_.balance_;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL PurchaseShopItemResponse::mutable_balance()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ::pandora::common::v1::CurrencyAmount* _msg = _internal_mutable_balance();
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.PurchaseShopItemResponse.balance)
+  return _msg;
+}
+inline void PurchaseShopItemResponse::set_allocated_balance(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::Arena* message_arena = GetArena();
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (message_arena == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.balance_);
+  }
+
+  if (value != nullptr) {
+    ::google::protobuf::Arena* submessage_arena = reinterpret_cast<::google::protobuf::Message*>(value)->GetArena();
+    if (message_arena != submessage_arena) {
+      value = ::google::protobuf::internal::GetOwnedMessage(message_arena, value, submessage_arena);
+    }
+    SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  }
+
+  _impl_.balance_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  // @@protoc_insertion_point(field_set_allocated:pandora.inventory.v1.PurchaseShopItemResponse.balance)
+}
+
+// .pandora.common.v1.CurrencyAmount cost = 3 [json_name = "cost"];
+inline bool PurchaseShopItemResponse::has_cost() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000008U);
+  PROTOBUF_ASSUME(!value || _impl_.cost_ != nullptr);
+  return value;
+}
+inline const ::pandora::common::v1::CurrencyAmount& PurchaseShopItemResponse::_internal_cost() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  const ::pandora::common::v1::CurrencyAmount* p = _impl_.cost_;
+  return p != nullptr ? *p : *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<::pandora::common::v1::CurrencyAmount>(&::pandora::common::v1::CurrencyAmount_globals_);
+}
+inline const ::pandora::common::v1::CurrencyAmount& PurchaseShopItemResponse::cost() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemResponse.cost)
+  return _internal_cost();
+}
+inline void PurchaseShopItemResponse::unsafe_arena_set_allocated_cost(
+    ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.cost_);
+  }
+  _impl_.cost_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:pandora.inventory.v1.PurchaseShopItemResponse.cost)
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE PurchaseShopItemResponse::release_cost() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+  ::pandora::common::v1::CurrencyAmount* released = _impl_.cost_;
+  _impl_.cost_ = nullptr;
+  if (::google::protobuf::internal::DebugHardenForceCopyInRelease()) {
+    auto* old = reinterpret_cast<::google::protobuf::MessageLite*>(released);
+    released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    if (GetArena() == nullptr) {
+      delete old;
+    }
+  } else {
+    if (GetArena() != nullptr) {
+      released = ::google::protobuf::internal::DuplicateIfNonNull(released);
+    }
+  }
+  return released;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE PurchaseShopItemResponse::unsafe_arena_release_cost() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:pandora.inventory.v1.PurchaseShopItemResponse.cost)
+
+  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+  ::pandora::common::v1::CurrencyAmount* temp = _impl_.cost_;
+  _impl_.cost_ = nullptr;
+  return temp;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL PurchaseShopItemResponse::_internal_mutable_cost() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (_impl_.cost_ == nullptr) {
+    auto* p = ::google::protobuf::Message::DefaultConstruct<::pandora::common::v1::CurrencyAmount>(GetArena());
+    _impl_.cost_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(p);
+  }
+  return _impl_.cost_;
+}
+inline ::pandora::common::v1::CurrencyAmount* PROTOBUF_NONNULL PurchaseShopItemResponse::mutable_cost()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  ::pandora::common::v1::CurrencyAmount* _msg = _internal_mutable_cost();
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.PurchaseShopItemResponse.cost)
+  return _msg;
+}
+inline void PurchaseShopItemResponse::set_allocated_cost(::pandora::common::v1::CurrencyAmount* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::Arena* message_arena = GetArena();
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (message_arena == nullptr) {
+    delete reinterpret_cast<::google::protobuf::MessageLite*>(_impl_.cost_);
+  }
+
+  if (value != nullptr) {
+    ::google::protobuf::Arena* submessage_arena = reinterpret_cast<::google::protobuf::Message*>(value)->GetArena();
+    if (message_arena != submessage_arena) {
+      value = ::google::protobuf::internal::GetOwnedMessage(message_arena, value, submessage_arena);
+    }
+    SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
+  }
+
+  _impl_.cost_ = reinterpret_cast<::pandora::common::v1::CurrencyAmount*>(value);
+  // @@protoc_insertion_point(field_set_allocated:pandora.inventory.v1.PurchaseShopItemResponse.cost)
+}
+
+// repeated .pandora.inventory.v1.ItemGrant granted_items = 4 [json_name = "grantedItems"];
+inline int PurchaseShopItemResponse::_internal_granted_items_size() const {
+  return _internal_granted_items().size();
+}
+inline int PurchaseShopItemResponse::granted_items_size() const {
+  return _internal_granted_items_size();
+}
+inline void PurchaseShopItemResponse::clear_granted_items() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.granted_items_.Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
+}
+inline const ::pandora::inventory::v1::ItemGrant& PurchaseShopItemResponse::granted_items(int index) const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemResponse.granted_items)
+  return _internal_granted_items().Get(index);
+}
+inline ::pandora::inventory::v1::ItemGrant* PROTOBUF_NONNULL PurchaseShopItemResponse::mutable_granted_items(int index)
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.PurchaseShopItemResponse.granted_items)
+  return _internal_mutable_granted_items()->Mutable(index);
+}
+inline ::pandora::inventory::v1::ItemGrant* PROTOBUF_NONNULL PurchaseShopItemResponse::add_granted_items()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::pandora::inventory::v1::ItemGrant* _add =
+      _internal_mutable_granted_items()->InternalAddWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), GetArena());
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  // @@protoc_insertion_point(field_add:pandora.inventory.v1.PurchaseShopItemResponse.granted_items)
+  return _add;
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>& PurchaseShopItemResponse::granted_items() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_list:pandora.inventory.v1.PurchaseShopItemResponse.granted_items)
+  return _internal_granted_items();
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>* PROTOBUF_NONNULL
+PurchaseShopItemResponse::mutable_granted_items() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
+  // @@protoc_insertion_point(field_mutable_list:pandora.inventory.v1.PurchaseShopItemResponse.granted_items)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  return _internal_mutable_granted_items();
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>&
+PurchaseShopItemResponse::_internal_granted_items() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.granted_items_;
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemGrant>* PROTOBUF_NONNULL
+PurchaseShopItemResponse::_internal_mutable_granted_items() {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return &_impl_.granted_items_;
+}
+
+// repeated .pandora.inventory.v1.ItemInstance granted_instances = 5 [json_name = "grantedInstances"];
+inline int PurchaseShopItemResponse::_internal_granted_instances_size() const {
+  return _internal_granted_instances().size();
+}
+inline int PurchaseShopItemResponse::granted_instances_size() const {
+  return _internal_granted_instances_size();
+}
+inline void PurchaseShopItemResponse::clear_granted_instances() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.granted_instances_.Clear();
+  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
+}
+inline const ::pandora::inventory::v1::ItemInstance& PurchaseShopItemResponse::granted_instances(int index) const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:pandora.inventory.v1.PurchaseShopItemResponse.granted_instances)
+  return _internal_granted_instances().Get(index);
+}
+inline ::pandora::inventory::v1::ItemInstance* PROTOBUF_NONNULL PurchaseShopItemResponse::mutable_granted_instances(int index)
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_mutable:pandora.inventory.v1.PurchaseShopItemResponse.granted_instances)
+  return _internal_mutable_granted_instances()->Mutable(index);
+}
+inline ::pandora::inventory::v1::ItemInstance* PROTOBUF_NONNULL PurchaseShopItemResponse::add_granted_instances()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  ::pandora::inventory::v1::ItemInstance* _add =
+      _internal_mutable_granted_instances()->InternalAddWithArena(
+          ::google::protobuf::MessageLite::internal_visibility(), GetArena());
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  // @@protoc_insertion_point(field_add:pandora.inventory.v1.PurchaseShopItemResponse.granted_instances)
+  return _add;
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstance>& PurchaseShopItemResponse::granted_instances() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_list:pandora.inventory.v1.PurchaseShopItemResponse.granted_instances)
+  return _internal_granted_instances();
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstance>* PROTOBUF_NONNULL
+PurchaseShopItemResponse::mutable_granted_instances() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
+  // @@protoc_insertion_point(field_mutable_list:pandora.inventory.v1.PurchaseShopItemResponse.granted_instances)
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  return _internal_mutable_granted_instances();
+}
+inline const ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstance>&
+PurchaseShopItemResponse::_internal_granted_instances() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.granted_instances_;
+}
+inline ::google::protobuf::RepeatedPtrField<::pandora::inventory::v1::ItemInstance>* PROTOBUF_NONNULL
+PurchaseShopItemResponse::_internal_mutable_granted_instances() {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return &_impl_.granted_instances_;
 }
 
 // -------------------------------------------------------------------
@@ -17503,12 +20135,6 @@ struct is_proto_enum<::pandora::inventory::v1::EscrowSide> : std::true_type {};
 template <>
 inline const EnumDescriptor* PROTOBUF_NONNULL GetEnumDescriptor<::pandora::inventory::v1::EscrowSide>() {
   return ::pandora::inventory::v1::EscrowSide_descriptor();
-}
-template <>
-struct is_proto_enum<::pandora::inventory::v1::CurrencyKind> : std::true_type {};
-template <>
-inline const EnumDescriptor* PROTOBUF_NONNULL GetEnumDescriptor<::pandora::inventory::v1::CurrencyKind>() {
-  return ::pandora::inventory::v1::CurrencyKind_descriptor();
 }
 
 }  // namespace protobuf

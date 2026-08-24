@@ -163,7 +163,7 @@ func newHubFleetWithLauncher(t *testing.T, launcher string, withProject bool) *L
 func TestHubBuildArgs_PackagedLauncherUnchanged(t *testing.T) {
 	want := []string{
 		"/Game/Hub?game=/Script/Pandora.PandoraHubGameMode?MaxPlayers=500",
-		"-server", "-log", "-port=7777",
+		"-server", "-stdout", "-FullStdOutLogOutput", "-port=7777",
 	}
 	for _, launcher := range []string{"", conf.LauncherPackaged} {
 		p := newHubFleetWithLauncher(t, launcher, false)
@@ -184,13 +184,13 @@ func TestHubBuildArgs_PackagedLauncherUnchanged(t *testing.T) {
 func TestHubBuildArgs_EditorLauncherPutsProjectFirst(t *testing.T) {
 	p := newHubFleetWithLauncher(t, conf.LauncherEditor, true)
 	got := p.buildArgs()
-	if len(got) != 6 || !strings.HasSuffix(got[0], "Pandora.uproject") {
+	if len(got) != 7 || !strings.HasSuffix(got[0], "Pandora.uproject") {
 		t.Fatalf("editor 形态 .uproject 应为第一个参数: %v", got)
 	}
 	want := []string{
 		got[0],
 		"/Game/Hub?game=/Script/Pandora.PandoraHubGameMode?MaxPlayers=500",
-		"-server", "-log", "-port=7777",
+		"-server", "-stdout", "-FullStdOutLogOutput", "-port=7777",
 		conf.EditorLauncherCVarArg,
 	}
 	if !reflect.DeepEqual(got, want) {

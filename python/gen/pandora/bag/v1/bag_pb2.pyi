@@ -1,4 +1,5 @@
 from pandora.common.v1 import errcode_pb2 as _errcode_pb2
+from pandora.common.v1 import currency_pb2 as _currency_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
@@ -185,20 +186,20 @@ class PurchaseCapacityRequest(_message.Message):
     def __init__(self, player_id: _Optional[int] = ..., owner_epoch: _Optional[int] = ..., bag_type: _Optional[int] = ...) -> None: ...
 
 class PurchaseCapacityResponse(_message.Message):
-    __slots__ = ("code", "purchases", "extra", "effective_capacity", "gold_cost", "gold_remaining")
+    __slots__ = ("code", "purchases", "extra", "effective_capacity", "cost", "balance")
     CODE_FIELD_NUMBER: _ClassVar[int]
     PURCHASES_FIELD_NUMBER: _ClassVar[int]
     EXTRA_FIELD_NUMBER: _ClassVar[int]
     EFFECTIVE_CAPACITY_FIELD_NUMBER: _ClassVar[int]
-    GOLD_COST_FIELD_NUMBER: _ClassVar[int]
-    GOLD_REMAINING_FIELD_NUMBER: _ClassVar[int]
+    COST_FIELD_NUMBER: _ClassVar[int]
+    BALANCE_FIELD_NUMBER: _ClassVar[int]
     code: _errcode_pb2.ErrCode
     purchases: int
     extra: int
     effective_capacity: int
-    gold_cost: int
-    gold_remaining: int
-    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., purchases: _Optional[int] = ..., extra: _Optional[int] = ..., effective_capacity: _Optional[int] = ..., gold_cost: _Optional[int] = ..., gold_remaining: _Optional[int] = ...) -> None: ...
+    cost: _currency_pb2.CurrencyAmount
+    balance: _currency_pb2.CurrencyAmount
+    def __init__(self, code: _Optional[_Union[_errcode_pb2.ErrCode, str]] = ..., purchases: _Optional[int] = ..., extra: _Optional[int] = ..., effective_capacity: _Optional[int] = ..., cost: _Optional[_Union[_currency_pb2.CurrencyAmount, _Mapping]] = ..., balance: _Optional[_Union[_currency_pb2.CurrencyAmount, _Mapping]] = ...) -> None: ...
 
 class GetSectionsRequest(_message.Message):
     __slots__ = ("player_id", "bag_types")

@@ -148,6 +148,8 @@ enum ErrCode {
   ERR_INVENTORY_CAPACITY_FULL  = 7016; // 背包格子已满(装备实例数达上限)
   ERR_INVENTORY_SLOT_OCCUPIED  = 7017; // 目标格子已被占用 / 越界(移动实例)
   ERR_INVENTORY_INSTANCE_BOUND = 7018; // 绑定实例不可托管转移(邮件 transfer 扣出拒)
+  ERR_INVENTORY_NOT_PURCHASABLE = 7019; // NPC 商店:商店不存在 / 该道具不在售 / 份数超单次上限
+  ERR_INVENTORY_CURRENCY_OVERFLOW = 7020; // 货币入账越过单币种余额硬上限(无符号回绕必须显式拒)
 
   // 8000-8999 dialogue
   ERR_DIALOGUE_NOT_FOUND       = 8001;

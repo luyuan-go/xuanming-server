@@ -260,7 +260,7 @@ constexpr PlaceOrderRequest::ParseTableT_ PlaceOrderRequest::InternalGeneratePar
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(PlaceOrderRequest, _impl_.quantity_), 3>(),
        {24, 3, 0,
         PROTOBUF_FIELD_OFFSET(PlaceOrderRequest, _impl_.quantity_)}},
-      // int64 price = 4 [json_name = "price"];
+      // uint64 price = 4 [json_name = "price"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(PlaceOrderRequest, _impl_.price_), 4>(),
        {32, 4, 0,
         PROTOBUF_FIELD_OFFSET(PlaceOrderRequest, _impl_.price_)}},
@@ -279,8 +279,8 @@ constexpr PlaceOrderRequest::ParseTableT_ PlaceOrderRequest::InternalGeneratePar
       {PROTOBUF_FIELD_OFFSET(PlaceOrderRequest, _impl_.item_config_id_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
       // int64 quantity = 3 [json_name = "quantity"];
       {PROTOBUF_FIELD_OFFSET(PlaceOrderRequest, _impl_.quantity_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-      // int64 price = 4 [json_name = "price"];
-      {PROTOBUF_FIELD_OFFSET(PlaceOrderRequest, _impl_.price_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // uint64 price = 4 [json_name = "price"];
+      {PROTOBUF_FIELD_OFFSET(PlaceOrderRequest, _impl_.price_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // string idempotency_key = 5 [json_name = "idempotencyKey"];
       {PROTOBUF_FIELD_OFFSET(PlaceOrderRequest, _impl_.idempotency_key_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUtf8String | ::_fl::kRepAString)},
     }},
@@ -304,7 +304,7 @@ inline constexpr PlaceOrderRequest::Impl_::Impl_(
         market_id_{0u},
         item_config_id_{0u},
         quantity_{::int64_t{0}},
-        price_{::int64_t{0}} {}
+        price_{::uint64_t{0u}} {}
 
 template <typename>
 constexpr PlaceOrderRequest::PlaceOrderRequest(::_pbi::ConstantInitialized,
@@ -1200,7 +1200,7 @@ constexpr BidRequest::ParseTableT_ BidRequest::InternalGenerateParseTable_(const
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(BidRequest, _impl_.quantity_), 3>(),
        {24, 3, 0,
         PROTOBUF_FIELD_OFFSET(BidRequest, _impl_.quantity_)}},
-      // int64 price = 4 [json_name = "price"];
+      // uint64 price = 4 [json_name = "price"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(BidRequest, _impl_.price_), 4>(),
        {32, 4, 0,
         PROTOBUF_FIELD_OFFSET(BidRequest, _impl_.price_)}},
@@ -1219,8 +1219,8 @@ constexpr BidRequest::ParseTableT_ BidRequest::InternalGenerateParseTable_(const
       {PROTOBUF_FIELD_OFFSET(BidRequest, _impl_.item_config_id_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
       // int64 quantity = 3 [json_name = "quantity"];
       {PROTOBUF_FIELD_OFFSET(BidRequest, _impl_.quantity_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-      // int64 price = 4 [json_name = "price"];
-      {PROTOBUF_FIELD_OFFSET(BidRequest, _impl_.price_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // uint64 price = 4 [json_name = "price"];
+      {PROTOBUF_FIELD_OFFSET(BidRequest, _impl_.price_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // string idempotency_key = 5 [json_name = "idempotencyKey"];
       {PROTOBUF_FIELD_OFFSET(BidRequest, _impl_.idempotency_key_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kUtf8String | ::_fl::kRepAString)},
     }},
@@ -1244,7 +1244,7 @@ inline constexpr BidRequest::Impl_::Impl_(
         market_id_{0u},
         item_config_id_{0u},
         quantity_{::int64_t{0}},
-        price_{::int64_t{0}} {}
+        price_{::uint64_t{0u}} {}
 
 template <typename>
 constexpr BidRequest::BidRequest(::_pbi::ConstantInitialized,
@@ -1393,7 +1393,7 @@ constexpr AuctionOrder::ParseTableT_ AuctionOrder::InternalGenerateParseTable_(c
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(AuctionOrder, _impl_.filled_quantity_), 5>(),
        {56, 5, 0,
         PROTOBUF_FIELD_OFFSET(AuctionOrder, _impl_.filled_quantity_)}},
-      // int64 price = 8 [json_name = "price"];
+      // uint64 price = 8 [json_name = "price"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(AuctionOrder, _impl_.price_), 8>(),
        {64, 8, 0,
         PROTOBUF_FIELD_OFFSET(AuctionOrder, _impl_.price_)}},
@@ -1430,8 +1430,8 @@ constexpr AuctionOrder::ParseTableT_ AuctionOrder::InternalGenerateParseTable_(c
       {PROTOBUF_FIELD_OFFSET(AuctionOrder, _impl_.quantity_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
       // int64 filled_quantity = 7 [json_name = "filledQuantity"];
       {PROTOBUF_FIELD_OFFSET(AuctionOrder, _impl_.filled_quantity_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-      // int64 price = 8 [json_name = "price"];
-      {PROTOBUF_FIELD_OFFSET(AuctionOrder, _impl_.price_), _Internal::kHasBitsOffset + 8, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // uint64 price = 8 [json_name = "price"];
+      {PROTOBUF_FIELD_OFFSET(AuctionOrder, _impl_.price_), _Internal::kHasBitsOffset + 8, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // .pandora.auction.v1.AuctionOrderStatus status = 9 [json_name = "status"];
       {PROTOBUF_FIELD_OFFSET(AuctionOrder, _impl_.status_), _Internal::kHasBitsOffset + 7, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
       // int64 created_at_ms = 10 [json_name = "createdAtMs"];
@@ -1458,7 +1458,7 @@ inline constexpr AuctionOrder::Impl_::Impl_(
         filled_quantity_{::int64_t{0}},
         item_config_id_{0u},
         status_{static_cast< ::pandora::auction::v1::AuctionOrderStatus >(0)},
-        price_{::int64_t{0}},
+        price_{::uint64_t{0u}},
         created_at_ms_{::int64_t{0}},
         updated_at_ms_{::int64_t{0}} {}
 
@@ -1613,7 +1613,7 @@ constexpr AuctionMatchEvent::ParseTableT_ AuctionMatchEvent::InternalGeneratePar
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(AuctionMatchEvent, _impl_.quantity_), 7>(),
        {64, 7, 0,
         PROTOBUF_FIELD_OFFSET(AuctionMatchEvent, _impl_.quantity_)}},
-      // int64 price = 9 [json_name = "price"];
+      // uint64 price = 9 [json_name = "price"];
       {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(AuctionMatchEvent, _impl_.price_), 8>(),
        {72, 8, 0,
         PROTOBUF_FIELD_OFFSET(AuctionMatchEvent, _impl_.price_)}},
@@ -1645,8 +1645,8 @@ constexpr AuctionMatchEvent::ParseTableT_ AuctionMatchEvent::InternalGeneratePar
       {PROTOBUF_FIELD_OFFSET(AuctionMatchEvent, _impl_.item_config_id_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt32)},
       // int64 quantity = 8 [json_name = "quantity"];
       {PROTOBUF_FIELD_OFFSET(AuctionMatchEvent, _impl_.quantity_), _Internal::kHasBitsOffset + 7, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
-      // int64 price = 9 [json_name = "price"];
-      {PROTOBUF_FIELD_OFFSET(AuctionMatchEvent, _impl_.price_), _Internal::kHasBitsOffset + 8, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+      // uint64 price = 9 [json_name = "price"];
+      {PROTOBUF_FIELD_OFFSET(AuctionMatchEvent, _impl_.price_), _Internal::kHasBitsOffset + 8, 0, (0 | ::_fl::kFcOptional | ::_fl::kUInt64)},
       // int64 matched_at_ms = 10 [json_name = "matchedAtMs"];
       {PROTOBUF_FIELD_OFFSET(AuctionMatchEvent, _impl_.matched_at_ms_), _Internal::kHasBitsOffset + 9, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
     }},
@@ -1669,7 +1669,7 @@ inline constexpr AuctionMatchEvent::Impl_::Impl_(
         seller_id_{::uint64_t{0u}},
         buyer_id_{::uint64_t{0u}},
         quantity_{::int64_t{0}},
-        price_{::int64_t{0}},
+        price_{::uint64_t{0u}},
         matched_at_ms_{::int64_t{0}} {}
 
 template <typename>
@@ -2290,7 +2290,7 @@ const char descriptor_table_protodef_pandora_2fauction_2fv1_2fauction_2eproto[] 
     "\0162\035.pandora.auction.v1.OrderSideR\004side\022$"
     "\n\016item_config_id\030\005 \001(\rR\014itemConfigId\022\032\n\010"
     "quantity\030\006 \001(\003R\010quantity\022\'\n\017filled_quant"
-    "ity\030\007 \001(\003R\016filledQuantity\022\024\n\005price\030\010 \001(\003"
+    "ity\030\007 \001(\003R\016filledQuantity\022\024\n\005price\030\010 \001(\004"
     "R\005price\022>\n\006status\030\t \001(\0162&.pandora.auctio"
     "n.v1.AuctionOrderStatusR\006status\022\"\n\rcreat"
     "ed_at_ms\030\n \001(\003R\013createdAtMs\022\"\n\rupdated_a"
@@ -2301,12 +2301,12 @@ const char descriptor_table_protodef_pandora_2fauction_2fv1_2fauction_2eproto[] 
     "\nbuyOrderId\022\033\n\tseller_id\030\005 \001(\004R\010sellerId"
     "\022\031\n\010buyer_id\030\006 \001(\004R\007buyerId\022$\n\016item_conf"
     "ig_id\030\007 \001(\rR\014itemConfigId\022\032\n\010quantity\030\010 "
-    "\001(\003R\010quantity\022\024\n\005price\030\t \001(\003R\005price\022\"\n\rm"
+    "\001(\003R\010quantity\022\024\n\005price\030\t \001(\004R\005price\022\"\n\rm"
     "atched_at_ms\030\n \001(\003R\013matchedAtMs\"\261\001\n\021Plac"
     "eOrderRequest\022\033\n\tmarket_id\030\001 \001(\rR\010market"
     "Id\022$\n\016item_config_id\030\002 \001(\rR\014itemConfigId"
     "\022\032\n\010quantity\030\003 \001(\003R\010quantity\022\024\n\005price\030\004 "
-    "\001(\003R\005price\022\'\n\017idempotency_key\030\005 \001(\tR\016ide"
+    "\001(\004R\005price\022\'\n\017idempotency_key\030\005 \001(\tR\016ide"
     "mpotencyKey\"\310\001\n\022PlaceOrderResponse\022.\n\004co"
     "de\030\001 \001(\0162\032.pandora.common.v1.ErrCodeR\004co"
     "de\022\031\n\010order_id\030\002 \001(\004R\007orderId\022>\n\006status\030"
@@ -2315,7 +2315,7 @@ const char descriptor_table_protodef_pandora_2fauction_2fv1_2fauction_2eproto[] 
     "filledQuantity\"\252\001\n\nBidRequest\022\033\n\tmarket_"
     "id\030\001 \001(\rR\010marketId\022$\n\016item_config_id\030\002 \001"
     "(\rR\014itemConfigId\022\032\n\010quantity\030\003 \001(\003R\010quan"
-    "tity\022\024\n\005price\030\004 \001(\003R\005price\022\'\n\017idempotenc"
+    "tity\022\024\n\005price\030\004 \001(\004R\005price\022\'\n\017idempotenc"
     "y_key\030\005 \001(\tR\016idempotencyKey\"\301\001\n\013BidRespo"
     "nse\022.\n\004code\030\001 \001(\0162\032.pandora.common.v1.Er"
     "rCodeR\004code\022\031\n\010order_id\030\002 \001(\004R\007orderId\022>"
@@ -2588,12 +2588,12 @@ PROTOBUF_NOINLINE void AuctionOrder::Clear() {
     }
   }
 
-  // int64 price = 8 [json_name = "price"];
+  // uint64 price = 8 [json_name = "price"];
   if (CheckHasBit(cached_has_bits, 0x00000100U)) {
     if (this_._internal_price() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<8>(
-              stream, this_._internal_price(), target);
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          8, this_._internal_price(), target);
     }
   }
 
@@ -2708,10 +2708,10 @@ PROTOBUF_NOINLINE void AuctionOrder::Clear() {
     }
   }
   if (BatchCheckHasBit(cached_has_bits, 0x00000700U)) {
-    // int64 price = 8 [json_name = "price"];
+    // uint64 price = 8 [json_name = "price"];
     if (CheckHasBit(cached_has_bits, 0x00000100U)) {
       if (this_._internal_price() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_price());
       }
     }
@@ -3023,12 +3023,12 @@ PROTOBUF_NOINLINE void AuctionMatchEvent::Clear() {
     }
   }
 
-  // int64 price = 9 [json_name = "price"];
+  // uint64 price = 9 [json_name = "price"];
   if (CheckHasBit(cached_has_bits, 0x00000100U)) {
     if (this_._internal_price() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<9>(
-              stream, this_._internal_price(), target);
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          9, this_._internal_price(), target);
     }
   }
 
@@ -3125,10 +3125,10 @@ PROTOBUF_NOINLINE void AuctionMatchEvent::Clear() {
     }
   }
   if (BatchCheckHasBit(cached_has_bits, 0x00000300U)) {
-    // int64 price = 9 [json_name = "price"];
+    // uint64 price = 9 [json_name = "price"];
     if (CheckHasBit(cached_has_bits, 0x00000100U)) {
       if (this_._internal_price() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_price());
       }
     }
@@ -3404,12 +3404,12 @@ PROTOBUF_NOINLINE void PlaceOrderRequest::Clear() {
     }
   }
 
-  // int64 price = 4 [json_name = "price"];
+  // uint64 price = 4 [json_name = "price"];
   if (CheckHasBit(cached_has_bits, 0x00000010U)) {
     if (this_._internal_price() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<4>(
-              stream, this_._internal_price(), target);
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          4, this_._internal_price(), target);
     }
   }
 
@@ -3477,10 +3477,10 @@ PROTOBUF_NOINLINE void PlaceOrderRequest::Clear() {
             this_._internal_quantity());
       }
     }
-    // int64 price = 4 [json_name = "price"];
+    // uint64 price = 4 [json_name = "price"];
     if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (this_._internal_price() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_price());
       }
     }
@@ -3999,12 +3999,12 @@ PROTOBUF_NOINLINE void BidRequest::Clear() {
     }
   }
 
-  // int64 price = 4 [json_name = "price"];
+  // uint64 price = 4 [json_name = "price"];
   if (CheckHasBit(cached_has_bits, 0x00000010U)) {
     if (this_._internal_price() != 0) {
-      target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<4>(
-              stream, this_._internal_price(), target);
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteUInt64ToArray(
+          4, this_._internal_price(), target);
     }
   }
 
@@ -4072,10 +4072,10 @@ PROTOBUF_NOINLINE void BidRequest::Clear() {
             this_._internal_quantity());
       }
     }
-    // int64 price = 4 [json_name = "price"];
+    // uint64 price = 4 [json_name = "price"];
     if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (this_._internal_price() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
+        total_size += ::_pbi::WireFormatLite::UInt64SizePlusOne(
             this_._internal_price());
       }
     }

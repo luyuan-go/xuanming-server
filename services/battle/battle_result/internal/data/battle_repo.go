@@ -52,6 +52,11 @@ type DropOutboxRecord struct {
 	ItemConfigIDs         []uint32 // 首次过滤后的完整掉落列表(审计/历史兼容)
 	StackItemConfigIDs    []uint32 // 首次入箱时冻结的可堆叠路由；重试不查热配置
 	InstanceItemConfigIDs []uint32 // 首次入箱时冻结的装备路由；重试不查热配置
+
+	// CurrencyAmount 本局该玩家的金币收益(2026-08-22 补;0 = 无收益)。
+	// 首次入箱时已过服务端上限闸冻结,重试不重新读 DS 上报值也不重新读热配置 ——
+	// 与 Stack/InstanceItemConfigIDs 同一纪律:出箱行是**已裁决的事实**,不是待裁决的输入。
+	CurrencyAmount uint64
 }
 
 // TerminalReleaseRecord 是正常结算的持久终态回收证明。
@@ -357,16 +362,19 @@ VALUES (?, ?, ?, ?)`
 
 	// 同事务写战斗装备掉落出箱(W5 ④):落库与待发放装备掉落原子提交(不变量 §4)。
 	const insDropOutbox = `INSERT INTO battle_drop_outbox
-(match_id, player_id, item_config_ids, stack_item_config_ids, instance_item_config_ids, created_at_ms)
-VALUES (?, ?, ?, ?, ?, ?)`
+(match_id, player_id, item_config_ids, stack_item_config_ids, instance_item_config_ids, currency_amount, created_at_ms)
+VALUES (?, ?, ?, ?, ?, ?, ?)`
 	if !settleInfo.DropsSuppressed {
 		for _, d := range dropOutbox {
-			if len(d.ItemConfigIDs) == 0 {
+			// 只带金币、不带掉落的行也要写:金币是独立收益来源,
+			// 旧判据 `len(ItemConfigIDs) == 0 → continue` 会把它整条丢掉。
+			if len(d.ItemConfigIDs) == 0 && d.CurrencyAmount == 0 {
 				continue
 			}
 			if _, derr := tx.ExecContext(ctx, insDropOutbox,
 				result.GetMatchId(), d.PlayerID, encodeConfigIDs(d.ItemConfigIDs),
-				encodeConfigIDs(d.StackItemConfigIDs), encodeConfigIDs(d.InstanceItemConfigIDs), nowMs,
+				encodeConfigIDs(d.StackItemConfigIDs), encodeConfigIDs(d.InstanceItemConfigIDs),
+				d.CurrencyAmount, nowMs,
 			); derr != nil {
 				return false, ProgressSettleInfo{}, errcode.New(errcode.ErrBattleResultDBWrite, "insert drop outbox match=%d player=%d: %v",
 					result.GetMatchId(), d.PlayerID, derr)
@@ -499,7 +507,7 @@ func (r *MySQLBattleRepo) FetchDropOutbox(ctx context.Context, limit int) ([]Dro
 	if limit <= 0 {
 		limit = 128
 	}
-	const q = `SELECT id, match_id, player_id, item_config_ids, stack_item_config_ids, instance_item_config_ids
+	const q = `SELECT id, match_id, player_id, item_config_ids, stack_item_config_ids, instance_item_config_ids, currency_amount
 FROM battle_drop_outbox ORDER BY id ASC LIMIT ?`
 	rows, err := r.db.QueryContext(ctx, q, limit)
 	if err != nil {
@@ -515,7 +523,7 @@ FROM battle_drop_outbox ORDER BY id ASC LIMIT ?`
 			stackCSV    string
 			instanceCSV string
 		)
-		if serr := rows.Scan(&rec.ID, &rec.MatchID, &rec.PlayerID, &allCSV, &stackCSV, &instanceCSV); serr != nil {
+		if serr := rows.Scan(&rec.ID, &rec.MatchID, &rec.PlayerID, &allCSV, &stackCSV, &instanceCSV, &rec.CurrencyAmount); serr != nil {
 			return nil, errcode.New(errcode.ErrInternal, "scan drop outbox: %v", serr)
 		}
 		rec.ItemConfigIDs = decodeConfigIDs(allCSV)

@@ -25,9 +25,10 @@ from pandorapy import dbguard
 from pandorapy import errcode
 from pandorapy import log as plog
 from pandorapy import mysqlx
+from pandorapy.services.inventory import currency as ccy
 from pandorapy.services.inventory import fingerprint as fp
 from pandorapy.services.inventory import repo_sql as rsql
-from pandorapy.services.inventory.models import ItemAttribute, ItemInstance
+from pandorapy.services.inventory.models import ItemAttribute, ItemInstance, SaleOutcome
 
 # 词条 pb 写入侧字节上限,取列容量 VARBINARY(1024)。
 # 鉴定词条数由池的 attr_count 约束(个位数),单条 pb 编码 ≤ 16 字节,
@@ -177,6 +178,71 @@ async def select_instances_by_ids_tx(cur, player_id: int, ids: list[int]) -> lis
     return [scan_instance(r) for r in rows or ()]
 
 
+async def grant_instances_in_tx_mixed(  # noqa: ANN001
+    cur,
+    player_id: int,
+    instance_ids: list[int],
+    item_config_ids: list[int],
+    capacity: int,
+) -> list[ItemInstance]:
+    """在**调用方已开好的事务**里锁玩家实例行、校验容量、逐件分配最低空闲格并插入。
+
+    对应 Go 的 grantInstancesInTxMixed。抽出来是为了让"购买装备"能把扣钱与发货放进
+    同一个事务(见 repo.purchase_shop_item):若购买复用外层的 grant_instances,
+    扣钱和发货就会落在两个事务里,中间崩溃 = 钱扣了货没到。
+
+    ★ 本函数**不提交也不回滚**,事务生命周期完全归调用方。
+    """
+    if len(instance_ids) != len(item_config_ids):
+        raise errcode.PandoraError(
+            errcode.ErrInvalidArg, "instanceIDs/itemConfigIDs length mismatch"
+        )
+    occupied, total = await lock_player_instances(cur, player_id)
+    if capacity <= 0:
+        raise errcode.PandoraError(
+            errcode.ErrInventoryCapacityFull,
+            "instance inventory disabled (capacity<=0) player=%d",
+            player_id,
+        )
+    if total + len(instance_ids) > capacity:
+        raise errcode.PandoraError(
+            errcode.ErrInventoryCapacityFull,
+            "capacity full player=%d have=%d grant=%d cap=%d",
+            player_id,
+            total,
+            len(instance_ids),
+            capacity,
+        )
+    out: list[ItemInstance] = []
+    for inst_id, config_id in zip(instance_ids, item_config_ids, strict=True):
+        slot = lowest_free_slot(occupied, capacity)
+        if slot < 0:
+            raise errcode.PandoraError(
+                errcode.ErrInventoryCapacityFull,
+                "no free slot player=%d cap=%d",
+                player_id,
+                capacity,
+            )
+        occupied.add(slot)
+        try:
+            await cur.execute(
+                "INSERT INTO player_item_instance "
+                "(instance_id, player_id, item_config_id, identified, attributes, "
+                "slot_index, bound) VALUES (%s, %s, %s, 0, NULL, %s, 0)",
+                (inst_id, player_id, config_id, slot),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise errcode.PandoraError(
+                errcode.ErrInternal,
+                "insert instance player=%d id=%d: %s",
+                player_id,
+                inst_id,
+                exc,
+            ) from exc
+        out.append(ItemInstance(instance_id=inst_id, item_config_id=config_id, slot_index=slot))
+    return out
+
+
 class InstanceRepoMixin:
     """MySQLInventoryRepo 的装备实例部分。`self._pool` 由主类提供。"""
 
@@ -305,52 +371,10 @@ class InstanceRepoMixin:
                 )
                 return insts, True
 
-            # 首次:容量校验 + 分配空闲格 + 插入。
-            occupied, total = await lock_player_instances(cur, player_id)
-            if capacity <= 0:
-                raise errcode.PandoraError(
-                    errcode.ErrInventoryCapacityFull,
-                    "instance inventory disabled (capacity<=0) player=%d",
-                    player_id,
-                )
-            if total + len(instance_ids) > capacity:
-                raise errcode.PandoraError(
-                    errcode.ErrInventoryCapacityFull,
-                    "capacity full player=%d have=%d grant=%d cap=%d",
-                    player_id,
-                    total,
-                    len(instance_ids),
-                    capacity,
-                )
-            out: list[ItemInstance] = []
-            for inst_id, config_id in zip(instance_ids, item_config_ids, strict=True):
-                slot = lowest_free_slot(occupied, capacity)
-                if slot < 0:
-                    raise errcode.PandoraError(
-                        errcode.ErrInventoryCapacityFull,
-                        "no free slot player=%d cap=%d",
-                        player_id,
-                        capacity,
-                    )
-                occupied.add(slot)
-                try:
-                    await cur.execute(
-                        "INSERT INTO player_item_instance "
-                        "(instance_id, player_id, item_config_id, identified, attributes, "
-                        "slot_index, bound) VALUES (%s, %s, %s, 0, NULL, %s, 0)",
-                        (inst_id, player_id, config_id, slot),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    raise errcode.PandoraError(
-                        errcode.ErrInternal,
-                        "insert instance player=%d id=%d: %s",
-                        player_id,
-                        inst_id,
-                        exc,
-                    ) from exc
-                out.append(
-                    ItemInstance(instance_id=inst_id, item_config_id=config_id, slot_index=slot)
-                )
+            # 首次:容量校验 + 分配空闲格 + 插入(与商店购买共用同一段逻辑)。
+            out = await grant_instances_in_tx_mixed(
+                cur, player_id, instance_ids, item_config_ids, capacity
+            )
             return out, False
 
     async def identify_instance(
@@ -477,19 +501,21 @@ class InstanceRepoMixin:
         player_id: int,
         instance_id: int,
         item_config_id: int,
-        gold: int,
+        kind: int,
+        amount: int,
         idempotency_key: str,
         detail: str,
-    ) -> tuple[int, bool]:
-        """原子出售唯一实例:锁实例、拒绝 bound、删除实例、金币入账与 ledger 同事务。
+    ) -> tuple[SaleOutcome, bool]:
+        """原子出售唯一实例:锁实例、拒绝 bound、删除实例、货币入账与 ledger 同事务。
 
-        返回 (出售后 gold, already)。
+        返回 (SaleOutcome, already)。
 
-        ★ gold<=0 的首次请求在 claim 之后才拒(ErrInventoryNotSellable):
+        ★ amount == 0 的首次请求在 claim 之后才拒(ErrInventoryNotSellable):
           整笔事务回滚,连 claim 行一起没有 —— 不会留下脏流水把这个 key 永久占死。
+          判据是 `== 0` 而不是 `<= 0`,理由见 repo.sell_item 同处注释。
         """
         async with rsql.transaction(self._pool) as cur:
-            already, _snap_remaining, snap_gold = await rsql.claim_sale_ledger(
+            already, snap = await rsql.claim_sale_ledger(
                 cur,
                 player_id,
                 idempotency_key,
@@ -500,8 +526,16 @@ class InstanceRepoMixin:
                 instance_id=instance_id,
             )
             if already:
-                return snap_gold, True
-            if gold <= 0:
+                return (
+                    SaleOutcome(
+                        remaining=0,
+                        balances=snap.balances,
+                        earned=ccy.balances_get(snap.delta, kind),
+                        kind=kind,
+                    ),
+                    True,
+                )
+            if amount == 0:
                 raise errcode.PandoraError(
                     errcode.ErrInventoryNotSellable,
                     "instance item not sellable player=%d instance=%d item=%d",
@@ -539,7 +573,12 @@ class InstanceRepoMixin:
                     instance_id,
                     exc,
                 ) from exc
-            await rsql.add_gold_tx(cur, player_id, gold)
-            new_gold = await rsql.read_gold_tx(cur, player_id)
-            await rsql.update_ledger_result(cur, player_id, idempotency_key, 0, new_gold)
-            return new_gold, False
+            await ccy.add_currency_tx(cur, player_id, kind, amount)
+            new_balances = await ccy.read_balances_tx(cur, player_id)
+            await rsql.update_ledger_result(
+                cur, player_id, idempotency_key, 0, new_balances, {kind: amount}
+            )
+            return (
+                SaleOutcome(remaining=0, balances=new_balances, earned=amount, kind=kind),
+                False,
+            )

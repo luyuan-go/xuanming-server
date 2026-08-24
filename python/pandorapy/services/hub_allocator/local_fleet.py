@@ -363,7 +363,23 @@ class LocalHubFleetProvider:
             args.append(self._cfg.project_path)
         if self._map_url != "":
             args.append(self._map_url)
-        args.extend(["-server", "-log", f"-port={self._cfg.port}"])
+        # ★ 用 -stdout 而**不是** -log:`-log` 会给 DS 开一个真的 Windows 控制台窗口,
+        #   而 Windows 控制台默认开着「快速编辑」—— 只要有人在那个黑窗口里点一下或选中
+        #   文字,WriteConsole 就会一直阻塞,把**整个游戏线程**冻住。
+        #
+        #   2026-08-23 实测(cdb 非侵入抓栈,游戏线程):
+        #       FWindowsConsoleOutputDevice::Serialize   ← 阻塞在这
+        #         ← UE::Logging::Private::BasicLog
+        #         ← UIpNetDriver::TrackAndLogNewIP       ← 第一个客户端连入时打的那行
+        #         ← UIpNetDriver::TickDispatch ← UWorld::Tick ← FEngineLoop::Tick
+        #   现象:DS accept 了连接后 CPU 归零、心跳停止、日志一行不出、进程仍 Responding;
+        #   客户端 20 秒收不到任何回包后 ConnectionTimeout 退回登录界面。
+        #   也就是说:**一次误点就能让整个大厅永久不可进**(§9.20 不得让玩家进不去场景)。
+        #
+        #   -stdout 让日志直接走标准输出(本类已经把 stdout 重定向到 log_dir 下的文件),
+        #   不再创建控制台窗口,从机制上消灭这个死锁。-FullStdOutLogOutput 保证是全量而
+        #   非精简输出。实测:88KB 完整日志照常落盘,DS 正常启动。
+        args.extend(["-server", "-stdout", "-FullStdOutLogOutput", f"-port={self._cfg.port}"])
         if self._cfg.launcher == hconf.LAUNCHER_EDITOR:
             args.append(hconf.EDITOR_LAUNCHER_CVAR_ARG)
         args.extend(self._cfg.extra_args)
