@@ -14,6 +14,7 @@ TiDB 检测(对应 pkg/mysqlx/backend_check.go):
 
 from __future__ import annotations
 
+import os
 import re
 import ssl
 from urllib.parse import parse_qsl
@@ -238,6 +239,13 @@ def parse_go_dsn(dsn: str, *, default_db: str = "") -> dict:
             host, port_s = addr, ""      # `@tcp(host)/db`,没写端口
         host = host or "127.0.0.1"       # `@tcp(:3306)/db` —— Go 也回落 127.0.0.1
         port = int(port_s or 3306)
+        # 免 Docker 一键栈(run_stack --mysql-port):本机 MySQL 是动态端口(13307..13398),
+        # yaml 模板不分叉,统一在解析层改端口。三重收敛防劫持:环境变量在、回环地址、
+        # 且原端口就是 dev MySQL 的 3307 —— 显式指向别处(TiDB :4000 / 远端库)的 DSN
+        # 绝不能被环境变量改写,那正是本模块头上「静默连错库」要抓的缺陷类。
+        env_port = os.environ.get("PANDORA_MYSQL_PORT", "")
+        if env_port and port == 3307 and host in ("127.0.0.1", "localhost", "::1"):
+            port = int(env_port)
     resolved_db = db_name or default_db
     if resolved_db:
         require_mysql_identifier(resolved_db, kind="schema")

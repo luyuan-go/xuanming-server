@@ -195,11 +195,25 @@ def main() -> int:
     ap.add_argument("--ds-logdir", action="append", default=None,
                     help="DS 日志目录,可重复;默认取大厅 / 战斗两个 allocator 各自的 "
                          "<服务目录>/run/dev/logs/ds")
+    ap.add_argument("--social-mysql", action="store_true",
+                    help="社交四服(friend/chat/guild/mail)改用 etc/<svc>-dev.yaml(本机 MySQL "
+                         "的 pandora_social)。免 Docker 栈用:TiKV 没有 Windows 原生部署,"
+                         "起不了 TiDB。与 go 栈 run_services.ps1 -SocialOnMysql 同口径。")
+    ap.add_argument("--mysql-port", type=int, default=0,
+                    help="本机 MySQL 动态端口(免 Docker 栈 13307..13398)。经 PANDORA_MYSQL_PORT "
+                         "透传给子进程,由 pandorapy/mysqlx.py 只对「回环地址 且 原端口 3307」"
+                         "的 DSN 改端口;不传(0)行为逐字节不变。")
     args = ap.parse_args()
 
     only = {s.strip() for s in args.only.split(",") if s.strip()}
     exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
-    targets = [s for s in SERVICES
+    services = SERVICES
+    if args.social_mysql:
+        # 社交四服换 MySQL 模板。必须在 targets 之前换:--stop 的 scoped 匹配吃配置文件名,
+        # 起 / 停两条路径必须看到同一份文件名,否则「stop 了但没停到」。
+        services = [(n, d, c.replace("-dev-tidb.yaml", "-dev.yaml"), p, m)
+                    for n, d, c, p, m in services]
+    targets = [s for s in services
                if (not only or s[0] in only) and s[0] not in exclude]
     if not targets:
         print("[ERR] --only / --exclude 过滤后没有任何服务")
@@ -232,6 +246,10 @@ def main() -> int:
         [str(ROOT / "python"), str(ROOT / "python" / "gen")]
     )
     env["PYTHONUTF8"] = "1"  # 中文日志撞 cp1252 会 UnicodeEncodeError
+    if args.mysql_port > 0:
+        # 免 Docker 栈:本机 MySQL 是动态端口,yaml 模板不分叉,由 mysqlx.parse_go_dsn
+        # 在解析层统一改端口(见那边的三重收敛条件)。
+        env["PANDORA_MYSQL_PORT"] = str(args.mysql_port)
 
     procs = []
     for name, rel, conf, port, mod in targets:

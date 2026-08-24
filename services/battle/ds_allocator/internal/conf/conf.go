@@ -823,12 +823,17 @@ func (c *Config) Defaults() {
 	// 路径字段支持环境变量展开 + 跨机器兜底,便于策划机移植(Client 目录可能不在配置写死的盘符):
 	//  1. 先做 ${VAR}/$VAR 展开(绝对路径不含 $,dev 配置原样保留);
 	//  2. filepath.FromSlash 归一化分隔符:策划在 yaml 里写正斜杠 / (无需 \\ 转义)也能在 Windows 正常工作;
-	//  3. 展开后的路径在本机不存在时,回退到启动脚本按平级 Client 目录探测注入的
-	//     PANDORA_DS_EXE / PANDORA_DS_DIR(play.ps1 自动填充);dev 上 F:\ 路径存在则不覆盖。
+	//  3. 展开后的路径在本机不存在、**或与当前 launcher 形态不符**时,回退到启动脚本按平级 Client
+	//     目录探测注入的 PANDORA_DS_EXE / PANDORA_DS_DIR(play.ps1 / start.ps1 自动填充)。
+	//     只判「存在」是不够的 —— 2026-08-24 事故:-DsLauncher editor 一次注入 LAUNCHER / UPROJECT /
+	//     EXE 三个变量,而 dev 机 yaml 里写死的 PandoraServer.exe 确实存在,于是唯独 EXE 那一个被
+	//     跳过 → 出包 server 拿到 .uproject 当关卡 URL → LoadPackage 失败 → world 为空 →
+	//     UMyLevelModel::OnEnginePostLoadMap 解空指针,DS 启动十几秒后 ACCESS_VIOLATION 崩,
+	//     而 ensureStarted 是 once.Do,永不重拉 → 一键启动只会报「90s 内没拉起 Hub DS」。	// (launcher 已在上面归一,这里才判得出形态。)
 	c.LocalDS.ExecutablePath = filepath.FromSlash(os.ExpandEnv(c.LocalDS.ExecutablePath))
 	c.LocalDS.WorkingDir = filepath.FromSlash(os.ExpandEnv(c.LocalDS.WorkingDir))
 	if envExe := os.Getenv("PANDORA_DS_EXE"); envExe != "" {
-		if _, err := os.Stat(c.LocalDS.ExecutablePath); c.LocalDS.ExecutablePath == "" || err != nil {
+		if !localDSExecutableUsable(c.LocalDS.ExecutablePath, c.LocalDS.Launcher) {
 			c.LocalDS.ExecutablePath = filepath.FromSlash(envExe)
 			if envDir := os.Getenv("PANDORA_DS_DIR"); envDir != "" {
 				c.LocalDS.WorkingDir = filepath.FromSlash(envDir)
@@ -860,4 +865,32 @@ func (c *Config) Defaults() {
 	if c.Server.Http.Addr == "" {
 		c.Server.Http.Addr = ":21020"
 	}
+}
+
+// localDSExecutableUsable 判断 yaml 里写死的本机 DS 可执行路径,在当前 launcher 形态下算不算
+// 「可用的那一个」—— 也就是要不要让 PANDORA_DS_EXE 顶上来。
+//
+// 只判 os.Stat 存在是不够的:editor 形态要的是引擎的 UnrealEditor(-Cmd).exe,packaged 形态要的是
+// 出包的 PandoraServer.exe;两者互换都不会报错,只会在加载关卡时炸(成因见 Defaults 里
+// 2026-08-24 那段)。hub_allocator 与 ds_allocator 各有一份同构实现,两处必须一起改。
+func localDSExecutableUsable(path, launcher string) bool {
+	if path == "" {
+		return false
+	}
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	return !localDSExecutableMismatched(path, launcher)
+}
+
+// localDSExecutableMismatched 只认「两种形态的 exe 被互换」这一种确定错配:
+// editor 形态拿到出包的 PandoraServer*,或 packaged 形态拿到引擎的 UnrealEditor*。
+// 刻意不做白名单(不要求「必须叫 UnrealEditor」)—— 策划机可能用 UnrealEditor-Cmd.exe、包装脚本,
+// 测试用 stub.exe,这些都是合法的;拦已知错配比放行未知形态更不容易误伤。
+func localDSExecutableMismatched(path, launcher string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	if launcher == LauncherEditor {
+		return strings.HasPrefix(base, "pandoraserver")
+	}
+	return strings.HasPrefix(base, "unrealeditor")
 }

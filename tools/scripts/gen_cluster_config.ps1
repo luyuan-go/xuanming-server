@@ -130,6 +130,15 @@ param(
     # login 无状态可水平扩但这个库摊不了;该库不可用 = 全国 100% 玩家进不去。
     # -Prod 必须显式提供真 TiDB DSN(pandora_account 库),校验规则与 owner 同构。
     [string]$AccountStoreDsn = $env:PANDORA_ACCOUNT_TIDB_DSN,
+    # 社交四服(friend/chat/guild/mail)集群产物的存储后端:
+    #   mysql(默认)= 产物逐字节不变(pandora_social 在集群 MySQL);
+    #   tidb        = DSN 整行替换为集群内 TiDB Service(tidb:4000,库结构由 tidb-init Job
+    #                 的 01-social-tidb.sql 建,collation=utf8mb4_bin,与本机 go/python 联调
+    #                 用的 *-dev-tidb.yaml 同口径)。
+    #   ⚠️ 只有 k8s 编排传 tidb:docker/intranet 的 TiDB 在独立 compose 网络
+    #   (pandora-tidb-net),业务容器解析不到 `tidb` 这个名字,传了必连不上。
+    [ValidateSet('mysql', 'tidb')]
+    [string]$SocialStore = 'mysql',
     # Stable/Canary DS 轨道：百分比按服务端确定性 cohort 分桶，seed 是发布配置而非密钥，
     # 但启用灰度后必须稳定不漂移；普通发布与两条 Fleet 共用同一 DSTicket keyset。
     [ValidateRange(0, 100)][int]$BattleCanaryPercent = 0,
@@ -1648,6 +1657,21 @@ function Set-ProdBattleResultProgressOff([string]$text) {
         '${1}progress_enabled: false', 1)
 }
 
+$script:SocialTidbServiceNames = @('friend', 'chat', 'guild', 'mail')
+
+# 社交四服集群产物切 TiDB(-SocialStore tidb):把 Convert-DevToCluster 产出的
+# mysql:3306/pandora_social DSN 整行替换为集群内 TiDB Service。锚点必须恰好命中一次:
+# 模板漂移(DSN 改名/挪位/换库)时宁可生成失败,也不能带着错库进集群。
+function Set-SocialClusterTidbDsn([string]$name, [string]$text) {
+    $pattern = '(?m)^([ 	]+)dsn:[ 	]*"pandora:pandora_dev_pwd@tcp\(mysql:3306\)/pandora_social\?[^"]*"([ 	]*?)$'
+    $anchorCount = [regex]::Matches($text, $pattern).Count
+    if ($anchorCount -ne 1) {
+        throw "[FATAL] $name 模板 pandora_social DSN 锚点异常(count=$anchorCount),拒绝生成 -SocialStore tidb 产物。"
+    }
+    $replacement = '${1}dsn: "pandora:pandora_dev_pwd@tcp(tidb:4000)/pandora_social?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_bin"${2}'
+    return [regex]::Replace($text, $pattern, $replacement)
+}
+
 function Set-ServiceClusterConfigTableDir([string]$serviceName, [string]$text) {
     $location = Get-YamlSectionSecretLocation $serviceName $text 'config_table' 'dir'
     if ($location.RawValue -cne '../../../configtable/dist') {
@@ -2363,6 +2387,9 @@ try {
             $out = Set-ClusterSnowflakeEtcd $s.Name $out
         }
         if ($s.Name -eq 'auction') { $out = Set-AuctionCrossInstanceLock $out }
+        if ($SocialStore -eq 'tidb' -and $s.Name -in $script:SocialTidbServiceNames) {
+            $out = Set-SocialClusterTidbDsn $s.Name $out
+        }
         # 非 -Prod 也要强制:集群产物一律 RollingUpdate,滚动窗口就有并发发布器。
         if ($s.Name -in $script:PushWriterLeaseServiceNames) { $out = Set-ClusterPushWriterLeaseEnforce $s.Name $out }
         if ($Prod -and $s.Name -eq 'battle-result') { $out = Set-ProdBattleResultProgressOff $out }

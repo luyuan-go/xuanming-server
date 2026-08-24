@@ -126,6 +126,18 @@ func NewLocalHubFleetProvider(cfg conf.LocalHubConf) (*LocalHubFleetProvider, er
 		if _, err := os.Stat(cfg.ProjectPath); err != nil {
 			return nil, fmt.Errorf("local_hub: project_path %q not found: %w", cfg.ProjectPath, err)
 		}
+		// executable_path 不能是出包的 PandoraServer.exe。给它出包 server 不会报错:buildArgs 把
+		// .uproject 排在关卡 URL 之前,而出包 server 把第一个非 '-' token 当关卡包去 LoadPackage →
+		// 找不到 → world 为空 → UMyLevelModel::OnEnginePostLoadMap 解空指针,DS 启动十几秒后
+		// ACCESS_VIOLATION 崩;而 ensureStarted 是 once.Do 永不重拉,一键启动只会报「90s 内没拉起
+		// Hub DS」(2026-08-24 事故)。在启动时 fail-fast,别让它变成一次崩溃。
+		// 只拦这一种确定错配,不要求「必须叫 UnrealEditor」——策划机的包装脚本与测试 stub 都是合法的。
+		if strings.HasPrefix(strings.ToLower(filepath.Base(cfg.ExecutablePath)), "pandoraserver") {
+			return nil, fmt.Errorf("local_hub: launcher=%s 要跑引擎的 UnrealEditor(-Cmd).exe,"+
+				"但 executable_path 指向出包的 %q;改 yaml 的 local_hub.executable_path,"+
+				"或用 start.ps1 -DsLauncher editor 让它注入 PANDORA_DS_EXE",
+				conf.LauncherEditor, cfg.ExecutablePath)
+		}
 	}
 	mapURL, err := hubMapURLWithMaxPlayers(cfg.MapName, cfg.Capacity)
 	if err != nil {
