@@ -283,7 +283,9 @@ if (-not $SkipInfra) {
             Write-Host "[ERR] 找不到本机 mysql.exe(备料应由 local_infra.ps1 完成),中止" -ForegroundColor Red
             exit 1
         }
-        & "$ScriptDir/dev_migrate.ps1" -MysqlClient $mysqlClient.FullName -MysqlPort $mysqlPort -RequireMysql
+        # fast migration(PANDORA_PLANNER_FAST_START=1 + -MysqlClient)要求父编排显式给墙钟预算,
+        # 数值与 dev_all.ps1(Go 栈)同一份 600s —— 两栈同口径,分叉了才是 bug。
+        & "$ScriptDir/dev_migrate.ps1" -MysqlClient $mysqlClient.FullName -MysqlPort $mysqlPort -RequireMysql -TotalTimeoutSeconds 600
     } else {
         & "$ScriptDir/dev_migrate.ps1" -RequireMysql
     }
