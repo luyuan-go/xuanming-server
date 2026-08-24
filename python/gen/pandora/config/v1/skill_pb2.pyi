@@ -7,7 +7,7 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class SkillRow(_message.Message):
-    __slots__ = ("id", "remark", "name", "icon", "segment", "next_segment_id", "cd_timing", "cd_duration", "disable_move", "ability_path", "target_select_mode", "orient_target_type", "orient_target_id", "target_camp", "use_distance", "hate_to_target", "hate_to_enemy", "need_fight_state", "rot_mode", "damage_rate", "damage_value", "apply_buffs_to_self", "correction_rate", "effect_count", "damage_display", "heal_display", "effect_description")
+    __slots__ = ("id", "remark", "name", "icon", "segment", "next_segment_id", "cd_timing", "cd_duration", "is_killer_skill", "disable_move", "ability_path", "target_select_mode", "orient_target_type", "orient_target_id", "target_camp", "use_distance", "hate_to_target", "hate_to_enemy", "need_fight_state", "rot_mode", "damage_rate", "damage_value", "apply_buffs_to_self", "correction_rate", "effect_count", "damage_display", "heal_display", "effect_description")
     ID_FIELD_NUMBER: _ClassVar[int]
     REMARK_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -16,6 +16,7 @@ class SkillRow(_message.Message):
     NEXT_SEGMENT_ID_FIELD_NUMBER: _ClassVar[int]
     CD_TIMING_FIELD_NUMBER: _ClassVar[int]
     CD_DURATION_FIELD_NUMBER: _ClassVar[int]
+    IS_KILLER_SKILL_FIELD_NUMBER: _ClassVar[int]
     DISABLE_MOVE_FIELD_NUMBER: _ClassVar[int]
     ABILITY_PATH_FIELD_NUMBER: _ClassVar[int]
     TARGET_SELECT_MODE_FIELD_NUMBER: _ClassVar[int]
@@ -43,6 +44,7 @@ class SkillRow(_message.Message):
     next_segment_id: int
     cd_timing: int
     cd_duration: float
+    is_killer_skill: bool
     disable_move: bool
     ability_path: str
     target_select_mode: int
@@ -62,7 +64,7 @@ class SkillRow(_message.Message):
     damage_display: int
     heal_display: int
     effect_description: str
-    def __init__(self, id: _Optional[int] = ..., remark: _Optional[str] = ..., name: _Optional[str] = ..., icon: _Optional[str] = ..., segment: _Optional[int] = ..., next_segment_id: _Optional[int] = ..., cd_timing: _Optional[int] = ..., cd_duration: _Optional[float] = ..., disable_move: bool = ..., ability_path: _Optional[str] = ..., target_select_mode: _Optional[int] = ..., orient_target_type: _Optional[int] = ..., orient_target_id: _Optional[int] = ..., target_camp: _Optional[int] = ..., use_distance: _Optional[float] = ..., hate_to_target: _Optional[float] = ..., hate_to_enemy: _Optional[float] = ..., need_fight_state: bool = ..., rot_mode: _Optional[int] = ..., damage_rate: _Optional[float] = ..., damage_value: _Optional[float] = ..., apply_buffs_to_self: _Optional[str] = ..., correction_rate: _Optional[float] = ..., effect_count: _Optional[int] = ..., damage_display: _Optional[int] = ..., heal_display: _Optional[int] = ..., effect_description: _Optional[str] = ...) -> None: ...
+    def __init__(self, id: _Optional[int] = ..., remark: _Optional[str] = ..., name: _Optional[str] = ..., icon: _Optional[str] = ..., segment: _Optional[int] = ..., next_segment_id: _Optional[int] = ..., cd_timing: _Optional[int] = ..., cd_duration: _Optional[float] = ..., is_killer_skill: bool = ..., disable_move: bool = ..., ability_path: _Optional[str] = ..., target_select_mode: _Optional[int] = ..., orient_target_type: _Optional[int] = ..., orient_target_id: _Optional[int] = ..., target_camp: _Optional[int] = ..., use_distance: _Optional[float] = ..., hate_to_target: _Optional[float] = ..., hate_to_enemy: _Optional[float] = ..., need_fight_state: bool = ..., rot_mode: _Optional[int] = ..., damage_rate: _Optional[float] = ..., damage_value: _Optional[float] = ..., apply_buffs_to_self: _Optional[str] = ..., correction_rate: _Optional[float] = ..., effect_count: _Optional[int] = ..., damage_display: _Optional[int] = ..., heal_display: _Optional[int] = ..., effect_description: _Optional[str] = ...) -> None: ...
 
 class SkillTableData(_message.Message):
     __slots__ = ("rows",)

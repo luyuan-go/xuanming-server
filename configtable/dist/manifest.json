@@ -1,8 +1,8 @@
 {
-  "version": 20260823003,
-  "generated_at_ms": 1787468499635,
+  "version": 20260824001,
+  "generated_at_ms": 1787552890630,
   "generator": "configtable-gen@0.1.0",
-  "source_rev": "svn-r2223",
+  "source_rev": "svn-r2242",
   "tables": [
     {
       "name": "attr_point_effect",
@@ -113,8 +113,8 @@
       "name": "particle",
       "file": "particle.json",
       "proto": "pandora.config.v1.ParticleTableData",
-      "checksum": "sha256:8dee30c2d0dc4fadb6d90c9d7dfe468831f9a86df222640c5ad2b9695ad9f144",
-      "rows": 16
+      "checksum": "sha256:da50e6f257e9f4d274e9122f6c324a416b9226dfd82fc0184d4aae01ba36591d",
+      "rows": 17
     },
     {
       "name": "player_level_exp",
@@ -211,7 +211,7 @@
       "name": "skill",
       "file": "skill.json",
       "proto": "pandora.config.v1.SkillTableData",
-      "checksum": "sha256:b2a337f68ec8931be8ba8c94a03f0393dca5435e8cdc0d837a7516b2fe814444",
+      "checksum": "sha256:478c41cbf15df9d0096fc137e50e4ae7410ea82a7f07f1279f104d42fa9750a6",
       "rows": 77
     },
     {

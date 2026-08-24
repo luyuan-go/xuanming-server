@@ -155,6 +155,16 @@
       "location_offset": "0,0,0",
       "rotation_offset": "0,0,0",
       "scale": "1,1,1"
+    },
+    {
+      "id": 210102,
+      "remark": "必杀技发起游戏定帧特效",
+      "asset_path": "/Game/Vefects/LootBox/Shared/Particles/NS_LtBox_Pillar_Rare.NS_LtBox_Pillar_Rare",
+      "socket_name": "root_fx",
+      "attached": true,
+      "location_offset": "0,0,0",
+      "rotation_offset": "0,0,0",
+      "scale": "1,1,2"
     }
   ]
 }

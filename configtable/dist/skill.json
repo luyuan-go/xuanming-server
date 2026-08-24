@@ -64,6 +64,7 @@
       "segment": 1,
       "cd_timing": 1,
       "cd_duration": 30,
+      "is_killer_skill": true,
       "ability_path": "/Game/Test/Role/Hero/P_A_Durgad_01/GA/GA_Durgad_Skill03.GA_Durgad_Skill03_C",
       "damage_rate": 6.269841,
       "correction_rate": 0.8,
