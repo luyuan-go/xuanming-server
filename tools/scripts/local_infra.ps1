@@ -321,9 +321,9 @@ function Test-AfUnixUsable([string]$Dir) {
     }
 }
 
-function Resolve-EnvoyTempDir {
+function Resolve-AfUnixTempDir {
     <#
-      给 Envoy 挑一个 AF_UNIX 真的能用的临时目录,并把 TMP/TEMP 指过去。
+      挑一个 AF_UNIX 真的能用的临时目录。Envoy(libevent)与 Kafka 的 JVM 都要在 TMP 里造
       背景见 Test-AfUnixUsable:libevent 在 TMP 目录里造 socketpair,而这台机器上
       %LOCALAPPDATA% 树(默认 TEMP 就在里面)下这个调用是不通的。换个目录不是"绕过安全软件",
       只是换个放临时文件的地方 —— 权限模型、拦截规则一点没动,换完照样受同一套防护管。
@@ -2223,7 +2223,8 @@ function Get-KafkaJavaArgs {
     param(
         [Parameter(Mandatory)][string]$KafkaHome,
         [Parameter(Mandatory)][string]$Log4jName,
-        [Parameter(Mandatory)][string[]]$HeapOpts
+        [Parameter(Mandatory)][string[]]$HeapOpts,
+        [Parameter(Mandatory)][string]$TmpDir
     )
     $l4j = (Join-Path $KafkaHome "config/$Log4jName") -replace '\\', '/'
     return @(
@@ -2234,6 +2235,11 @@ function Get-KafkaJavaArgs {
         '-XX:InitiatingHeapOccupancyPercent=35'
         '-XX:+ExplicitGCInvokesConcurrent'
         '-Djava.awt.headless=true'
+        # JVM 一启动就要造 java.nio.channels.Pipe,Windows 上 JDK21 走 TMP 目录里的 AF_UNIX
+        # socketpair;本机 %LOCALAPPDATA% 树下这个 connect 不通(见 Test-AfUnixUsable),Kafka 会在
+        # ControllerServer.startup 里 "Unable to establish loopback connection" 致命退出,而那三十行
+        # Java 栈里一个字都不提 TMP。所以显式钉住,不吃继承来的 TEMP。
+        "-Djava.io.tmpdir=$TmpDir"
         "-Dkafka.logs.dir=$LogDir"
         "-Dlog4j.configuration=file:$l4j"
         '-cp'
@@ -2275,13 +2281,19 @@ function Start-LocalKafka {
     $java = Find-Tool 'jre' 'java.exe'
     if (-not $java) { Fail '找不到自带 JRE,先跑 -Action provision。' }
 
+    # 与 Envoy 同一个成因:AF_UNIX 能不能用是按目录变的。这里解析一次,格式化与常驻启动共用,
+    # 避免出现「格式化过了、起的时候崩」这种分裂。
+    $kafkaTmp = Resolve-AfUnixTempDir
+    if (-not $kafkaTmp) { Fail 'AF_UNIX 在所有候选临时目录里都不可用(本机安全软件拦 AppData\Local 树,或路径撞了 108 字节上限);Kafka 的 JVM 建不出 Pipe,起不来。' }
+    if ($kafkaTmp -ne $env:TEMP) { Write-Warn2 "Kafka JVM 临时目录改用 $kafkaTmp(默认 TEMP 下 AF_UNIX 造 socketpair 不可用)" }
+
     New-KafkaProperties
     $props = Join-Path $CfgDir 'kafka.properties'
     $meta = Join-Path $DataDir 'kafka/meta.properties'
 
     if (-not (Test-Path -LiteralPath $meta)) {
         Write-Step 'Kafka 首次格式化存储(KRaft)'
-        $toolArgs = Get-KafkaJavaArgs -KafkaHome $home2 -Log4jName 'tools-log4j.properties' -HeapOpts @('-Xmx256M')
+        $toolArgs = Get-KafkaJavaArgs -KafkaHome $home2 -Log4jName 'tools-log4j.properties' -HeapOpts @('-Xmx256M') -TmpDir $kafkaTmp
         $uuidArgs = $toolArgs + @('kafka.tools.StorageTool', 'random-uuid')
         $uuid = & $java @uuidArgs 2>&1
         if ($LASTEXITCODE -ne 0 -or -not $uuid) { Fail "kafka-storage random-uuid 失败: $($uuid -join "`n")" }
@@ -2293,7 +2305,7 @@ function Start-LocalKafka {
     }
 
     Write-Step "启动 Kafka :$KafkaPort"
-    $srvArgs = @(Get-KafkaJavaArgs -KafkaHome $home2 -Log4jName 'log4j.properties' -HeapOpts @('-Xmx512M', '-Xms256M')) +
+    $srvArgs = @(Get-KafkaJavaArgs -KafkaHome $home2 -Log4jName 'log4j.properties' -HeapOpts @('-Xmx512M', '-Xms256M') -TmpDir $kafkaTmp) +
     @('kafka.Kafka', $props)
 
     # 这里刻意**不用** Start-Process 的 -RedirectStandardOutput,改成 cmd /c 里做重定向。
@@ -2458,7 +2470,7 @@ function Start-LocalEnvoy {
     # Envoy(libevent)在 TMP 目录里造 AF_UNIX socketpair,而本机安全软件只拦用户 TEMP 树。
     # 先挑一个 AF_UNIX 真能用的目录再动 envoy —— 校验和正式启动必须用**同一个**,否则会出现
     # 「校验过了、起的时候崩」这种最难查的分裂。
-    $envoyTmp = Resolve-EnvoyTempDir
+    $envoyTmp = Resolve-AfUnixTempDir
     $tmpSaved = @{ TMP = $env:TMP; TEMP = $env:TEMP }
     if ($envoyTmp) {
         if ($envoyTmp -ne $tmpSaved.TEMP) { Write-Warn2 "Envoy 临时目录改用 $envoyTmp(默认 TEMP 下 AF_UNIX 造 socketpair 不可用)" }
@@ -2488,7 +2500,7 @@ function Start-LocalEnvoy {
                 if ($guards.Count -gt 0) { Write-Err "在跑的安全软件:$($guards -join ', ')" }
                 Write-Host @"
       Envoy 的 libevent 在 Windows 上用 AF_UNIX 造 socketpair 做信号唤醒,这一步不通就直接崩。
-      本脚本已经自动换过临时目录了(见 Resolve-EnvoyTempDir),走到这里说明**候选目录全都不通**,
+      本脚本已经自动换过临时目录了(见 Resolve-AfUnixTempDir),走到这里说明**候选目录全都不通**,
       是机器级的问题,不是选错目录。
       排查方向(按可能性):
         1. 安全软件的内核过滤驱动。本机常见的是 360(`fltmc` 看 360AntiSteal/360FsFlt/360Box64)。

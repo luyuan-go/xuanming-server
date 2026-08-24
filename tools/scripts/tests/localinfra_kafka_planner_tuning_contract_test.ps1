@@ -29,4 +29,10 @@ if ($text -match '(?m)^log\.retention\.hours=') {
     throw 'ASSERT FAILED: log.retention.hours 会重新打开按时间删段,策划机 Windows 链必须只用 log.retention.ms=-1'
 }
 
+Assert-Contains '-Djava\.io\.tmpdir=\$TmpDir' `
+    'Kafka 的 JVM 必须显式钉住 java.io.tmpdir，否则继承来的 %TEMP% 在本机 AF_UNIX 不通、JVM 建不出 Pipe 直接致命退出'
+
+Assert-Contains '\$kafkaTmp = Resolve-AfUnixTempDir' `
+    'Kafka 必须走与 Envoy 同一个 AF_UNIX 临时目录解析,不能各写一套'
+
 Write-Host '[PASS] 策划本机 Kafka 启动调优契约通过' -ForegroundColor Green
