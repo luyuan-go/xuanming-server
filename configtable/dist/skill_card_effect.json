@@ -1,0 +1,76 @@
+{
+  "rows": [
+    {
+      "id": 1,
+      "card_id": 1,
+      "attr_key": "Atk",
+      "value_per_level": 2
+    },
+    {
+      "id": 2,
+      "card_id": 2,
+      "attr_key": "Atk",
+      "value_per_level": 3
+    },
+    {
+      "id": 3,
+      "card_id": 3,
+      "attr_key": "MaxHp",
+      "value_per_level": 25
+    },
+    {
+      "id": 4,
+      "card_id": 3,
+      "attr_key": "Defense",
+      "value_per_level": 2
+    },
+    {
+      "id": 5,
+      "card_id": 4,
+      "attr_key": "Atk",
+      "value_per_level": 2
+    },
+    {
+      "id": 6,
+      "card_id": 5,
+      "attr_key": "CritChance",
+      "value_per_level": 0.01
+    },
+    {
+      "id": 7,
+      "card_id": 6,
+      "attr_key": "CritDamage",
+      "value_per_level": 0.03
+    },
+    {
+      "id": 8,
+      "card_id": 6,
+      "attr_key": "Atk",
+      "value_per_level": 2
+    },
+    {
+      "id": 9,
+      "card_id": 7,
+      "attr_key": "AtkSpeedRate",
+      "value_per_level": 0.02
+    },
+    {
+      "id": 10,
+      "card_id": 8,
+      "attr_key": "Atk",
+      "value_per_level": 4
+    },
+    {
+      "id": 11,
+      "card_id": 8,
+      "attr_key": "MaxHp",
+      "value_per_level": 30
+    },
+    {
+      "id": 12,
+      "card_id": 8,
+      "attr_key": "CritDamage",
+      "value_per_level": 0.04
+    }
+  ]
+}

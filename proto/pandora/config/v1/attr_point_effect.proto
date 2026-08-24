@@ -1,0 +1,66 @@
+// Pandora 配置表:属性加点效果表。
+//
+// 源表:Pandora-Client-SVN/Table/角色/z_属性加点_效果.xlsx(策划维护,SVN)。
+// 产物:XuanMing-Server/configtable/dist/attr_point_effect.json(tools/configtable-gen 生成,git 跟踪)。
+// 加载:服务端 pkg/configtable 以 protojson 读入本容器,全批校验通过后原子切换。
+//
+// 用途:一行 = 「某条属性点每加一点,给哪个 GAS 属性加多少」。
+//   Battle / Hub DS 开局按 player.GetLoadout 拿到的 AttributeAllocation{attr_key, points},
+//   在本表查出该属性点的全部效果行,按 点数 × 每点数值 转成初始属性加成
+//   (与专精效果、装备预设同一条路径,ds-arch.md §0.5;服务端不据此算任何战斗数值,§9.6)。
+//
+// === 为什么是独立子表而不是往 j_角色数值属性映射.xlsx 加两列 ===
+// j_角色数值属性映射.xlsx 描述的是「战斗属性 ID ↔ 代码名 ↔ 显示名」,与「玩家能往哪几条
+// 属性上加点」是两个概念(前者是 Hp/Atk/…,后者是 力量/体质/…)。而且一条属性点通常同时
+// 影响多个战斗属性(敏捷 → 暴击率 + 闪避 + 攻速),一个 (属性键, 每点数值) 列对装不下;
+// 往主表堆 属性键1/数值1/属性键2/数值2… 会把上限写死在列数里。按 attr_point_key 分组是
+// 本仓既有做法(同 talent_effect 按 talent_id 分组、chest_drop 按 loot_table_id 分组)。
+//
+// === 本表同时是「有哪几条属性点」的权威 ===
+// player 服务的 AllocateAttributePoints 用本表的 attr_point_key 集合校验请求:
+// 表里没有的键加了点也永远不会变成战斗数值,等于把点数永久沉没(只能洗点找回),
+// 必须在写入边界挡住。表整批缺失时不收紧(等价于本功能尚未发布的过渡态),
+// 与 talent_effect 缺表的处置一致。
+//
+// === 属性键的权威在客户端 ===
+// attr_key 必须是 UE GAS 属性名,权威定义在
+// Pandora-Client-SVN/Pandora/Source/Pandora/Public/GAS/MyEntityAttrSet.h(UMyEntityAttrSet)。
+// 服务端不消费这些数值,但**必须**在加载期用白名单挡住拼错的键:拼错在 DS 上表现为
+// "这条属性加了点没反应",没有任何报错。白名单是校验用的副本,不是第二份权威(§9.22);
+// MyEntityAttrSet 增删属性时须同步 pkg/configtable/attr_point_effect.go。
+//
+// 规范:配置表 ID 默认 uint32(CLAUDE.md §5.6);流水线契约见 docs/design/config-table-hotreload.md。
+
+syntax = "proto3";
+
+package pandora.config.v1;
+
+import "pandora/config/v1/excel.proto";
+
+// AttrPointEffectRow 属性加点效果表一行(列序 = 字段号序 = 表头 A..D)。
+message AttrPointEffectRow {
+  // ID(主键,效果行标识;与属性点键无关,仅用于唯一定位一行)
+  uint32 id = 1 [(excel_col) = "ID", (excel_required) = true];
+  // 属性点键(= player.v1 AttributeAllocation.attr_key,如 str / con / dex / int / men)。
+  //   同一条属性点可有多行(敏捷同时加暴击率 / 闪避率 / 攻速)。
+  //   取值白名单见 pkg/configtable/attr_point_effect.go 的 allowedAttrPointKeys。
+  string attr_point_key = 2 [(excel_col) = "属性点键", (excel_required) = true, (excel_multi_key) = true];
+  // 属性键(UE GAS 属性名,区分大小写,如 Atk / Hp / MoveSpeedRate)。
+  //   取值白名单见 pkg/configtable/attr_point_effect.go 的 allowedAttrPointAttrKeys。
+  string attr_key = 3 [(excel_col) = "属性键", (excel_required) = true];
+  // 每点数值(加算;该属性点每加一点,对应战斗属性增加的量)。
+  //   倍率类属性(MoveSpeedRate / AtkSpeedRate / CritChance / CritDamage / HitChance /
+  //   DodgeChance)填小数,故必须是 float 而不是整数类型。不设 (excel_required):
+  //   0 由伴生校验单独拒(留空和填 0 都是"这行没有任何效果",报错要能说清是哪一行)。
+  float value_per_point = 4 [(excel_col) = "每点数值"];
+}
+
+// AttrPointEffectTableData 属性加点效果整表容器(dist/attr_point_effect.json 的根对象;
+// excel_file 注解 = 导表登记)。
+message AttrPointEffectTableData {
+  option (excel_file) = "角色/z_属性加点_效果.xlsx";
+  // 版式与 z_专精_效果.xlsx 一致:第 1 行表头、2~3 行列说明,数据自第 4 行起。
+  option (excel_data_start_row) = 4;
+
+  repeated AttrPointEffectRow rows = 1;
+}

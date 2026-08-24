@@ -1,0 +1,49 @@
+// Pandora 通用货币结构(多币种经济域的共享词汇,2026-08-22)。
+//
+// 为什么放 common 而不是 inventory:货币币种同时被三类使用者引用 ——
+//   ① 经济域协议(inventory / auction / trade / bag):余额、定价、托管、结算;
+//   ② 配置表(config/v1 shop.proto 等):策划在表里指定"这档商品用哪种货币计价";
+//   ③ 未来的活动 / 任务 / 邮件奖励:发放哪种货币。
+// 若把枚举留在 inventory,配置表就要反向 import 业务域协议(config 应当是叶子)。
+// 提到 common/v1 后依赖方向单向收敛:config → common、inventory → common。
+//
+// 数值口径(CLAUDE.md §5.12):货币数量语义上不可能为负,一律 uint64。
+// 需要表达增减方向时**不要**把 amount 改成有符号,而是由所在 message 用语义字段名承担
+// (cost / earned / balance / frozen),或另开明确的有符号 delta 字段(§5.12 例外①)。
+
+syntax = "proto3";
+
+package pandora.common.v1;
+
+// CurrencyKind 货币类型(枚举底层 int32,§5.7 / §9.13;不属于 ID 规则,不改 uint32)。
+//
+// 新增币种 = 加一个 enum value + 在 currency_kind 列写新值,**不加列、不加表、不改接口**:
+// 余额按 (player_id, currency_kind) 存,所有发放 / 扣减 / 冻结 / 结算路径都按 kind 参数化。
+// 未知 / 未指定 kind 一律 fail-closed(ERR_INVALID_ARG),**不得回退成金币** ——
+// 静默回退会让配错表的商品按金币扣钱,属于不可观测的经济事故。
+enum CurrencyKind {
+  CURRENCY_KIND_UNSPECIFIED = 0;
+  CURRENCY_KIND_GOLD        = 1;  // 金币:出售道具 / NPC 商店 / 拍卖 / 交易主货币
+  CURRENCY_KIND_DIAMOND     = 2;  // 钻石:充值货币
+  CURRENCY_KIND_HONOR       = 3;  // 荣誉:战斗产出货币
+}
+
+// CurrencyAmount 是"某币种若干数量"的通用载体(客户端可见结构)。
+message CurrencyAmount {
+  CurrencyKind kind   = 1;
+  uint64       amount = 2;
+}
+
+// CurrencyBalancesStorageRecord 是玩家全部币种余额的服务端存储快照
+// (§5.8 四类中的"服务端存储快照";落地 MySQL `inventory_ledger.result_currencies`
+// VARBINARY 列,存 proto 二进制)。
+//
+// 为什么幂等流水要存整份余额快照而不是单个标量:多币种下一次操作可能同时改动多个币种
+// (例:活动同时发金币 + 荣誉),重放必须原样回放首次执行的全部结果;
+// 只存一个标量会让重放结果与首次执行不一致(§9.7 幂等)。
+//
+// 非基础类型一律 proto 二进制序列化,不用 JSON(字段编号语义 + 保留 unknown fields,
+// §5.8 / §9.17)。
+message CurrencyBalancesStorageRecord {
+  repeated CurrencyAmount balances = 1;  // 按 kind 升序,只含非零项
+}

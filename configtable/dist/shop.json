@@ -1,0 +1,103 @@
+{
+  "rows": [
+    {
+      "id": 1,
+      "shop_id": 1,
+      "item_config_id": 10001,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "60",
+      "sort_order": 10
+    },
+    {
+      "id": 2,
+      "shop_id": 1,
+      "item_config_id": 10006,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "80",
+      "sort_order": 20
+    },
+    {
+      "id": 3,
+      "shop_id": 1,
+      "item_config_id": 10007,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "180",
+      "sort_order": 30
+    },
+    {
+      "id": 4,
+      "shop_id": 1,
+      "item_config_id": 10008,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "360",
+      "sort_order": 40
+    },
+    {
+      "id": 5,
+      "shop_id": 1,
+      "item_config_id": 10009,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "880",
+      "sort_order": 50
+    },
+    {
+      "id": 101,
+      "shop_id": 2,
+      "item_config_id": 10156,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "800",
+      "sort_order": 10
+    },
+    {
+      "id": 102,
+      "shop_id": 2,
+      "item_config_id": 10157,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "800",
+      "sort_order": 20
+    },
+    {
+      "id": 103,
+      "shop_id": 2,
+      "item_config_id": 10158,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "800",
+      "sort_order": 30
+    },
+    {
+      "id": 104,
+      "shop_id": 2,
+      "item_config_id": 10126,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "800",
+      "sort_order": 40
+    },
+    {
+      "id": 105,
+      "shop_id": 2,
+      "item_config_id": 10096,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "800",
+      "sort_order": 50
+    },
+    {
+      "id": 106,
+      "shop_id": 2,
+      "item_config_id": 10066,
+      "count_per_unit": 1,
+      "currency_kind": 1,
+      "unit_price": "800",
+      "sort_order": 60
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+// Pandora 配置表:装备基础属性表。
+//
+// 源表:Pandora-Client-SVN/Table/道具/装备属性表.xlsx(策划维护,SVN)。
+// 产物:XuanMing-Server/configtable/dist/equipment_attr.json(tools/configtable-gen 生成,git 跟踪)。
+// 加载:服务端 pkg/configtable 以 protojson 读入本容器,全批校验通过后原子切换。
+//
+// === 这张表是什么 ===
+// 一行 = 「穿上这件装备,给穿戴者哪几项战斗数值加多少百分比」。与 d_装备词条.xlsx
+// (equipment_affix,鉴定时随机 roll 的**实例**词条)互补:
+//   - equipment_affix:同一件装备的两个实例可以不一样,数值随 instance 走,由服务端 roll,
+//     经 player.GetLoadout 的 equipment[].attributes[] 下发给 Battle DS;
+//   - 本表:同一 item_config_id 的所有实例完全一样,是**纯配置**,DS 与客户端各自查本表,
+//     **不经协议下发**(与专精效果表 talent_effect、技能卡效果表 skill_card_effect 同一范式:
+//     服务端只送身份 item_config_id,战斗数值权威在客户端 §9.6)。
+//
+// === 服务端为什么仍要登记这张表 ===
+// 服务端**不消费**这 6 个数值(同 item.proto 的 equip_mesh/equip_socket 等 UE 渲染列)。
+// 登记的唯一目的是「加载期挡住策划表漂移」:
+//   ① 表头列改名 / 加列 / 删列在服务端导表阶段整批拒绝,而不是等 DS 上表现异常;
+//   ② 跨表校验(见 pkg/configtable/equipment_attr.go 的 ValidateEquipmentAttrCrossTables):
+//      装备ID 必须是 d_道具.xlsx 里真实存在的**装备**,且 装备部位 / 品质 两列与道具表逐行一致。
+//      **本表的 装备部位 / 品质 在客户端运行期没有任何消费点**(UE 侧只读 6 个百分比;
+//      外观挂载与穿戴校验一律读道具表 FCfgItem::EquipSlot),所以两表漂移的真实风险是
+//      「策划以为改了本表的部位就改了这件装备的部位」——改了个没人读的副本,
+//      服务端加载期是唯一能挡住这种漂移的地方。
+// 名称 / 图标 / 描述文本三列同样是道具表的冗余副本,但只做非空校验不做逐字相等:
+// 它们不参与任何判定,为纯展示文案的改动而拒绝整批配置、卡住服务启动,代价不成比例。
+//
+// === 版式 ===
+// **数据自第 3 行起**(第 1 行表头、第 2 行仅 C/D/L 三列有列说明),与 d_道具.xlsx 的第 4 行
+// 不同,故必须显式 (excel_data_start_row) = 3;不显式覆盖会把 10066 / 10067 两行当注释吃掉。
+//
+// 规范:配置表 ID 默认 uint32(CLAUDE.md §5.6);流水线契约见 docs/design/config-table-hotreload.md。
+
+syntax = "proto3";
+
+package pandora.config.v1;
+
+import "pandora/config/v1/excel.proto";
+
+// EquipmentAttrRow 装备基础属性表一行(列序 = 字段号序 = 表头 A..L)。
+//
+// 6 个数值列全部是小数百分比(0.07 = +7%),客户端换算口径见
+// Pandora-Client-SVN/Pandora/Source/Pandora/Public/GAS/MyEquipAttrStatics.h:
+//   - hp_rate / damage_rate 按**角色等级表基础值**的百分比换成绝对值加算(MaxHp / Atk);
+//   - crit_rate / heal_rate / skill_rate / control_rate 是**效果百分比**,直接加算到
+//     CritChance / SkillHealRate / SkillDamageRate / SkillControlRate 四个倍率型属性。
+// 两种口径的差别是刻意的:「+7% 生命」只能相对某个基准,而「+19% 暴击 / 技能伤害」本身就是比例。
+message EquipmentAttrRow {
+  // 装备ID(主键,即 item_config_id;必须是道具表里 type=装备 的行)
+  uint32 id = 1 [(excel_col) = "装备ID", (excel_required) = true];
+  // 装备名称(道具表 name 的冗余副本,仅供策划在本表内对照;不参与任何判定)
+  string name = 2 [(excel_col) = "装备名称", (excel_required) = true];
+  // 品质(0 起的色阶下标;必须与道具表 quality 逐行一致)
+  uint32 quality = 3 [(excel_col) = "品质", (excel_default) = "0"];
+  // 装备部位(1臂 2手 3腿 4躯干 5头 6核心;必须与道具表 equip_slot 逐行一致且 > 0)
+  uint32 equip_slot = 4 [(excel_col) = "装备部位", (excel_required) = true];
+  // 装备图标(UE 贴图资产路径,道具表 icon 的冗余副本)
+  string icon = 5 [(excel_col) = "装备图标", (excel_prefix) = "/"];
+  // HP:最大生命加成率(按角色等级表 Hp 的百分比)
+  float hp_rate = 6 [(excel_col) = "HP", (excel_default) = "0"];
+  // 伤害:攻击力加成率(按角色等级表 Atk 的百分比)
+  float damage_rate = 7 [(excel_col) = "伤害", (excel_default) = "0"];
+  // 治疗:技能治疗量加成率(加算到 SkillHealRate)
+  float heal_rate = 8 [(excel_col) = "治疗", (excel_default) = "0"];
+  // 暴击:暴击率加成(加算到 CritChance,单位是概率本身而不是相对基础暴击率的比例)
+  float crit_rate = 9 [(excel_col) = "暴击", (excel_default) = "0"];
+  // 技能:技能伤害加成率(加算到 SkillDamageRate)
+  float skill_rate = 10 [(excel_col) = "技能", (excel_default) = "0"];
+  // 控场:技能控制时间加成率(加算到 SkillControlRate)
+  float control_rate = 11 [(excel_col) = "控场", (excel_default) = "0"];
+  // 描述文本(道具表 description 的冗余副本;当前填的是部位说明,如「武器」「躯干防具」)
+  string description = 12 [(excel_col) = "描述文本"];
+}
+
+// EquipmentAttrTableData 装备基础属性整表容器(dist/equipment_attr.json 的根对象;
+// excel_file 注解 = 导表登记)。
+message EquipmentAttrTableData {
+  option (excel_file) = "道具/装备属性表.xlsx";
+  // 本表第 1 行表头、第 2 行列说明,**数据自第 3 行起**(见文件头「版式」)。
+  option (excel_data_start_row) = 3;
+
+  repeated EquipmentAttrRow rows = 1;
+}

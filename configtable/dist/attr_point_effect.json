@@ -1,0 +1,46 @@
+{
+  "rows": [
+    {
+      "id": 1,
+      "attr_point_key": "str",
+      "attr_key": "Atk",
+      "value_per_point": 2
+    },
+    {
+      "id": 2,
+      "attr_point_key": "con",
+      "attr_key": "MaxHp",
+      "value_per_point": 25
+    },
+    {
+      "id": 3,
+      "attr_point_key": "dex",
+      "attr_key": "MoveSpeedRate",
+      "value_per_point": 0.004
+    },
+    {
+      "id": 4,
+      "attr_point_key": "dex",
+      "attr_key": "CritChance",
+      "value_per_point": 0.002
+    },
+    {
+      "id": 5,
+      "attr_point_key": "int",
+      "attr_key": "SkillDamageRate",
+      "value_per_point": 0.004
+    },
+    {
+      "id": 6,
+      "attr_point_key": "men",
+      "attr_key": "Defense",
+      "value_per_point": 1
+    },
+    {
+      "id": 7,
+      "attr_point_key": "men",
+      "attr_key": "SkillHealRate",
+      "value_per_point": 0.006
+    }
+  ]
+}

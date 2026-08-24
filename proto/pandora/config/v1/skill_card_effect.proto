@@ -1,0 +1,67 @@
+// Pandora 配置表:技能卡效果表。
+//
+// 源表:Pandora-Client-SVN/Table/技能/j_技能卡_效果.xlsx(策划维护,SVN)。
+// 产物:XuanMing-Server/configtable/dist/skill_card_effect.json(tools/configtable-gen 生成,git 跟踪)。
+// 加载:服务端 pkg/configtable 以 protojson 读入本容器,全批校验通过后原子切换。
+//
+// 用途:一行 = 「某张技能卡每提升一级,给哪个 GAS 战斗属性加多少」。
+//   Battle DS 开局按 player.GetLoadout 拿到的 LoadoutSkillCard{slot, card_id, level},
+//   在本表查出该卡的全部效果行,按 等级 × 每级数值 转成初始属性加成
+//   (与专精效果、装备预设同一条路径,ds-arch.md §0.5;服务端不据此算任何战斗数值,§9.6)。
+//
+// === 只有「装配在卡槽里」的卡加属性 ===
+// GetLoadout 下发的是 LoadoutSkillCard(卡槽装配),不是玩家持有的全部卡。持有即加属性
+// 会让"攒卡"直接等于变强,与卡槽是养成出口的设计相悖。DS 只看得到装配卡,这条不变量
+// 由数据通道本身保证,不需要额外判定。
+//
+// === 为什么是独立子表而不是往 j_技能卡.xlsx 加两列 ===
+// 与 z_专精_效果.xlsx 同因:一张卡同时提升多条属性(如传说卡加攻 + 加暴伤)时,
+// 一个 (属性键, 每级数值) 列对装不下;往主表堆 属性键1/数值1/属性键2/数值2… 会把上限
+// 写死在列数里,且大部分行留空。按 card_id 分组的子表是本仓既有做法(同 talent_effect
+// 按 talent_id 分组、chest_drop 按 loot_table_id 分组),不属于 §15.3 的预留式复杂化。
+//
+// === 属性键的权威在客户端 ===
+// attr_key 必须是 UE GAS 属性名,权威定义在
+// Pandora-Client-SVN/Pandora/Source/Pandora/Public/GAS/MyEntityAttrSet.h(UMyEntityAttrSet)。
+// 服务端不消费这些数值,但**必须**在加载期用白名单挡住拼错的键:拼错在 DS 上表现为
+// "这张卡升了没反应",没有任何报错,是最难查的一类配置事故。白名单是校验用的副本,
+// 不是第二份权威(§9.22),与 talent_effect 共用 pkg/configtable/combat_attr_key.go 的
+// combatAttrKeys —— 两张表说的是同一个"战斗属性集",不允许各存一份各自漂移。
+//
+// 规范:配置表 ID 默认 uint32(CLAUDE.md §5.6);流水线契约见 docs/design/config-table-hotreload.md。
+
+syntax = "proto3";
+
+package pandora.config.v1;
+
+import "pandora/config/v1/excel.proto";
+
+// SkillCardEffectRow 技能卡效果表一行(列序 = 字段号序 = 表头 A..D)。
+message SkillCardEffectRow {
+  // ID(主键,效果行标识;与技能卡 ID 无关,仅用于唯一定位一行)
+  uint32 id = 1 [(excel_col) = "ID", (excel_required) = true];
+  // 技能卡ID(= SkillCardRow.id;同一张卡可有多行效果)。
+  // 启用外键校验:指向不存在的卡的效果行永远不会被应用,属静默失效,必须在加载期挡住。
+  uint32 card_id = 2 [(excel_col) = "技能卡ID", (excel_required) = true, (excel_fk) = "skill_card"];
+  // 属性键(UE GAS 属性名,区分大小写,如 Atk / MaxHp / CritDamage)。
+  //   取值白名单见 pkg/configtable/combat_attr_key.go 的 combatAttrKeys。
+  //   ⚠️ 生命类加成一律填 MaxHp,不要填 Hp:Hp 是**当前**血量,DS 侧写它的基值会被
+  //   按 MaxHp 钳掉,表现为"这张卡升了血量纹丝不动"且不报任何错。
+  string attr_key = 3 [(excel_col) = "属性键", (excel_required) = true];
+  // 每级数值(加算;该卡每提升一级,对应属性增加的量)。
+  //   等级 1 是获得卡时的初始等级,加成 = 1 × 本值(与专精"每级"口径一致:等级即倍数)。
+  //   倍率类属性(MoveSpeedRate / AtkSpeedRate / CritChance / CritDamage)填小数,
+  //   故必须是 float 而不是整数类型。不设 (excel_required):0 由伴生校验单独拒
+  //   (留空和填 0 都是"这行没有任何效果",报错要能说清是哪一行)。
+  float value_per_level = 4 [(excel_col) = "每级数值"];
+}
+
+// SkillCardEffectTableData 技能卡效果整表容器
+// (dist/skill_card_effect.json 的根对象;excel_file 注解 = 导表登记)。
+message SkillCardEffectTableData {
+  option (excel_file) = "技能/j_技能卡_效果.xlsx";
+  // 版式与 j_技能卡.xlsx 一致:第 1 行表头、2~3 行列说明,数据自第 4 行起。
+  option (excel_data_start_row) = 4;
+
+  repeated SkillCardEffectRow rows = 1;
+}

@@ -1,0 +1,54 @@
+// Pandora 配置表:NPC 商店表(2026-08-22)。
+//
+// 源表:Pandora-Client-SVN/Table/道具/d_商店.xlsx(策划维护,SVN)。
+// 产物:XuanMing-Server/configtable/dist/shop.json(tools/configtable-gen 生成,git 跟踪)。
+// 加载:服务端 pkg/configtable 以 protojson 读入本容器,全批校验通过后原子切换。
+//
+// 用途(服务端权威定价,不是展示):
+//   - inventory.PurchaseShopItem:按 (shop_id, item_config_id) 查本表定价与每份数量,
+//     客户端上报的任何价格一律不采信(CLAUDE.md §9.6 派生数值服务端计算 / §17.2);
+//   - inventory.GetShop:把同一份表投影成客户端商品列表,
+//     使**展示口径与扣费口径同源**,不会像旧的客户端本地商店那样漂移(§17.3)。
+//
+// 为什么新建一张表而不是往道具表加"售价/是否在售"列:
+//   ① 同一件道具可以在不同 NPC 卖不同价(新手商店打折),道具表是一行一道具,表达不了;
+//   ② 商店的在售集合会被运营频繁增删,和道具本身的静态属性生命周期不同;
+//   ③ 道具表已有 25 列,继续加列要动既有源表版式(§9.15 热更流水线的整批风险)。
+//
+// 规范:配置表 ID 默认 uint32(CLAUDE.md §5.6);流水线契约见 docs/design/config-table-hotreload.md。
+
+syntax = "proto3";
+
+package pandora.config.v1;
+
+import "pandora/config/v1/excel.proto";
+import "pandora/common/v1/currency.proto";
+
+// ShopRow 商店表一行 = 一档商品(列序 = 字段号序 = 表头 A..G)。
+//
+// 主键 id 是"商品档 ID",不是商店 ID:同一个商店有多档商品,配置表主键必须逐行唯一(§5.6)。
+message ShopRow {
+  // ID(主键,商品档唯一 ID;与 shop_id / 道具 ID 都不同)
+  uint32 id = 1 [(excel_col) = "ID", (excel_required) = true];
+  // 商店ID(同一 NPC 商店的所有商品档共用;客户端按它拉取整个商店)
+  uint32 shop_id = 2 [(excel_col) = "商店ID", (excel_required) = true, (excel_multi_key) = true];
+  // 道具ID(必须存在于道具表;外键在生成期与加载期两道校验)
+  uint32 item_config_id = 3 [(excel_col) = "道具ID", (excel_required) = true, (excel_fk) = "item"];
+  // 每份数量(一次购买发放几个;打包售卖如"药水×10"填 10。必须 >= 1)
+  uint32 count_per_unit = 4 [(excel_col) = "每份数量", (excel_default) = "1"];
+  // 计价币种(1=金币 2=钻石 3=荣誉;0/未知值整批拒表,不回退金币)
+  pandora.common.v1.CurrencyKind currency_kind = 5 [(excel_col) = "货币类型", (excel_required) = true];
+  // 单价(买一份扣多少该币种;必须 > 0。免费发放请走活动/邮件,不要在商店配 0 价)
+  uint64 unit_price = 6 [(excel_col) = "单价", (excel_required) = true];
+  // 排序(商品在商店面板的展示顺序,小的在前;相同则按道具ID升序兜底)
+  uint32 sort_order = 7 [(excel_col) = "排序", (excel_default) = "0"];
+}
+
+// ShopTableData 商店整表容器(dist/shop.json 的根对象;excel_file 注解 = 导表登记)。
+message ShopTableData {
+  option (excel_file) = "道具/d_商店.xlsx";
+  // 源表第 1 行表头、2~3 行留给列说明,数据自第 4 行起(与道具表同版式)。
+  option (excel_data_start_row) = 4;
+
+  repeated ShopRow rows = 1;
+}
