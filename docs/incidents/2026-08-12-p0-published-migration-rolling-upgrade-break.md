@@ -7,7 +7,7 @@
 > **首次发现时间（UTC）**：2026-08-12 07:00 前后（本轮改动审查）
 > **负责人**：待指定
 > **受影响服务/版本**：`services/account/login`、`services/account/player`、`tools/migrate`；迁移 `pandora_account/000006`、`pandora_player/000007`
-> **最后更新**：2026-08-12
+> **最后更新**：2026-08-24
 
 ## 0. 一句话结论
 
@@ -125,7 +125,9 @@ migrate Job (backoffLimit=0)
 - 迁移契约测试只断言**片段存在**与 fresh-init 一致性，没有任何一条断言「up.sql 不得出现
   `DROP COLUMN` / `DROP TABLE` / `RENAME` / `CHANGE COLUMN`，除非本版被显式标注为 contract」。
   （`CHANGE COLUMN` 是 2026-08-24 补入的形态，与 `RENAME COLUMN` 兼容性等价；本条与 §6 的
-  搜索模式表原先都漏了它，见 §6.1。）
+  搜索模式表原先都漏了它，见 §6.1。同日收口轮又发现 `DROP` / `RENAME` 的关键字判据漏掉
+  `DROP <列名>` / `DROP PRIMARY KEY` / `DROP FOREIGN KEY` / `RENAME TO`，见 §6.2；
+  **当前权威形态表在 §7.3**，别照抄本条这句话。）
 - `ALGORITHM=INSTANT` 的可行性没有在真 MySQL 8.4 上验证过：PROGRESS 2026-08-11 把「真实
   MySQL/TiDB 上跑 000007」明确列为**未验证/交接**项，缺陷就落在这个缺口里。
 - CI 此前从不设 `PANDORA_TEST_MYSQL_DSN`，真库用例全 Skip 而 `go test` 打 `ok`（与
@@ -138,8 +140,9 @@ migrate Job (backoffLimit=0)
 - 搜索模式：`DROP COLUMN` / `DROP TABLE` / `DROP INDEX` / `RENAME COLUMN` / `RENAME INDEX` / `RENAME TABLE`
 - Confirmed 同型命中：`pandora_account/000006`、`pandora_player/000007`（本事故两条）
 - 结构性隐患：**迁移评审缺少「expand-only」机械门禁**，见 §10 A-2
-- 未覆盖边界：本次未逐条复核 `pandora_social` / `pandora_auction` / `pandora_battle` 等其余
-  migration set 是否存在同型 contract（审查扇出中断，见 §10 A-5）
+- ~~未覆盖边界：本次未逐条复核 `pandora_social` / `pandora_auction` / `pandora_battle` 等其余
+  migration set 是否存在同型 contract（审查扇出中断，见 §10 A-5）~~
+  **（已由 §6.1 的 2026-08-24 补扫覆盖：这三套已由探测器本体逐条走过，零命中。）**
 
 ### 6.1 2026-08-24 补扫：原搜索模式漏了 `CHANGE COLUMN`
 
@@ -158,11 +161,45 @@ old new <type>` 与 `RENAME COLUMN` 在兼容性上**完全等价** —— 旧�
 - 其余命中仍是原有 5 条 grandfathered（`pandora_account/000005`、`pandora_account/000006`、
   `pandora_player/000007`、`pandora_leaderboard/000003`、`pandora_trade/000004`），
   形态与登记理由不变，无新增
-- 结论：**§6 原扫描的漏洞只影响 `CHANGE` 一种形态，且只漏了 trade/000005 这一条**；
-  上面「未覆盖边界」列的 social / auction / battle 三套本轮已由探测器逐条走过，零命中
+- ~~结论：**§6 原扫描的漏洞只影响 `CHANGE` 一种形态，且只漏了 trade/000005 这一条**~~
+  **← 这条结论是错的，2026-08-24 收口轮实测推翻，见 §6.2。留着不删是因为它本身就是证据：
+  同一条"关键字判据不够、要看语法形状"的理由，当时只在 `CHANGE` 那一行落实了。**
+- 上面「未覆盖边界」列的 social / auction / battle 三套本轮已由探测器逐条走过，零命中
 
 教训写在这里给下一个人：**扫描模式表与门禁探测器必须是同一份**。这次是两份各写一遍，
 门禁补了形态、文档没补，等于书面留下一张"我们扫过了"的假证明。
+
+### 6.2 2026-08-24 收口轮：`CHANGE` 不是唯一的漏，`DROP` / `RENAME` 漏得一模一样
+
+**§6.1 当时的结论「原扫描的漏洞只影响 `CHANGE` 一种形态」是错的，已在上面划掉。**
+§6.1 只把 `CHANGE` 改成语法形状判据，同一条理由**逐字**适用于 `DROP` 与 `RENAME`，
+却只在 `CHANGE` 那一行落实了。第三轮复核**拿探测器本体喂样本**，下面六条当时全返回空：
+
+| 样本 | 改前探测结果 | 为什么漏 |
+|---|---|---|
+| ``ALTER TABLE `t` DROP `col`;`` | `[]` | MySQL 的 `COLUMN` 关键字可省，与 `CHANGE` 完全同理 |
+| `ALTER TABLE t DROP col;` | `[]` | 同上，且标识符裸写 |
+| ``ALTER TABLE `t` DROP PRIMARY KEY;`` | `[]` | 旧正则是 `\bDROP\s+(INDEX\|KEY)\b`，`DROP` 后面是 `PRIMARY` 不是 `KEY` |
+| ``ALTER TABLE `t` DROP FOREIGN KEY `fk`;`` | `[]` | 同上 |
+| ``ALTER TABLE `old` RENAME TO `new`;`` | `[]` | ALTER 内改表名的正规写法；旧正则只认独立语句 `RENAME TABLE a TO b` |
+| ``ALTER TABLE `old` RENAME `new`;`` | `[]` | 同上，`TO` 还能省 |
+
+六条全是「旧副本的目标对象当场消失」，与 `CHANGE` **完全同级**。
+
+- 处置：`DROP` / `RENAME` 一并改成语法形状判据（`tools/migrate/expand_only_contract_test.go`
+  的 `destructiveRule` + `dropObjectHeads` / `renameObjectHeads`）。Go 的 regexp 是 RE2、
+  没有 negative lookahead，「`DROP` 后面是对象名而不是开启另一种形态的关键字」只能在正则
+  命中后二次过滤，所以多了 `rejectHeads` 这一层。
+- 六条样本已逐条落成 `TestDestructiveDDLDetector` 用例；**变异验证**：把 `DROP` / `RENAME`
+  两条正则换回旧的关键字写法，这 7 个子用例（含防重复计数那条）立即转红，换回后转绿。
+- **全量重扫零新增误判**：拿新旧两版探测器同时遍历全部 48 份嵌入 `*.up.sql`，
+  **命中集合逐份完全一致（差异 0 份）**。仍然只有 6 份命中，与 §6.1 一字不差：
+  5 条 grandfathered + `pandora_trade/000005`（走 `-- CONTRACT:`）。形状化没有把流水线卡死。
+- 顺带修掉一个会让整道门禁瞎掉的剥注释缺陷，见 §7.3 末尾的 `stripLineComments` 条。
+
+教训（补在 §6.1 那条后面）：**"同一份"不只指同步更新，还指同一套判据**。
+§6.1 把两份同步了，同步的却是一份仍然漏 `DROP col` / `DROP PRIMARY KEY` / `RENAME TO` 的表，
+"假证明"因此升了一级 —— 从"文档没跟上门禁"变成"文档把一份有盲区的清单抬成了权威"。
 
 ## 7. 处置与永久修复
 
@@ -188,27 +225,46 @@ old new <type>` 与 `RENAME COLUMN` 在兼容性上**完全等价** —— 旧�
 
 - `CLAUDE.md` §9.21：已有条款即本事故判据，本次未新增条款，改为在设计文档落地说明——
   见 `docs/design/player-no-and-login-surge.md` **§3.6.4**（改名的正确落地方式 + contract 退出条件）。
+  （此处引 §3.6.4 **是对的**：那一节讲的正是 000007 expand 回补与 contract 退出条件。
+  只有引「`CHANGE old new <type>` 这个拼法」时才该引 §3.6.3，见本节末尾。别把两处一起改。）
 - `CLAUDE.md` §9.24：新增 `register_no_counter` 登记。
 - **expand-only 机械门禁**(A-2，已落码)：`tools/migrate/expand_only_contract_test.go`。
-  遍历全部 `*.up.sql`(剥行注释后判)，命中下列**七种**形态即失败，除非二选一：
+  遍历全部 `*.up.sql`(剥行注释后判)，命中下列**九种**形态即失败，除非二选一：
   ①文件头写 `-- CONTRACT:` **且**写明「旧副本排空判据」；②登记在
   `grandfatheredContractMigrations`(仅限本门禁上线前已对 origin 暴露、按
   `tools/migrate/README` 不可再修改的历史迁移，**只减不增**)。
 
-  | 形态 | 备注 |
-  |---|---|
-  | `DROP COLUMN` | |
-  | `DROP TABLE` | |
-  | `DROP INDEX` / `DROP KEY` | |
-  | `RENAME COLUMN` | |
-  | `RENAME INDEX` | |
-  | `RENAME TABLE` | |
-  | `CHANGE [COLUMN] <旧名> <新名> <类型>` | **2026-08-24 补入**；与 `RENAME COLUMN` 兼容性等价。四种拼法全认：`COLUMN` 关键字可省、标识符可不带反引号 |
+  下表是**从 `destructiveDDL` 逐条誊下来的事实**，不是另写一份规格。改探测器必须同步改这张表
+  ——§6.1 / §6.2 两次翻车都出在"两份各写一遍"。
 
-  `CHANGE` 那条的判据是**语法形状**（CHANGE 后跟得出两个标识符再跟一个类型词），
+  | 形态（探测器条目名） | 判据 | 备注 |
+  |---|---|---|
+  | `DROP COLUMN` | 语法形状：`DROP [COLUMN] <名>` | **2026-08-24 收口轮改为形状判据**。`COLUMN` 关键字可省、标识符可不带反引号，省了/裸写照样命中 |
+  | `DROP TABLE` | 关键字 | |
+  | `DROP INDEX` | 关键字 `DROP INDEX` / `DROP KEY` | |
+  | `DROP PRIMARY KEY` | 关键字 | **2026-08-24 收口轮补入**。旧正则 `\bDROP\s+(INDEX\|KEY)\b` 抓不到它（`DROP` 后面是 `PRIMARY`） |
+  | `DROP FOREIGN KEY` | 关键字 | **2026-08-24 收口轮补入**，同上 |
+  | `RENAME COLUMN` | 关键字 | |
+  | `RENAME INDEX` | 关键字 `RENAME INDEX` / `RENAME KEY` | `RENAME KEY` 是 2026-08-24 补的同义拼法（与 `DROP INDEX\|KEY` 对称） |
+  | `RENAME TABLE` | 语法形状：`RENAME [TABLE\|TO\|AS] <名>` | **2026-08-24 收口轮改为形状判据**。旧正则只认独立语句 `RENAME TABLE a TO b`，`ALTER TABLE old RENAME [TO\|AS] new` 三种拼法全漏 |
+  | `CHANGE COLUMN` | 语法形状：`CHANGE [COLUMN] <旧名> <新名> <类型>` | 2026-08-24 补入；与 `RENAME COLUMN` 兼容性等价。四种拼法全认 |
+
+  **本表之外仍然存在的盲区（刻意保留，别当成"扫过了"）**：
+
+  - `DROP PARTITION` / `DROP CONSTRAINT` / `DROP CHECK` —— 探测器的 `dropObjectHeads`
+    把这三个关键字从「省了 `COLUMN` 的列名」里放过，而它们**没有各自的条目**，
+    因而本门禁完全不管。理由：本仓零分区表、零 `CHECK` 约束，且 `DROP CONSTRAINT` /
+    `DROP CHECK` 是放松约束、不是让旧副本的目标对象消失。**一旦本仓开始用分区表，
+    必须先给 `DROP PARTITION` 补一条**，不得指望这张表挡住它。
+  - `#` 与 `/* */` 注释不剥（只剥 `--`）。本仓迁移一律用 `--`，改了反而多一套状态机要维护。
+  - 字符串字面量里的英文散文会**误报**（见下条取舍）。误报是保守方向，不是漏报。
+
+  `DROP` / `RENAME` / `CHANGE` 三条的判据是**语法形状**（例如 CHANGE 后跟得出两个标识符再跟一个类型词），
   不是"CHANGE 后面紧跟 COLUMN 或反引号"。后者是 2026-08-24 第一版的写法，
   变异实测会漏 `CHANGE frozen_gold frozen_amount BIGINT`（裸标识符 + 省 COLUMN，合法 MySQL，
-  `docs/design/player-no-and-login-surge.md` §3.6.4 讨论改名时用的正是这个拼法）。
+  `docs/design/player-no-and-login-surge.md` **§3.6.3**（449-499 行）第 491 行讨论改名时用的正是
+  这个拼法；那句原文是「用 `RENAME COLUMN` 而非 `CHANGE old new <type>`」。**不是 §3.6.4** ——
+  §3.6.4 从 500 行才开始，讲的是 000007 expand 回补，本文档一度把这两节引串了）。
   取舍：字符串字面量里的散文 `COMMENT 'change this column now'` 仍会误报，**刻意接受** ——
   误报的代价是改一句措辞，漏报的代价是生产上打死旧副本。取舍本身由
   `TestDestructiveDDLDetector` 的同名用例钉住。
@@ -225,6 +281,24 @@ old new <type>` 与 `RENAME COLUMN` 在兼容性上**完全等价** —— 旧�
   `strings.Contains(原文, "必须有的守卫")` 会被一行同文注释满足。变异实测：删掉
   `000005` 里真正的 `AND table_name = 'player_currency'`、在上面补一条 `--` 同文注释，
   查原文的断言由红转绿。反向断言（"不得出现 X"）相反，查含注释的原文更严，保留原样。
+- **剥行注释必须跳过字符串字面量**(2026-08-24 收口轮补)：主门禁判的是
+  `stripLineComments` **之后**的正文。上一版是"整行从第一个 `--` 起截断"，不认字面量；
+  而本仓的条件迁移把整条 DDL 装在单引号字面量里（000005 的 `PREPARE` 写法），
+  字面量里出现 `--` 是完全合法的正文。复核实测：
+
+  ```
+  SET @s := 'ALTER TABLE `t` COMMENT = ''a--b'', DROP COLUMN `x`';
+  destructiveHits(原文)                    -> [DROP COLUMN]
+  destructiveHits(stripLineComments(原文)) -> []
+  ```
+
+  也就是说**字面量里带 `--` 的破坏性 DDL 对门禁完全隐形**，而那个 `--` 不必是人写的注释——
+  `COMMENT` 文案里一个破折号、一段 CSV 样例就能触发。已改成按单引号 / 反引号状态跳过
+  （`''` 是转义不是结束），由 `TestStripLineCommentsSkipsStringLiterals` 钉住；
+  **变异验证**：换回旧的按行截断实现，该用例前两条立即转红。
+  刻意没做：单引号状态**不在换行处复位**（MySQL 字符串本就允许跨行，复位是错的）；
+  代价是全文件若有落单单引号，其后的注释会被当正文留下——那是**保守**方向（注释里的散文
+  去撞破坏性 DDL 正则会红给你看），不是漏报方向。
 - **单条迁移的"破坏性 DDL 只许 N 条"必须复用探测器**(2026-08-24 补)：
   自己 `strings.Count(upper, "CHANGE COLUMN")` 只守 7 种形态里的 1 种。
   用 `destructiveOccurrences` 并断言**命中集合**恰好等于预期那几条 ——
@@ -257,14 +331,14 @@ old new <type>` 与 `RENAME COLUMN` 在兼容性上**完全等价** —— 旧�
 | ID | 严重级别 | 行动项 | 负责人 | 状态 | 目标/关联 Incident |
 |---|---|---|---|---|---|
 | A-1 | P1 | **contract 迁移不得原样重放 `DROP players.mmr, ALGORITHM=INSTANT`**：`idx_mmr` 在列上，必先删索引或改算法，否则复现同一个 1845 dirty | 待指定 | 未开始 | 本 Incident |
-| A-2 | P1 | 加 **expand-only 机械门禁**：迁移契约测试断言 up.sql 不得出现 `DROP COLUMN`/`DROP TABLE`/`DROP INDEX\|KEY`/`RENAME *`/`CHANGE [COLUMN] 旧 新 类型`，除非文件头显式标注 `-- CONTRACT:` 并写明旧副本排空判据 | — | **已落码**（`CHANGE` 形态 2026-08-24 补入并全仓重扫，见 §6.1） | `tools/migrate/expand_only_contract_test.go`；见 §7.3 |
+| A-2 | P1 | 加 **expand-only 机械门禁**：迁移契约测试断言 up.sql 不得出现 `DROP COLUMN`/`DROP TABLE`/`DROP INDEX\|KEY`/`RENAME *`/`CHANGE [COLUMN] 旧 新 类型`，除非文件头显式标注 `-- CONTRACT:` 并写明旧副本排空判据 | — | **已落码**（`CHANGE` 形态 2026-08-24 补入见 §6.1；同日收口轮把 `DROP` / `RENAME` 一并改成语法形状判据并补 `DROP PRIMARY KEY` / `DROP FOREIGN KEY`，全仓重扫零新增命中，见 §6.2。权威形态表在 §7.3） | `tools/migrate/expand_only_contract_test.go`；见 §7.3 |
 | A-3 | P1 | **contract 时必须反向回填 `player_mmr ← players.mmr`**：旧副本结算只写 `players.mmr` 不写 `player_mmr`，删列瞬间玩家 default 段位会回退到最后一次新副本写入的值。`000008` 注释只写了「以后删」，没写这一步 | 待指定 | 未开始 | 本 Incident |
 | A-4 | P2 | `000008` 的兼容回填是一条不分批的多表 UPDATE，会对**每个已有 default 记录的玩家**的 `players` 行加记录锁并持到语句提交（真库实测 15 万行 ≈ 18s / 150001 把锁），期间这些玩家的 `ApplyMMRChange` `SELECT ... FOR UPDATE` 会等到 `innodb_lock_wait_timeout`(targets 配 15s) 后批量报 1205。**在受支持发布路径上该语句恒 0 行**（000007 必 1845 失败 → v7 代码从未上线），风险只存在于「按当前 `04-player-tables.sql` 全新初始化且 v7 代码跑过」的库。修法只能是按主键游标分批 + 每批独立提交，或在文件头写明该取舍（加 `WHERE p.mmr <> pm.mmr` **无效**：RR 下锁在判谓词之前就加） | 待指定 | 未开始 | 本 Incident |
 | A-8 | P2 | **expand 窗口内老副本会把显式池结算吞进 `players.mmr`（=default 投影）**：pre-000007 副本不认识 `rating_pool`，对任何池的 `player.update` 都只 `UPDATE players SET mmr=?` 并写一条 `rating_pool` 由列 DEFAULT 补成 `'default'` 的 `mmr_history`。现网 4 个 ELO 关卡**全部**配非 default 池，所以 player 单独回滚到 Stable 期间为 **100% 排位局**记错池，而 `mmr_history` 幂等键不含池 → 重投也补不回来。**可恢复**（`mmr_history JOIN battles → map_id → 关卡表段位池` 可确定性判出全部错池行）。欠账：①写明修复口径；②`mmr_repo_mysql_test.go` 自称钉住「显式池不串分」，实际只模拟了老副本写 default 一场，旧→新方向的显式池组合从未覆盖，不满足 §9.21「验证 Stable↔Canary 组合」 | 待指定 | 未开始 | 本 Incident（与 A-3 并列） |
 | A-9 | P2 | **quarantine 目标库白名单与 `validMigrationDatabaseMapping` 冲突**：前者只认 `database == "pandora_player"` 或 `pandora_player_mig_it_` 前缀，后者（`main.go:385`）与 `tools/migrate/README` 明面允许 `<migration_set>_<后缀>` 分片库名。若将来给 player 引入分片/额外物理库，MySQL 8.4 上全新建库会卡在 v7 dirty 且 quarantine 拒绝介入，自动化发布链路永久阻断（需 DBA 手工 `UPDATE schema_migrations SET dirty=0`，非不可恢复）。**当前不可触发**：全仓 player 库名恒为精确 `pandora_player`（infra.md 只批准 auction 分片）。正确修法是在 `loadTargets` 阶段就对 `pandora_player` 拒绝前缀库名，把矛盾提前到清单校验 | 待指定 | 未开始 | 本 Incident |
 | A-5 | P1 | **审查两轮都没跑完**：`migrate-quarantine` 第二轮补回（产出本文档 §7.2 那条 P1 与 A-9），但 **`ci-and-proto` 与 `cross-cutting` 两轮均因连接中断未返回**，复核 agent 两轮各挂 4 条 / 4 条。累计 27 条发现，仅 9 条进入复核、3 条成立、2 条推翻，**18 条既未确认也未证伪**（清单见 §10 附注）。**尚未有任何一次完整的跨切面扫描**：其余 migration set 的同型 contract、proto 新字段是否真有读写方与 fail-closed 分支、cpp pb 与 UE 仓库的同步断裂、CI 容器版本与 skip 白名单，全部零覆盖 | 待指定 | 未开始 | 本 Incident |
 | A-6 | P2 | `0fdb15f1` 把 4 份 Agones Fleet 版本 yaml（battle / battle-canary / hub / hub-canary，`r1971→r1977`）与本次 expand 修复混在同一提交推上 `origin/main`，未单独验证版本一致性 | 待指定 | 未开始 | 本 Incident |
-| A-7 | P3 | `pandora_social` / `pandora_auction` / `pandora_battle` 等其余 migration set 未做同型 contract 扫描 | 待指定 | 未开始 | 本 Incident |
+| A-7 | P3 | `pandora_social` / `pandora_auction` / `pandora_battle` 等其余 migration set 未做同型 contract 扫描 | — | **已完成**（2026-08-24 由探测器本体逐条走过全部 48 份 `*.up.sql`，零命中；见 §6.1 / §6.2） | 本 Incident |
 
 **A-5 附注:18 条未裁决发现**(按初判严重度)。它们既未被确认也未被证伪，**不得**当成"已审查通过"：
 

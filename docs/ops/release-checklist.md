@@ -141,6 +141,64 @@ UE `PandoraBackendSubsystem` 的 dev 开关默认值在 C++ 头文件里,生产*
 - [ ] 切流后 active unverified、PENDING/match/event/release 补偿队列持续下降并最终收敛；Kafka 消费者按 `match_id` 幂等
 - [ ] 若不接受短暂写冻结，已先滚兼容 owner coordinator 版本；禁止 old/green 同时接拍卖写流量
 
+### 2.7 战斗掉落出箱幂等键分叉（本次必须人工门禁，一次性）
+
+**为什么有这一条**:2026-08-24 修了 `battle_result` 的 `deliverDropRecord`——它的**分叉条件**
+(`len(stacks)>0 && len(instances)>0`)与**发放条件**(`len(stacks)>0 || currency>0`)长期是两份各自
+演化的条件。于是「爆装备 + 有金币、但没爆可堆叠道具」这一形态不分叉:`GrantItems` 先用
+`battle_drop:{match_id}:{player_id}` 把金币发了,`GrantInstances` 紧接着拿**同一把键**必被 inventory
+判 7015 幂等冲突 → 整行返错 → 出箱行永不删 → 装备永远发不到玩家手上。
+
+修复把这一形态的 **stack 侧幂等键改成了 `battle_drop:{match_id}:{player_id}:stack`**(装备侧为
+`…:instance`)。**其余形态的键逐字节没变。** 但库里**已经卡住**的这类存量行在新代码上线后重试时,
+会拿一把 inventory 从没见过的新键**再发一次金币** —— inventory 那边没有这把键的流水,幂等去重不生效。
+一个「卡死不发」的缺陷会被换成「多发钱」。所以必须在部署前把存量清干净。
+
+> ⚠️ 与「单行装备件数」无关:上一轮那版按件数拆批的改动**已整块回退**(拆批打破「转邮件即终态」
+> 不变量,实测造成装备双发)。本条**只**针对幂等键分叉这一种形态,不要顺手按件数捞行。
+
+顺序不能反:
+
+- [ ] **① 先停 drop publisher**(或先不部署 `battle_result` 本次改动),再执行下面的排查 SQL。publisher
+  在跑的时候捞出来的集合会边捞边变,拿到的清单不可用于对账。
+- [ ] **② 执行排查 SQL,捞出存量卡住行**:
+
+  ```sql
+  -- 存量受影响行:有金币 + 有装备 + 无堆叠道具(= 旧代码下两路共用 baseKey 的唯一形态)
+  SELECT id, match_id, player_id, currency_amount,
+         instance_item_config_ids, created_at_ms,
+         CONCAT('battle_drop:', match_id, ':', player_id) AS legacy_idempotency_key
+  FROM `pandora_battle`.`battle_drop_outbox`
+  WHERE currency_amount > 0
+    AND instance_item_config_ids <> ''
+    AND stack_item_config_ids = ''
+  ORDER BY id;
+  ```
+
+- [ ] **③ 捞到 0 行 = 无迁移窗口**,直接部署,④⑤ 跳过。**捞出来确实是空集才可以跳过**——不要因为
+  「应该没有」而免掉这次实测。
+- [ ] **④ 捞到行**:逐行拿上面那列 `legacy_idempotency_key` 到 inventory 库核对金币**是否已入账**:
+
+  ```sql
+  -- 把 :key_list 换成 ② 查出来的 legacy_idempotency_key(op='grant' 即 GrantItems 那一笔)
+  SELECT player_id, idempotency_key, op, created_at
+  FROM `pandora_trade`.`inventory_ledger`
+  WHERE op = 'grant'
+    AND idempotency_key IN (:key_list);
+  ```
+
+  - **查到流水 = 金币已到玩家手上,只欠装备** → 把 `battle_drop_outbox` 对应行的
+    `currency_amount` 清 0(`UPDATE ... SET currency_amount = 0 WHERE id = ?`,逐 id 改、不要按条件批量改),
+    新代码上线后这一行只走装备一路,金币不会二次发放。
+  - **查不到流水 = 金币压根没发出去** → **原样不动**。新键发放即首次入账,不存在双发。
+
+- [ ] **⑤ 放开 publisher 后确认收敛**:② 捞到的那批 `id` 全部从 `battle_drop_outbox` 消失(行被删 =
+  两路都成功),并且 `inventory_idempotency_conflict` 告警归零、这些 `match_id` 有对应的
+  `drop_grant_delivered` 日志。
+
+> 存量清干净并确认收敛之后,本节可以在下一个 tag 一起删除(它只对「跨过 2026-08-24 那次修复」的那次
+> 发布有效)。删之前请先确认线上不再有旧版本 `battle_result` 副本在跑。
+
 ---
 
 ## 3. 开发机本地（不入包、不影响发布）
