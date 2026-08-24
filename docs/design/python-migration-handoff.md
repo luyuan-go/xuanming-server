@@ -73,6 +73,36 @@ cd F:/work/XuanMing-Server/python && env PYTHONUTF8=1 .venv/Scripts/python.exe t
 
 ---
 
+## 1.5 一键入口(2026-08-24 起,与 go 栈同一套编排)
+
+`start.ps1` 加了 `-Python` 开关(仅 `-Mode local / k8s`),服务层换 Python 实现,
+基础设施 / 导表 / editor DS / 可玩性闸门 / Agones Linux DS 全部复用 go 路径,不分叉。
+仓库根多了六个双击入口(与 go 版同名前缀加 `Python`):
+
+| 入口 | 包一层的命令 |
+| --- | --- |
+| `Python策划一键启动-免Docker-测试版.cmd` | `start.ps1 -Python -Mode local -NoDocker -DsLauncher editor -GenTables` |
+| `Python策划一键停止-免Docker-测试版.cmd` | `start.ps1 -Python -Mode local -NoDocker -Down` |
+| `Python策划一键重启DS-免Docker-测试版.cmd` | 同启动 + `-DsOnly`(Python 无 go 的快速通道,回落全量幂等启动) |
+| `Python策划一键停止业务-保留基础设施-免Docker-测试版.cmd` | `dev_all_python.ps1 -Down -SkipInfra -NoDocker` |
+| `Python内网服务器一键启动-k8s集群.cmd` | `start.ps1 -Python -Mode k8s -GenTables` |
+| `Python内网服务器一键停止-k8s集群.cmd` | `start.ps1 -Python -Mode k8s -Down` |
+
+要点(详见各文件头注):
+
+- **免 Docker**:`dev_all_python.ps1` 新增 `-NoDocker`,基础设施走 `local_infra.ps1`;
+  MySQL 动态端口经 `run_stack.py --mysql-port` → `PANDORA_MYSQL_PORT` → `mysqlx.parse_go_dsn`
+  只改「回环 + 3307」的 DSN;社交四服 `--social-mysql` 换 `-dev.yaml`(TiKV 无 Windows 版)。
+- **docker 模式补了 TiDB**:`dev_all_python.ps1` 现在与 go 栈一样拉 `tidb_up.ps1`,
+  社交四服(`*-dev-tidb.yaml`)不再起来即 `dial tcp 127.0.0.1:4000` 拒绝。
+- **k8s**:一份 `deploy/services/Dockerfile.python`(build-arg `SERVICE_MODULE`,
+  上下文必须是 `python/`,仓库根 .dockerignore 排除了 python/)出 22 个
+  `pandora-py/<svc>:dev`;`deploy/k8s/overlays/python` 只换镜像,Deployment/Service 名、
+  端口、挂载全复用 base。社交四服在 k8s 连集群内 TiDB(`gen_cluster_config.ps1 -SocialStore tidb`,
+  go/python 两栈同口径,2026-08-24 拍板)。
+- **central-managed 策划远端库不支持**:Python 免 Docker 入口检测到
+  `installers/planner-db/central-mysql.json` 即 fail-fast,绝不静默落到本机库。
+
 ## 2. 现在的状态
 
 ### 2.1 可跑的 19 个

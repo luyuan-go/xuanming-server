@@ -1,0 +1,47 @@
+# Pandora 本地 k8s 的 Python 栈 overlay(start.ps1 -Python -Mode k8s 用)
+#
+# 只做一件事:把 base(deploy/k8s/services)里 22 个业务 Deployment 的镜像
+# 逐个换成 pandora-py/<svc>:dev(由 start.ps1 的 Build-PythonImages 构建、
+# Sync-ImagesToMinikube 载入)。其余一概复用 base:
+#   - Deployment/Service 名与端口不变 → rollout restart/status 循环、
+#     DS-auth writer 镜像 digest 断言(按名取 .containers[0].image)原样成立;
+#   - pandora-config Secret 的 subPath 挂载(/app/etc/cluster.yaml)、
+#     pandora-configtable ConfigMap(/app/configtable/active)、args、探活、资源配额全部不变
+#     (Python 镜像的运行期契约与 Go 镜像逐条对齐,见 deploy/services/Dockerfile.python)。
+#
+# kustomize images 变换按镜像名(仓库段)匹配,与 base 里钉定的不可变 tag 无关 ——
+# 钉定 go 镜像在本 overlay 下不被任何 Deployment 引用,故 -Python 的 [6/8] 不 load 它们。
+#
+# ⚠️ 手工 apply 本 overlay 之前必须已把 22 个 pandora-py/*:dev 载入集群节点,
+#    否则 ImagePullBackOff(imagePullPolicy=IfNotPresent 且这些镜像不在任何 registry)。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: pandora
+
+resources:
+  - ../../services
+
+images:
+  - { name: pandora/login,          newName: pandora-py/login,          newTag: dev }
+  - { name: pandora/player,         newName: pandora-py/player,         newTag: dev }
+  - { name: pandora/data-service,   newName: pandora-py/data-service,   newTag: dev }
+  - { name: pandora/friend,         newName: pandora-py/friend,         newTag: dev }
+  - { name: pandora/chat,           newName: pandora-py/chat,           newTag: dev }
+  - { name: pandora/guild,          newName: pandora-py/guild,          newTag: dev }
+  - { name: pandora/mail,           newName: pandora-py/mail,           newTag: dev }
+  - { name: pandora/player-locator, newName: pandora-py/player-locator, newTag: dev }
+  - { name: pandora/leaderboard,    newName: pandora-py/leaderboard,    newTag: dev }
+  - { name: pandora/owner,          newName: pandora-py/owner,          newTag: dev }
+  - { name: pandora/team,           newName: pandora-py/team,           newTag: dev }
+  - { name: pandora/matchmaker,     newName: pandora-py/matchmaker,     newTag: dev }
+  - { name: pandora/matchmaker-pve, newName: pandora-py/matchmaker-pve, newTag: dev }
+  - { name: pandora/trade,          newName: pandora-py/trade,          newTag: dev }
+  - { name: pandora/dialogue,       newName: pandora-py/dialogue,       newTag: dev }
+  - { name: pandora/mission,        newName: pandora-py/mission,        newTag: dev }
+  - { name: pandora/push,           newName: pandora-py/push,           newTag: dev }
+  - { name: pandora/inventory,      newName: pandora-py/inventory,      newTag: dev }
+  - { name: pandora/auction,        newName: pandora-py/auction,        newTag: dev }
+  - { name: pandora/ds-allocator,   newName: pandora-py/ds-allocator,   newTag: dev }
+  - { name: pandora/hub-allocator,  newName: pandora-py/hub-allocator,  newTag: dev }
+  - { name: pandora/battle-result,  newName: pandora-py/battle-result,  newTag: dev }

@@ -2291,6 +2291,27 @@ function Start-LocalKafka {
     $props = Join-Path $CfgDir 'kafka.properties'
     $meta = Join-Path $DataDir 'kafka/meta.properties'
 
+    # 清掉上一轮遗留的快照墓碑(*.checkpoint.deleted):KRaft 启动期 recoverSnapshots 会
+    # deleteIfExists 它们,而这批文件在本机带 ReadOnly 属性(成因未证实;2026-08-15 起每小时
+    # 快照清理各留一枚,实测积到 35 枚),Windows 对 ReadOnly 文件的删除是 AccessDeniedException,
+    # Kafka 把它当致命错(ProcessTerminatingFaultHandler)—— 表现为一键启动黄在 Kafka,
+    # kafka.log 里 AccessDeniedException: ...checkpoint.deleted(2026-08-24 事故)。
+    # 删它只是替 Kafka 完成它本来要做的清理,不碰任何有效数据;清不掉必须硬失败,
+    # 因为继续起 Kafka 也必然炸在同一个文件上,只是错误更难读。
+    $staleTombstones = @(Get-ChildItem -Path (Join-Path $DataDir 'kafka') -Recurse -File `
+            -Filter '*.checkpoint.deleted' -ErrorAction SilentlyContinue)
+    foreach ($tomb in $staleTombstones) {
+        try {
+            if ($tomb.Attributes -band [IO.FileAttributes]::ReadOnly) {
+                $tomb.Attributes = $tomb.Attributes -bxor [IO.FileAttributes]::ReadOnly
+            }
+            Remove-Item -LiteralPath $tomb.FullName -Force
+        } catch {
+            Fail "清理 Kafka 快照墓碑失败:$($tomb.FullName) —— $($_.Exception.Message)。不清掉它 Kafka 启动必炸在 recoverSnapshots(AccessDenied)。"
+        }
+    }
+    if ($staleTombstones.Count -gt 0) { Write-Warn2 "Kafka:清掉 $($staleTombstones.Count) 枚上轮遗留的快照墓碑(*.checkpoint.deleted)" }
+
     if (-not (Test-Path -LiteralPath $meta)) {
         Write-Step 'Kafka 首次格式化存储(KRaft)'
         $toolArgs = Get-KafkaJavaArgs -KafkaHome $home2 -Log4jName 'tools-log4j.properties' -HeapOpts @('-Xmx256M') -TmpDir $kafkaTmp

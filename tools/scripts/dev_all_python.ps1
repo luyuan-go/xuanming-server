@@ -62,7 +62,21 @@ param(
     # ⚠️ 那个窗口是**另一个进程在读日志文件**,不是给 DS 开控制台:UE DS 加 `-log` 会开真
     #    控制台,Windows 快速编辑模式下在里面点一下就阻塞 WriteConsole、冻住整个游戏线程,
     #    一次误点就让大厅永久不可进(成因见 python/tools/tail_ds_logs.py)。这条不许改回去。
-    [switch]$NoDsWindow
+    [switch]$NoDsWindow,
+
+    # ---- 以下三个由 start.ps1 的 -Python 分支透传,语义与 dev_all.ps1 同名参数对齐 ----
+    # 免 Docker:基础设施用本机原生进程(local_infra.ps1),不起 TiDB;社交四服改连本机
+    # MySQL 的 pandora_social(run_stack --social-mysql),MySQL 端口取 local_infra 的动态
+    # 端口(--mysql-port)。与 dev_all.ps1 -NoDocker / run_services.ps1 -SocialOnMysql 同口径。
+    [switch]$NoDocker,
+
+    # 本轮导表是否真的变了。Python 栈每次全量停起、必然重载配表,这里只为调用方签名
+    # 兼容收下,不据此做选择性重启(那是 go 栈 run_services 的优化)。
+    [switch]$ConfigTableChanged,
+
+    # go 栈策划 fast 入口的「导表下沉到并行准备批次」。Python 栈没有 staging build,
+    # 导表一律由 start.ps1 前置完成;这个开关传进来即坐标系错了,fail-fast。
+    [switch]$GenerateTables
 )
 
 $ErrorActionPreference = 'Stop'
@@ -70,6 +84,14 @@ $ScriptDir = $PSScriptRoot
 $ProjectRoot = (Resolve-Path "$ScriptDir/../..").Path
 $PythonRoot = Join-Path $ProjectRoot 'python'
 $VenvPy = Join-Path $PythonRoot '.venv/Scripts/python.exe'
+
+# Get-PandoraLocalMysqlPort(免 Docker 动态 MySQL 端口)在这里。
+. (Join-Path $ScriptDir 'lib/local_infra_state.ps1')
+
+if ($GenerateTables) {
+    Write-Host "[ERR] -GenerateTables 只属于 go 栈策划 fast 入口;Python 栈的导表由 start.ps1 前置完成。" -ForegroundColor Red
+    exit 2
+}
 
 # 判别口径与 run_services.ps1(Go 栈)**逐条一致**,不另立一套。
 # 背景:allocator 的 Close() 里确实有 Kill(),但那挂在 main 的 defer 上;一键停止用的是
@@ -137,13 +159,32 @@ function Clear-PandoraLocalHubShardMirror {
         刚刚杀掉的;记录的主人已经不存在了。只清 `pandora-hub-local-*`(本机 local 形态),
         agones / mock 的分片一律不碰。
     #>
-    if (-not (docker ps --format '{{.Names}}' 2>$null | Select-String -SimpleMatch 'pandora-redis' -Quiet)) {
-        return   # Redis 没起(比如已经 dev_down 过),没什么可清
+    $cleared = $null
+    if ((Get-Command docker -ErrorAction SilentlyContinue) -and
+        (docker ps --format '{{.Names}}' 2>$null | Select-String -SimpleMatch 'pandora-redis' -Quiet)) {
+        $keys = @(docker exec pandora-redis redis-cli --scan --pattern 'pandora:hub:shard:*' 2>$null |
+            Where-Object { $_ -like '*pandora-hub-local-*' })
+        foreach ($k in $keys) { $null = docker exec pandora-redis redis-cli del $k 2>$null }
+        $cleared = $keys.Count
+    } elseif ($NoDocker -and (Test-Path -LiteralPath $VenvPy)) {
+        # 免 Docker:Redis 是本机原生进程(127.0.0.1:6380),用 venv 里的 redis 客户端清。
+        # 不清的后果与 docker 栈同一条:ensure_shards 撞上一键停止留下的 draining 镜像,
+        # 大厅 DS 永远不被拉起、AssignHub 恒 ERR_HUB_NO_AVAILABLE(见上方 docstring)。
+        $pyCode = @'
+import redis
+r = redis.Redis(host="127.0.0.1", port=6380, socket_connect_timeout=2)
+try:
+    keys = [k for k in r.scan_iter("pandora:hub:shard:*") if b"pandora-hub-local-" in k]
+    for k in keys:
+        r.delete(k)
+    print(len(keys))
+except Exception:
+    print(0)
+'@
+        $cleared = (& $VenvPy -c $pyCode 2>$null | Select-Object -Last 1)
     }
-    $keys = @(docker exec pandora-redis redis-cli --scan --pattern 'pandora:hub:shard:*' 2>$null |
-        Where-Object { $_ -like '*pandora-hub-local-*' })
-    foreach ($k in $keys) { $null = docker exec pandora-redis redis-cli del $k 2>$null }
-    Write-Host "  本机大厅分片镜像:清掉 $($keys.Count) 条"
+    if ($null -eq $cleared) { return }   # Redis 没起(比如已经 dev_down 过),没什么可清
+    Write-Host "  本机大厅分片镜像:清掉 $cleared 条"
 }
 
 function Invoke-RunStack {
@@ -172,11 +213,14 @@ if ($Down) {
     Write-Host "===== Pandora dev(Python)全停 =====" -ForegroundColor Cyan
     $stopArgs = @('--stop')
     if ($Exclude.Count -gt 0) { $stopArgs += @('--exclude', ($Exclude -join ',')) }
+    # scoped 停靠「模块名+配置文件名」匹配;免 Docker 下社交四服跑的是 -dev.yaml,
+    # 不带这个开关会拿 -dev-tidb.yaml 的文件名去匹配 —— 停了但没停到。
+    if ($NoDocker) { $stopArgs += '--social-mysql' }
     $null = Invoke-RunStack $stopArgs   # 输出已由 Out-Host 直送,这里只丢掉退出码
     Stop-PandoraLocalDs
     Clear-PandoraLocalHubShardMirror
     if (-not $SkipInfra) {
-        & "$ScriptDir/dev_down.ps1"
+        if ($NoDocker) { & "$ScriptDir/local_infra.ps1" -Action down } else { & "$ScriptDir/dev_down.ps1" }
         exit $LASTEXITCODE
     }
     exit 0
@@ -189,22 +233,60 @@ $step = 0
 if (-not $SkipInfra) {
     $step++
     Write-Host ""
-    Write-Host "===== [$step/$totalSteps] 基础设施(docker)=====" -ForegroundColor Cyan
-    # compose 用 ${PANDORA_EDGE_BIND_HOST:-127.0.0.1} 绑客户端面;这里显式导出,
-    # dev_up.ps1 起 Envoy 时就会带上(dev.env 里的值会被进程环境覆盖)。
-    $env:PANDORA_EDGE_BIND_HOST = if ($LocalOnly) { '127.0.0.1' } else { '0.0.0.0' }
-    Write-Host "  客户端面 8443 绑定:$($env:PANDORA_EDGE_BIND_HOST)$(if (-not $LocalOnly) { '(局域网可连;加 -LocalOnly 只绑本机)' })"
-    if ($Pull) { & "$ScriptDir/dev_up.ps1" -Pull } else { & "$ScriptDir/dev_up.ps1" }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERR] 基础设施启动失败,中止" -ForegroundColor Red
-        exit 1
+    if ($NoDocker) {
+        Write-Host "===== [$step/$totalSteps] 基础设施(本机原生进程,免 Docker)=====" -ForegroundColor Cyan
+        # 策划远端数据库(central-managed)的登记/迁移编排是 go 栈 dev_all.ps1 专有的,
+        # 这里静默走本机库会让策划以为自己在操作中心 workspace —— fail-fast。
+        if ($env:PANDORA_PLANNER_REQUIRE_CENTRAL_MYSQL -eq '1') {
+            Write-Host "[ERR] Python 免 Docker 入口暂不支持策划远端数据库(central-managed)。" -ForegroundColor Red
+            Write-Host "      本机存在 installers/planner-db/central-mysql.json;请用 go 入口,或先移除远端登记。" -ForegroundColor Red
+            exit 2
+        }
+        & "$ScriptDir/local_infra.ps1" -Action up
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERR] 基础设施启动失败,中止" -ForegroundColor Red
+            exit 1
+        }
+    } else {
+        Write-Host "===== [$step/$totalSteps] 基础设施(docker)=====" -ForegroundColor Cyan
+        # compose 用 ${PANDORA_EDGE_BIND_HOST:-127.0.0.1} 绑客户端面;这里显式导出,
+        # dev_up.ps1 起 Envoy 时就会带上(dev.env 里的值会被进程环境覆盖)。
+        $env:PANDORA_EDGE_BIND_HOST = if ($LocalOnly) { '127.0.0.1' } else { '0.0.0.0' }
+        Write-Host "  客户端面 8443 绑定:$($env:PANDORA_EDGE_BIND_HOST)$(if (-not $LocalOnly) { '(局域网可连;加 -LocalOnly 只绑本机)' })"
+        if ($Pull) { & "$ScriptDir/dev_up.ps1" -Pull } else { & "$ScriptDir/dev_up.ps1" }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERR] 基础设施启动失败,中止" -ForegroundColor Red
+            exit 1
+        }
+        # 社交四服(friend/chat/guild/mail)本地默认连 TiDB(etc/<svc>-dev-tidb.yaml,与
+        # run_services.ps1 同口径),但 dev_up 的 compose 不含 TiDB(独立网络)。go 栈由
+        # dev_all.ps1 拉起;Python 栈此前漏了这一步 —— 社交四服起来即
+        # panic: ping mysql: dial tcp 127.0.0.1:4000 拒绝。tidb_up.ps1 幂等,已在跑则快速返回。
+        & "$ScriptDir/tidb_up.ps1"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERR] TiDB 启动失败,中止(社交四服连不上库)" -ForegroundColor Red
+            exit 1
+        }
     }
 
     $step++
     Write-Host ""
     Write-Host "===== [$step/$totalSteps] 数据库结构升级 =====" -ForegroundColor Cyan
     # 与 Go 栈同一个迁移器:以库内 schema_migrations 为准,只补缺的版本,天然幂等。
-    & "$ScriptDir/dev_migrate.ps1" -RequireMysql
+    if ($NoDocker) {
+        # 免 Docker 本机路径用 local_infra 备料的 mysql.exe 作客户端,端口是动态的。
+        # (与 dev_all.ps1 免 Docker 普通路径逐句同构。)
+        $mysqlPort = Get-PandoraLocalMysqlPort $ProjectRoot -Required
+        $mysqlClient = Get-ChildItem -Path (Join-Path $ScriptDir '../../run/localinfra/dist/mysql') `
+            -Recurse -File -Filter 'mysql.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $mysqlClient) {
+            Write-Host "[ERR] 找不到本机 mysql.exe(备料应由 local_infra.ps1 完成),中止" -ForegroundColor Red
+            exit 1
+        }
+        & "$ScriptDir/dev_migrate.ps1" -MysqlClient $mysqlClient.FullName -MysqlPort $mysqlPort -RequireMysql
+    } else {
+        & "$ScriptDir/dev_migrate.ps1" -RequireMysql
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[ERR] 数据库结构升级失败,中止(继续启动只会让服务连着旧结构崩溃)" -ForegroundColor Red
         exit 1
@@ -227,12 +309,18 @@ Write-Host "===== [$step/$totalSteps] 业务服务(Python)=====" -ForegroundColo
 #   先把服务停掉,DS 就全部变成无主进程,这时再全杀(不是 -OrphansOnly)才干净。
 $stopFirst = @('--stop')
 if ($Exclude.Count -gt 0) { $stopFirst += @('--exclude', ($Exclude -join ',')) }
+if ($NoDocker) { $stopFirst += '--social-mysql' }
 $null = Invoke-RunStack $stopFirst
 Stop-PandoraLocalDs
 Clear-PandoraLocalHubShardMirror
 $upArgs = @()
 if ($Exclude.Count -gt 0) { $upArgs += @('--exclude', ($Exclude -join ',')) }
 if (-not $NoDsWindow) { $upArgs += '--ds-window' }
+if ($NoDocker) {
+    # 动态 MySQL 端口 + 社交四服走本机 MySQL(TiKV 无 Windows 原生部署,起不了 TiDB)。
+    $mysqlPort = Get-PandoraLocalMysqlPort $ProjectRoot -Required
+    $upArgs += @('--social-mysql', '--mysql-port', "$mysqlPort")
+}
 $code = Invoke-RunStack $upArgs
 if ($code -ne 0) {
     Write-Host ""

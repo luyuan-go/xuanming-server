@@ -1663,7 +1663,7 @@ $script:SocialTidbServiceNames = @('friend', 'chat', 'guild', 'mail')
 # mysql:3306/pandora_social DSN 整行替换为集群内 TiDB Service。锚点必须恰好命中一次:
 # 模板漂移(DSN 改名/挪位/换库)时宁可生成失败,也不能带着错库进集群。
 function Set-SocialClusterTidbDsn([string]$name, [string]$text) {
-    $pattern = '(?m)^([ 	]+)dsn:[ 	]*"pandora:pandora_dev_pwd@tcp\(mysql:3306\)/pandora_social\?[^"]*"([ 	]*?)$'
+    $pattern = '(?m)^([ \t]+)dsn:[ \t]*"pandora:pandora_dev_pwd@tcp\(mysql:3306\)/pandora_social\?[^"]*"([ \t]*\r?)$'
     $anchorCount = [regex]::Matches($text, $pattern).Count
     if ($anchorCount -ne 1) {
         throw "[FATAL] $name 模板 pandora_social DSN 锚点异常(count=$anchorCount),拒绝生成 -SocialStore tidb 产物。"

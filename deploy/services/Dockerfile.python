@@ -1,0 +1,50 @@
+# Pandora Python 业务服务通用镜像(22 个服务共用一份;-Python 栈,与同目录 Dockerfile 的
+# Go 版平行)。运行期契约与 Go 镜像逐条对齐:WORKDIR /app、非 root 10001、
+# ENTRYPOINT + CMD ["-conf", "etc/cluster.yaml"];主配置由 k8s Secret pandora-config 以
+# subPath 挂到 /app/etc/cluster.yaml,配表 ConfigMap 挂 /app/configtable/active
+# (deploy/k8s/overlays/python 只换镜像,复用 base services.yaml 的全部挂载)。
+#
+# 与 Go 镜像的两处刻意差异:
+#   * 服务身份在「构建参数 → ENV」层由 SERVICE_MODULE 定
+#     (运行 python -m pandorapy.services.<module>.main):22 个镜像只有最后的 ENV 层不同,
+#     依赖层/源码层全共享构建缓存,第一个镜像付满价、其余 21 个秒过。
+#   * 不烘焙 etc/(含 killswitch.yaml):pandorapy 的 killswitch 缺文件即 fail-open
+#     (「无规则=不关停」,见 python/pandorapy/killswitch.py 模块头),语义不变。
+#
+# 构建(由 tools/scripts/start.ps1 的 Build-PythonImages 自动逐服务带 build-arg):
+#   docker build -f deploy/services/Dockerfile.python #     --build-arg SERVICE_MODULE=login -t pandora-py/login:dev python
+#
+# ⚠️ 构建上下文必须是 python/ 目录:仓库根 .dockerignore 排除了 python/(保护 Go
+#    go mod download 缓存层),用仓库根当上下文会拷进零个 Python 源文件。
+#    python/.dockerignore 负责把 .venv/__pycache__ 挡在上下文外。
+
+ARG PY_VERSION=3.13
+# 基础镜像仓库前缀:默认官方 docker.io;国内机器可传加速镜像(与 Go 版同一约定)。
+ARG BASE_REGISTRY=docker.io
+
+# ===== 依赖阶段 =====
+FROM ${BASE_REGISTRY}/library/python:${PY_VERSION}-slim AS builder
+# asyncmy 等 C 扩展依赖没有对应 cp3xx manylinux 轮子时须现场编译;编译器只进本阶段。
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential     && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY requirements.lock ./
+# pip 源:默认清华镜像(与 Go 版默认 goproxy.cn 同一「国内可达」约定),可 build-arg 覆盖。
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+RUN python -m venv /venv && /venv/bin/pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements.lock
+
+# ===== 运行阶段 =====
+FROM ${BASE_REGISTRY}/library/python:${PY_VERSION}-slim
+COPY --from=builder /venv /venv
+WORKDIR /app
+COPY pandorapy/ /app/pandorapy/
+COPY gen/ /app/gen/
+# 与 python/tools/run_stack.py 同一坐标系:gen/ 里的 pb2 按 pandora.<domain>.v1 布局。
+ENV PYTHONPATH=/app:/app/gen     PYTHONUTF8=1     PATH=/venv/bin:$PATH
+# 与 Go 镜像同一非 root 契约(k8s/Agones 侧的 runAsUser 假设不因换栈而变)。
+USER 10001:10001
+ARG SERVICE_MODULE
+RUN test -n "${SERVICE_MODULE}" || (echo "ERROR: build-arg SERVICE_MODULE 必填" && exit 1)
+ENV PANDORA_SERVICE_MODULE=${SERVICE_MODULE}
+# exec 保 python 是 PID 1:SIGTERM 直达进程,优雅退租/drain 依赖它(sh 不转发信号)。
+ENTRYPOINT ["/bin/sh", "-c", "exec python -m pandorapy.services.${PANDORA_SERVICE_MODULE}.main \"$@\"", "--"]
+CMD ["-conf", "etc/cluster.yaml"]

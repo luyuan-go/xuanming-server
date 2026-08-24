@@ -110,6 +110,15 @@ param(
     # 端口 / 账号 / schema 与 docker 模式逐项一致,业务配置不分叉。默认关,不传时行为逐字节不变。
     [switch]$NoDocker,
 
+    # -Python(仅 -Mode local / k8s):业务服务层换用 Python 实现(python/pandorapy,22 个服务)。
+    # local:服务编排走 dev_all_python.ps1;基础设施(docker 或 -NoDocker 原生进程)、导表、
+    #        editor/packaged DS、可玩性闸门与 go 栈完全同一套,不分叉。
+    # k8s :构建并部署 pandora-py/<svc>:dev 镜像(deploy/k8s/overlays/python 只换镜像,
+    #        Deployment/Service 名与端口不变);基础设施、Agones Linux DS Fleet、Envoy、
+    #        pandora-config(table) 从 go 路径原样复用 —— DS 是 UE,与后端栈无关。
+    # 不传时行为逐字节不变。
+    [switch]$Python,
+
     [switch]$Down,        # 停止该模式
     [switch]$Resume,      # 电脑重启后快速恢复:不重建镜像,把上次停掉的集群/容器拉回来
     [switch]$Reset,       # 一键重置:彻底清掉旧状态再全新启动(线上 online 模式禁用)
@@ -4266,8 +4275,13 @@ function Stop-LocalStackForK8s {
 }
 
 function Invoke-Local {
+    $stackKind = if ($Python) { 'Python' } else { 'go' }
     if ($Down) {
-        & "$ScriptDir/dev_all.ps1" -Down -NoDocker:$NoDocker
+        if ($Python) {
+            & "$ScriptDir/dev_all_python.ps1" -Down -NoDocker:$NoDocker
+        } else {
+            & "$ScriptDir/dev_all.ps1" -Down -NoDocker:$NoDocker
+        }
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         return
     }
@@ -4276,11 +4290,11 @@ function Invoke-Local {
             Write-Step "local 模式(策划远端数据库):本机 Redis/Kafka/Envoy + 22 个业务服务"
             Write-Info "数据库强制 central-managed；本机不下载、启动、停止或重置 MySQL。"
         } else {
-            Write-Step "local 模式(免 Docker):基础设施(本机原生进程) + 22 个 go 服务(宿主进程)"
+            Write-Step "local 模式(免 Docker):基础设施(本机原生进程) + 22 个 $stackKind 服务(宿主进程)"
             Write-Info "MySQL/Redis/Kafka/Envoy 走免安装二进制;不装 Docker Desktop、不起 TiDB。"
         }
     } else {
-        Write-Step "local 模式:基础设施(docker) + 22 个 go 服务(宿主进程)"
+        Write-Step "local 模式:基础设施(docker) + 22 个 $stackKind 服务(宿主进程)"
         Write-Info "策划本地联调用这个;服务可在 VS Code 断点调试。"
     }
 
@@ -4302,8 +4316,14 @@ function Invoke-Local {
         }
     }
 
-    & "$ScriptDir/dev_all.ps1" -NoDocker:$NoDocker -ConfigTableChanged:$script:ConfigTableChanged `
-        -GenerateTables:($NoDocker -and $env:PANDORA_PLANNER_FAST_START -ceq '1' -and $GenTables)
+    if ($Python) {
+        # Python 栈:导表已由上方前置的 Invoke-ConfigTableGen 完成($deferPlannerTableGeneration
+        # 对 -Python 恒 false),没有 go 栈的并行 staging 批次,不传 -GenerateTables。
+        & "$ScriptDir/dev_all_python.ps1" -NoDocker:$NoDocker -ConfigTableChanged:$script:ConfigTableChanged
+    } else {
+        & "$ScriptDir/dev_all.ps1" -NoDocker:$NoDocker -ConfigTableChanged:$script:ConfigTableChanged `
+            -GenerateTables:($NoDocker -and $env:PANDORA_PLANNER_FAST_START -ceq '1' -and $GenTables)
+    }
     # dev_all.ps1 每一步失败都会 exit 1,但 `&` 调子脚本**不会**让本脚本失败 —— 不透传的话
     # start.ps1 走完 switch 就正常结束,双击窗口 / Web 管理台拿到的是「完成(退出码 0)」,
     # 而基础设施其实压根没起来(2026-08-12 现场:另一台机器缺 dev.env,[1/4] 就断了,外层照报 0)。
@@ -6284,10 +6304,14 @@ function Invoke-K8s {
     # 不再靠 advertise host 推断本地,防生产 IP/DNS 绕过 -Prod)。线上走 online 分支的 -Prod。
     # DSTicket v2(方案 B):先自举 dev 钥料(私钥 Secret + 公钥 ConfigMap,幂等),拿 kid 注入配置生成。
     $dsTicketKid = Ensure-DsTicketDevKeyMaterial -KubeContext $mkCtx
+    # -SocialStore tidb:k8s 里社交四服(friend/chat/guild/mail)连集群内 TiDB(tidb:4000),
+    # 与本机 go/python 联调(*-dev-tidb.yaml)同口径;库结构由 [3.6/8] 的 tidb-init Job 建
+    # (01-social-tidb.sql,collation=utf8mb4_bin)。此前 k8s 产物指 mysql:3306,与本机行为
+    # 分叉(2026-08-24 拍板收口;docker/intranet 不能传:那边 TiDB 在独立 compose 网络)。
     & "$ScriptDir/gen_cluster_config.ps1" -AllocatorMode agones -AllocatorAdvertiseHost $k8sAdvHost -AllowDevSecrets `
         -DsAuthMode enforce -DsAuthorityMode redis -DsFenceEtcdEndpoints $script:LocalDsFenceEndpoint `
         -DsFenceKeysetRevision $script:LocalDsFenceKeysetRevision -DsTicketActiveKid $dsTicketKid `
-        -DsTicketKeysetRevision 1
+        -DsTicketKeysetRevision 1 -SocialStore tidb
     Assert-LastExit '生成本地 k8s enforce/redis DSTicket v2 配置'
     # 配置含 HS256 密钥(即便本地 dev 也含 ds_auth secret),用 Secret 而非 ConfigMap 承载(P0:密钥不落明文 ConfigMap)。
     Apply-PandoraConfigSecret -KubeContext $mkCtx -Action 'kubectl apply secret pandora-config'
@@ -6363,27 +6387,36 @@ function Invoke-K8s {
     # -KubeContext:把强删 GameServer 钉在本机 minikube,防误删远端集群。
     Apply-AgonesManifests -InstallAgones -ForceRecreateGameServers -KubeContext $mkCtx
 
-    Write-Step "[5/8] 构建 22 个服务镜像"
-    Build-AllImages
+    Write-Step "[5/8] 构建 22 个服务镜像$(if ($Python) { '(Python)' })"
+    if ($Python) { Build-PythonImages } else { Build-AllImages }
 
     Write-Step "[6/8] 把镜像 load 进 minikube(强制刷新固定 :dev tag)"
     # 与 DS 镜像同样显式钉死本次已校验的本地 profile。不能依赖 minikube 的
     # active profile：它可能与已锁定的 kubectl context 不同，导致新业务镜像被 load
     # 到另一个本地集群，而当前集群随后只重启出旧 :dev 镜像。
-    Sync-ImagesToMinikube -Images (Get-ServiceImages) -MinikubeArgs @('-p', $mkProfile)
-    # 2026-07-28:services.yaml 里存在钉定不可变 tag 的镜像(INC-20260727-001 防回滚,如
-    # matchmaker geed8ce2c6b5d / ds-allocator geed8ce2-p03-*)。它们不在 :dev 构建清单里,
-    # 但 Deployment 引用它们——新节点(-Reset 重建)没有就会 ImagePullBackOff。从宿主 daemon
-    # 一并 load;宿主缺失即 fail-fast(钉定镜像是已验证产物,绝不静默跳过、绝不退回 :dev)。
-    $pinnedImages = @(Select-String -LiteralPath (Join-Path $servicesDir 'services.yaml') -Pattern '^\s*image:\s*(pandora/\S+)' |
-        ForEach-Object { $_.Matches[0].Groups[1].Value } | Where-Object { $_ -notmatch ':dev$' } | Sort-Object -Unique)
-    if ($pinnedImages.Count -gt 0) {
-        Write-Info "钉定镜像一并 load:$($pinnedImages -join ', ')"
-        Sync-ImagesToMinikube -Images $pinnedImages -MinikubeArgs @('-p', $mkProfile)
+    if ($Python) {
+        # Python overlay 把全部 22 个镜像覆盖为 pandora-py/<svc>:dev,base 里钉定的 go 镜像
+        # 不会被任何 Deployment 引用 —— 钉定扫描留在 go 分支,别把无关镜像 fail-fast 进来。
+        Sync-ImagesToMinikube -Images (Get-PythonServiceImages) -MinikubeArgs @('-p', $mkProfile)
+    } else {
+        Sync-ImagesToMinikube -Images (Get-ServiceImages) -MinikubeArgs @('-p', $mkProfile)
+        # 2026-07-28:services.yaml 里存在钉定不可变 tag 的镜像(INC-20260727-001 防回滚,如
+        # matchmaker geed8ce2c6b5d / ds-allocator geed8ce2-p03-*)。它们不在 :dev 构建清单里,
+        # 但 Deployment 引用它们——新节点(-Reset 重建)没有就会 ImagePullBackOff。从宿主 daemon
+        # 一并 load;宿主缺失即 fail-fast(钉定镜像是已验证产物,绝不静默跳过、绝不退回 :dev)。
+        $pinnedImages = @(Select-String -LiteralPath (Join-Path $servicesDir 'services.yaml') -Pattern '^\s*image:\s*(pandora/\S+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value } | Where-Object { $_ -notmatch ':dev$' } | Sort-Object -Unique)
+        if ($pinnedImages.Count -gt 0) {
+            Write-Info "钉定镜像一并 load:$($pinnedImages -join ', ')"
+            Sync-ImagesToMinikube -Images $pinnedImages -MinikubeArgs @('-p', $mkProfile)
+        }
     }
 
-    Write-Step "[7/8] 部署业务服务"
-    kubectl @kubectlContextArgs apply -k $servicesDir
+    Write-Step "[7/8] 部署业务服务$(if ($Python) { '(Python 镜像 overlay)' })"
+    # -Python 用 overlay 换镜像;$servicesDir 本身不动 —— Down 路径按 base 渲染删 Deployment,
+    # 名字不变,两种形态都能被同一个 Down 清掉。
+    $businessManifestDir = if ($Python) { Join-Path $ProjectRoot 'deploy/k8s/overlays/python' } else { $servicesDir }
+    kubectl @kubectlContextArgs apply -k $businessManifestDir
     Assert-LastExit 'kubectl apply -k services'
     # capability 的镜像身份必须取自刚 load 进本次 minikube profile 的节点实际 digest。
     # 先 patch template annotation，再启动/等待 writer；绝不继承上次发布的旧 annotation。
@@ -7214,6 +7247,60 @@ function Get-ServiceImages {
     Get-ServiceList | ForEach-Object { "pandora/$($_.Name):dev" }
 }
 
+# ===== Python 栈(-Python)镜像清单 =====
+# Name 与 Get-ServiceList 逐条同名:overlay 只换镜像,Deployment/Service 名与端口不变,
+# 于是 rollout 循环、DS-auth writer 镜像 digest 断言等按名字走的机制原样成立。
+# Module 是 python/pandorapy/services 下的包名(口径=python/tools/run_stack.py 的 SERVICES;
+# 注意 player-locator 的 go cmd 叫 locator,Python 模块叫 player_locator)。
+# matchmaker-pve 与 matchmaker 同模块不同配置 —— 两个镜像只差最后一层 ENV,构建全命中缓存。
+function Get-PythonServiceList {
+    @(
+        @{ Name = 'login';          Module = 'login' }
+        @{ Name = 'player';         Module = 'player' }
+        @{ Name = 'data-service';   Module = 'data_service' }
+        @{ Name = 'friend';         Module = 'friend' }
+        @{ Name = 'chat';           Module = 'chat' }
+        @{ Name = 'guild';          Module = 'guild' }
+        @{ Name = 'mail';           Module = 'mail' }
+        @{ Name = 'player-locator'; Module = 'player_locator' }
+        @{ Name = 'leaderboard';    Module = 'leaderboard' }
+        @{ Name = 'owner';          Module = 'owner' }
+        @{ Name = 'team';           Module = 'team' }
+        @{ Name = 'matchmaker';     Module = 'matchmaker' }
+        @{ Name = 'matchmaker-pve'; Module = 'matchmaker' }
+        @{ Name = 'trade';          Module = 'trade' }
+        @{ Name = 'dialogue';       Module = 'dialogue' }
+        @{ Name = 'mission';        Module = 'mission' }
+        @{ Name = 'push';           Module = 'push' }
+        @{ Name = 'inventory';      Module = 'inventory' }
+        @{ Name = 'auction';        Module = 'auction' }
+        @{ Name = 'ds-allocator';   Module = 'ds_allocator' }
+        @{ Name = 'hub-allocator';  Module = 'hub_allocator' }
+        @{ Name = 'battle-result';  Module = 'battle_result' }
+    )
+}
+
+function Get-PythonServiceImages {
+    Get-PythonServiceList | ForEach-Object { "pandora-py/$($_.Name):dev" }
+}
+
+function Build-PythonImages {
+    param([string[]]$Only = @())
+    $dockerfile = Join-Path $ProjectRoot 'deploy/services/Dockerfile.python'
+    # ⚠️ 构建上下文必须是 python/ 目录:仓库根 .dockerignore 排除了 python/(保护 go 构建
+    # 缓存层),用根上下文会拷进零个 Python 源文件、构建"成功"跑不起来。
+    $context = Join-Path $ProjectRoot 'python'
+    $services = @(Get-PythonServiceList)
+    if ($Only.Count -gt 0) { $services = @($services | Where-Object { $Only -contains $_.Name }) }
+    if ($services.Count -eq 0) { throw "Build-PythonImages:-Only 过滤后没有任何服务($($Only -join ','))。" }
+    foreach ($s in $services) {
+        $img = "pandora-py/$($s.Name):dev"
+        Write-Info "构建 $img(module=$($s.Module))..."
+        docker build -f $dockerfile --build-arg "SERVICE_MODULE=$($s.Module)" -t $img $context
+        Assert-LastExit "docker build $img"
+    }
+}
+
 # 推导版本烙印信息(编译期注入二进制,实现「线上跑的 ↔ 源码某次提交」可追溯)。
 # 取不到时回退占位值,不阻断构建 —— 本机裸跑不该因为没有版本库就起不来。
 function Get-VersionInfo {
@@ -7874,12 +7961,21 @@ Write-Host "============================================" -ForegroundColor Magen
 
 if ($Status) { Show-Status; exit $script:ShowStatusExitCode }
 
+# -Python 只接线了 local(dev_all_python.ps1)与 k8s(pandora-py 镜像 overlay)两条编排;
+# docker/intranet/online 没有 Python 容器编排,静默走 go 分支只会让人误以为在测 Python。
+if ($Python -and $Mode -notin @('local', 'k8s')) {
+    throw "-Python 目前只支持 -Mode local / k8s(当前:$Mode)。"
+}
+if ($Python -and $Reset) {
+    throw "-Python 暂不支持 -Reset:重置路径的清理编排是 go 栈专用(run_services/dev_all)。请先跑 Python 停止入口,再按需用 go 入口 -Reset 清基础设施。"
+}
+
 # -GenTables:普通入口先把策划 xlsx 导成服务端配置表。策划 NoDocker fast 入口会把导表
 # 下沉到 dev_all 的并行准备批次，与 staging build/基础设施重叠；业务发布和启动仍严格等待
 # 导表成功，绝不会让读表服务加载上一批。
 # -Down / -Check 是停机和干跑,导表对它们没有意义。
 $script:ConfigTableChanged = $false
-$deferPlannerTableGeneration = $plannerTimingEnabled -and $GenTables -and -not $Down -and -not $Check
+$deferPlannerTableGeneration = $plannerTimingEnabled -and $GenTables -and -not $Down -and -not $Check -and -not $Python
 if ($GenTables -and -not $Down -and -not $Check -and -not $deferPlannerTableGeneration) {
     $script:ConfigTableChanged = Invoke-PandoraPlannerTimedStep -Name '导表' -Action {
         Invoke-ConfigTableGen
@@ -7893,7 +7989,10 @@ if ($GenTables -and -not $Down -and -not $Check -and -not $deferPlannerTableGene
 # 返回值只表示"这条快速通道处理了没有";处理了但 Hub DS 没等到就绪时,由 $DsOnlyExitCode
 # 带出非零码 —— 双击窗口绿了就等于能进大厅,这个契约不能靠人去读滚动输出。
 $script:DsOnlyExitCode = 0
-if ($DsOnly -and (Invoke-LocalDsOnly)) { exit $script:DsOnlyExitCode }
+# -Python 时跳过快速通道:Invoke-LocalDsOnly 里「表变了就选择性重启读表服务」走的是
+# run_services.ps1(go 栈),对 Python 进程无效甚至会往 Python 栈里拉起 go 二进制。
+# 落回下面的完整启动(幂等,dev_all_python 每次全量停起,DS 一并重启),语义仍成立。
+if ($DsOnly -and -not $Python -and (Invoke-LocalDsOnly)) { exit $script:DsOnlyExitCode }
 
 $prereqWatch = [Diagnostics.Stopwatch]::StartNew()
 $prereqStatus = '失败'
@@ -7919,7 +8018,7 @@ if (-not $prereqOk) {
 
 if ($BuildOnly) {
     Write-Step "只构建业务镜像(离线打包用,不启动任何服务;构建方式=$BuildMode$(if ($Only.Count -gt 0) { ";只构建 $($Only -join ',')" }))"
-    Build-AllImages -Only $Only
+    if ($Python) { Build-PythonImages -Only $Only } else { Build-AllImages -Only $Only }
     Write-Ok "业务镜像构建完成。可用 tools/scripts/export_images.ps1 打包导出。"
     exit 0
 }
