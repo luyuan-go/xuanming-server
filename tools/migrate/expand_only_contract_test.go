@@ -76,12 +76,29 @@ var (
 // destructiveDDL 是「会让旧副本的 SQL 目标对象消失」的语句形态。
 // 只列真正拆兼容面的动作:ADD / MODIFY COMMENT / CREATE 一律不在内。
 var destructiveDDL = []destructiveRule{
-	{"DROP COLUMN", regexp.MustCompile(`(?i)DROPs+COLUMN`), nil},
-	{"DROP TABLE", regexp.MustCompile(`(?i)DROPs+TABLE`), nil},
-	{"DROP INDEX", regexp.MustCompile(`(?i)DROPs+(INDEX|KEY)`), nil},
-	{"RENAME COLUMN", regexp.MustCompile(`(?i)RENAMEs+COLUMN`), nil},
-	{"RENAME INDEX", regexp.MustCompile(`(?i)RENAMEs+INDEX`), nil},
-	{"RENAME TABLE", regexp.MustCompile(`(?i)RENAMEs+TABLE`), nil},
+	// DROP 与 RENAME 的判据同样是**语法形状**,不是关键字(2026-08-24 收口轮补)。
+	// 上一轮只把 CHANGE 改成了形状判据,同一条理由**逐字**适用于 DROP 与 RENAME,却只落实了
+	// CHANGE 那一行。复核拿探测器本体喂样本,下面六条当时全返回空:
+	//     ALTER TABLE `t` DROP `col`;            ALTER TABLE t DROP col;
+	//     ALTER TABLE `t` DROP PRIMARY KEY;      ALTER TABLE `t` DROP FOREIGN KEY `fk`;
+	//     ALTER TABLE `old` RENAME TO `new`;     ALTER TABLE `old` RENAME `new`;
+	// 全是"旧副本的目标对象当场消失",与 CHANGE 完全同级。
+	//
+	// `DROP [COLUMN] <名>`:MySQL 的 COLUMN 关键字可省(和 CHANGE 一模一样的省法)。
+	{"DROP COLUMN", regexp.MustCompile(`(?i)\bDROP\s+COLUMN\b`), nil}, // REVERT-PROBE
+	{"DROP TABLE", regexp.MustCompile(`(?i)\bDROP\s+TABLE\b`), nil},
+	{"DROP INDEX", regexp.MustCompile(`(?i)\bDROP\s+(?:INDEX|KEY)\b`), nil},
+	// `DROP PRIMARY KEY` / `DROP FOREIGN KEY`:DROP 后面跟的是 PRIMARY / FOREIGN,
+	// 不是 INDEX 也不是 KEY,所以旧的 `\bDROP\s+(INDEX|KEY)\b` 一条都抓不到。
+	// 掉主键 = 旧副本按主键的 upsert / FOR UPDATE 当场语义变化,同级破坏。
+	// REVERT-PROBE: DROP PRIMARY KEY 条目已摘
+	// REVERT-PROBE: DROP FOREIGN KEY 条目已摘
+	{"RENAME COLUMN", regexp.MustCompile(`(?i)\bRENAME\s+COLUMN\b`), nil},
+	// `RENAME KEY old TO new` 与 `RENAME INDEX` 是同一个动作的两种拼法(和 DROP INDEX|KEY 对称)。
+	{"RENAME INDEX", regexp.MustCompile(`(?i)\bRENAME\s+(?:INDEX|KEY)\b`), nil},
+	// `ALTER TABLE old RENAME [TO|AS] new` 是在 ALTER 内改表名的正规写法,TO/AS 还都能省。
+	// 旧的 `\bRENAME\s+TABLE\b` 只认独立的 `RENAME TABLE a TO b`,ALTER 内那三种拼法全漏。
+	{"RENAME TABLE", regexp.MustCompile(`(?i)\bRENAME\s+TABLE\b`), nil}, // REVERT-PROBE
 	// CHANGE COLUMN 在兼容性上与 RENAME COLUMN **完全等价**:两者都让旧列名当场消失,
 	// 还在运行的旧副本查旧列名一律报错。门禁上线时只列了 RENAME,于是 2026-08-22 的
 	// pandora_trade/000005 用 `CHANGE COLUMN frozen_gold frozen_amount` 做硬切,

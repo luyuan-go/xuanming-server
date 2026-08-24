@@ -325,7 +325,7 @@ class InstanceRepoMixin:
         # 所以超长时必须显式探一次 (player_id, idempotency_key) 的旧流水:
         # 探到 = 这批货早就发过了,照常回放(下游 battle_result / mail / mission 都是永不放弃的
         # 重试者,拒一次就是永久卡住的行:货已发、行清不掉);探不到才是真·新的超长请求。
-        fits = True  # TEMP revert: 闸前置/无闸
+        fits = fp.ledger_detail_fits(ledger_detail)
 
         async with rsql.transaction(self._pool) as cur:
             claimed = False
@@ -606,4 +606,4 @@ class InstanceRepoMixin:
             return (
                 SaleOutcome(remaining=0, balances=new_balances, earned=amount, kind=kind),
                 False,
-            )
+            )

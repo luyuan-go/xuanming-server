@@ -593,7 +593,7 @@ class MySQLInventoryRepo(InstanceRepoMixin, TransferRepoMixin, bmig.LegacyBagSou
         # 探到 = 这笔早就成交了,照常回放;探不到才是真·新的超长请求。
         # 反过来把长度闸前置成"超长即拒",会把已成交订单的重试一并拒死(货已发、钱已扣,
         # 客户端却永远拿不到成功回包)—— 这正是 2026-08-24 复核抓到的 P0 回退形态。
-        fits = True  # TEMP revert
+        fits = fp.ledger_detail_fits(detail)
         if fits:
             try:
                 await cur.execute(
@@ -1253,4 +1253,3 @@ class MySQLInventoryRepo(InstanceRepoMixin, TransferRepoMixin, bmig.LegacyBagSou
                 raise errcode.PandoraError(
                     errcode.ErrInternal, "sweep closed escrow: %s", exc
                 ) from exc
-          

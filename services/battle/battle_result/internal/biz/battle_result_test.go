@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/luyuancpp/pandora/pkg/dbguard"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
