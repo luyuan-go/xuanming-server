@@ -19,4 +19,7 @@ Assert-Contains '(?m)^broker\.heartbeat\.interval\.ms=500\s*$' `
 Assert-Contains '(?m)^metadata\.max\.idle\.interval\.ms=0\s*$' `
     '空闲的策划单节点集群应禁用 metadata no-op，避免长期运行持续膨胀元数据日志'
 
+Assert-Contains '(?m)^log\.cleaner\.enable=false\s*$' `
+    'Windows 上 log cleaner 压缩 __consumer_offsets 时的 rename 会失败，Kafka 把它当致命错误直接关 broker，策划机必须关掉 cleaner'
+
 Write-Host '[PASS] 策划本机 Kafka 启动调优契约通过' -ForegroundColor Green

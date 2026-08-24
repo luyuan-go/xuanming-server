@@ -2191,6 +2191,15 @@ metadata.max.idle.interval.ms=0
 num.network.threads=3
 num.io.threads=8
 log.retention.hours=48
+# Windows 不允许重命名本进程自己 mmap 着的索引文件。log cleaner 压缩 __consumer_offsets 时要把
+# *.timeindex.cleaned 改名成 *.timeindex.swap，在 Windows 上必然拿到“文件被另一进程占用”；而 Kafka
+# 把 log dir 的 IOException 当致命错误，单 log dir 直接“Shutdown broker because all log dirs have
+# failed” —— broker 在启动后约 21 秒自杀，业务侧只看到 9093 拒连(2026-08-24 事故:matchmaker /
+# matchmaker_pve / battle_result 三个强依赖 Kafka 的服务同时 exit 1)。脏比越过阈值后每次启动必复现。
+# 关掉 cleaner 后 __consumer_offsets 不再压缩、只会缓慢变大，策划机用 -Action reset 清即可；保留期
+# 删除路径(log.retention.hours)不走这条 rename，实测已连续删了多天没触发 log dir 失败。
+# 只服务本机 127.0.0.1 单节点免 Docker 链;Docker/K8s/线上跑 Linux，不带这行。
+log.cleaner.enable=false
 "@ | Set-Content -LiteralPath (Join-Path $CfgDir 'kafka.properties') -Encoding utf8NoBOM
 }
 
