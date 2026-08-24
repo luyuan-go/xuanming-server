@@ -220,6 +220,8 @@ storage directory 标记为 failed。配置只有一个 `log.dirs`，所以 brok
 - `598e1c15` 在策划机免 Docker Kafka 配置中增加 `log.cleaner.enable=false`，避免 Windows 上
   `__consumer_offsets` 压缩阶段的 `.timeindex.cleaned` → `.timeindex.swap` rename 再次触发唯一
   `log.dirs` 失效；Docker、K8s 与线上 Linux 配置不受影响。
+- `a5768be8` 同时禁用按时间删段，`e4f40330` 为 Kafka JVM 显式复用已验证支持 AF_UNIX 的临时目录，
+  分别覆盖 `.timeindex` 删除 rename 与 JDK 21 `java.nio.channels.Pipe` 初始化失败这两条 Windows 路径。
 - `tools/scripts/tests/localinfra_kafka_planner_tuning_contract_test.ps1` 已通过，证明生成配置包含该开关。
 - 这只是策划机缓解措施，不等于事故关闭：尚未完成原数据目录受控恢复、topic/offset 对账、故障注入、
   运行期退出检测和玩家 E2E，以下关闭闸保持未勾选。
