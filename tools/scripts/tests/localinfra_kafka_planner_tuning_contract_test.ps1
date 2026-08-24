@@ -22,4 +22,11 @@ Assert-Contains '(?m)^metadata\.max\.idle\.interval\.ms=0\s*$' `
 Assert-Contains '(?m)^log\.cleaner\.enable=false\s*$' `
     'Windows 上 log cleaner 压缩 __consumer_offsets 时的 rename 会失败，Kafka 把它当致命错误直接关 broker，策划机必须关掉 cleaner'
 
+Assert-Contains '(?m)^log\.retention\.ms=-1\s*$' `
+    'Windows 上保留期删段的 rename 同样会失败并被 Kafka 当致命错误关掉 broker，策划机必须禁用按时间删段'
+
+if ($text -match '(?m)^log\.retention\.hours=') {
+    throw 'ASSERT FAILED: log.retention.hours 会重新打开按时间删段,策划机 Windows 链必须只用 log.retention.ms=-1'
+}
+
 Write-Host '[PASS] 策划本机 Kafka 启动调优契约通过' -ForegroundColor Green

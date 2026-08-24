@@ -2190,16 +2190,20 @@ broker.heartbeat.interval.ms=500
 metadata.max.idle.interval.ms=0
 num.network.threads=3
 num.io.threads=8
-log.retention.hours=48
-# Windows 不允许重命名本进程自己 mmap 着的索引文件。log cleaner 压缩 __consumer_offsets 时要把
-# *.timeindex.cleaned 改名成 *.timeindex.swap，在 Windows 上必然拿到“文件被另一进程占用”；而 Kafka
-# 把 log dir 的 IOException 当致命错误，单 log dir 直接“Shutdown broker because all log dirs have
-# failed” —— broker 在启动后约 21 秒自杀，业务侧只看到 9093 拒连(2026-08-24 事故:matchmaker /
-# matchmaker_pve / battle_result 三个强依赖 Kafka 的服务同时 exit 1)。脏比越过阈值后每次启动必复现。
-# 关掉 cleaner 后 __consumer_offsets 不再压缩、只会缓慢变大，策划机用 -Action reset 清即可；保留期
-# 删除路径(log.retention.hours)不走这条 rename，实测已连续删了多天没触发 log dir 失败。
-# 只服务本机 127.0.0.1 单节点免 Docker 链;Docker/K8s/线上跑 Linux，不带这行。
+# Windows 不允许重命名本进程自己 mmap 着的索引文件(*.index / *.timeindex),而 Kafka 删段与压缩
+# 都是“先改名、后关映射”:
+#   压缩(log cleaner):*.timeindex.cleaned -> *.timeindex.swap
+#   保留期删段        :*.timeindex        -> *.timeindex.deleted
+# 两条路径在 Windows 上都必然拿到“文件被另一进程占用”,而 Kafka 把 log dir 的 IOException 当致命
+# 错误 —— 单 log dir 直接“Shutdown broker because all log dirs have failed”,broker 在启动后几十秒
+# 自杀,业务侧只看到 9093 拒连(2026-08-24 事故:matchmaker / matchmaker_pve / battle_result 三个
+# 强依赖 Kafka 的服务同时 exit 1;压缩路径与保留期路径各实测触发过一次,先炸哪条只看谁先跑到)。
+# 所以策划机这条免 Docker 链**不允许 Kafka 删任何段文件**:关掉 cleaner + 保留期设为无限。
+# 代价是 data/kafka 只增不减,由 -Action reset 清;本机单节点开发链真实消息量很小,目录里的大头是
+# 每个段预分配的 10MB 索引文件,不是消息本身。
+# 只服务本机 127.0.0.1 免 Docker 链;Docker/K8s/线上跑 Linux 没这个限制,不带这两行。
 log.cleaner.enable=false
+log.retention.ms=-1
 "@ | Set-Content -LiteralPath (Join-Path $CfgDir 'kafka.properties') -Encoding utf8NoBOM
 }
 
