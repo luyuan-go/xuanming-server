@@ -59,7 +59,17 @@ func TestAuctionRepo_MySQL(t *testing.T) {
 			t.Errorf("关闭 MySQL admin: %v", err)
 		}
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// 这一个预算罩住**整段** setup:Ping + 2×CREATE DATABASE + 2×全量 schema 载入,
+	// 是累计值而不是单条超时 —— 每多一条 DDL,前面每条能用的时间就少一截。
+	//
+	// 2026-08-24 backend-dev #48 就是这么红的:同机同时在跑 UE 编译(MSBuild 38 个 worker),
+	// 整场 CI 慢 6~15 倍(inventory data 6.1s→93.9s),本测试 1.38s→14.66s,
+	// 前四条 DDL 吃光 10s,第二次 schema 载入直接 context deadline exceeded。
+	// 代码一个字没改(那次构建与上一次只差一个 dev_all_python.ps1 的提交),纯粹是被同机负载挤死的。
+	//
+	// 放宽到 60s 不会让"真挂死"变得难发现:DSN 已经带了 Timeout=5s / ReadTimeout=10s /
+	// WriteTimeout=10s,单条网络操作卡住会先被驱动超时打断,本预算只是兜住累计时长。
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := admin.PingContext(ctx); err != nil {
 		t.Fatalf("连接 MySQL: %v", err)

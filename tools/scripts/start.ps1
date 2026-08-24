@@ -4316,6 +4316,9 @@ function Invoke-Local {
         }
     }
 
+    # 换栈前先看对侧还占不占着 20001-20022(两条栈的停止都只认自己那一侧,见函数注释)。
+    Assert-NoCrossStackPortHolder -Wanted $(if ($Python) { 'python' } else { 'go' })
+
     if ($Python) {
         # Python 栈:导表已由上方前置的 Invoke-ConfigTableGen 完成($deferPlannerTableGeneration
         # 对 -Python 恒 false),没有 go 栈的并行 staging 批次,不传 -GenerateTables。
@@ -4458,6 +4461,84 @@ function Test-LocalTcpPort([int]$Port) {
 
 # Get-LocalServiceProcess:只接受 run_services 写下的 PID + 当前 exact exe。
 # 不能按进程名取第一个：并发启动、旧残留或另一份工作区都可能有同名服务。
+# Get-HubAllocatorLogHint:排障指引里那条日志路径必须跟着当前栈走。
+# Go 栈写 run/dev/logs/hub_allocator.err.log;Python 栈由 run_stack.py 把 stderr 并进 stdout,
+# 只有 run/dev/logs/python/hub_allocator.log,**没有** .err.log。而磁盘上往往还躺着一份 Go 时代的
+# 同名陈旧文件 —— 指错的后果不是"链接失效",是让人读到另一条栈的旧错误后下错判断(2026-08-24)。
+function Get-HubAllocatorLogHint {
+    if ($Python) { return 'run/dev/logs/python/hub_allocator.log' }
+    return 'run/dev/logs/hub_allocator.err.log'
+}
+# Assert-NoCrossStackPortHolder:换栈前的对侧占位预检。
+#
+# 两条栈跑同一批端口 20001-20022,而各自的「停止」都只认得自己那一侧:run_stack.py 的 --stop
+# 只匹配 python.exe,看不见 run/dev/bin/<name>.exe;run_services.ps1 的 Clear-PortSquatter 只杀
+# exact 的 <name>.exe,对 python.exe 只打 WARN。于是「上一条栈没停干净就换栈」会一路走到 spawn,
+# 22 个服务逐个 bind 失败,表里 22 行 DEAD exit=1 而 LISTENING 却是 True(听的是对侧)——
+# 最难读的一种失败(2026-08-24 现场)。
+#
+# 这里只做判定与指路,**不替对方做停止**:停掉另一条栈的 22 个服务(及其本机 DS)是操作者才该
+# 拍板的动作,与 run_services.ps1 对 foreign listener 的 fail-closed 口径一致。
+function Assert-NoCrossStackPortHolder {
+    param([Parameter(Mandatory)][ValidateSet('go', 'python')][string]$Wanted)
+
+    $listeners = @()
+    try { $listeners = @(Get-PandoraTcpListenerRecords) } catch { return }   # 取不到就不阻断,交给后续真实 bind
+    if ($listeners.Count -eq 0) { return }
+
+    $goBin = ""
+    try { $goBin = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "run/dev/bin")) } catch { return }
+    $venv = ""
+    try { $venv = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "python/.venv/Scripts/python.exe")) } catch { $venv = "" }
+
+    $hits = @()
+    foreach ($rec in $listeners) {
+        $port = [int]$rec.LocalPort
+        if ($port -lt 20001 -or $port -gt 20022) { continue }
+        $ownerPid = [int]$rec.OwningProcess
+        if ($ownerPid -le 0) { continue }
+        $proc = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+        if (-not $proc) { continue }
+        $exe = $null
+        try { $exe = $proc.Path } catch { $exe = $null }
+        if ([string]::IsNullOrWhiteSpace($exe)) { continue }
+        try { $exe = [IO.Path]::GetFullPath($exe) } catch { continue }
+
+        # 只认本工作区的两种形态;别人占端口不归这里管(那由既有的 foreign listener 预检处理)。
+        $isGo = $exe.StartsWith($goBin + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+        $isPy = ($venv -ne "") -and [string]::Equals($exe, $venv, [StringComparison]::OrdinalIgnoreCase)
+        if (-not $isPy -and -not $isGo -and $venv -ne "") {
+            # trampoline 形态:真解释器映像在 venv 之外,靠父进程是 venv python 认亲。
+            try {
+                $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$ownerPid" -ErrorAction Stop
+                $par = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$cim.ParentProcessId)" -ErrorAction Stop
+                if ($par -and -not [string]::IsNullOrWhiteSpace($par.ExecutablePath)) {
+                    $parentExe = [IO.Path]::GetFullPath($par.ExecutablePath)
+                    if ([string]::Equals($parentExe, $venv, [StringComparison]::OrdinalIgnoreCase)) { $isPy = $true }
+                }
+            } catch { }
+        }
+
+        if ($isGo) { $holder = "go" } elseif ($isPy) { $holder = "python" } else { continue }
+        if ($holder -eq $Wanted) { continue }   # 自己那一侧的残留由各自的停止 / 复用逻辑处理
+        $hits += [pscustomobject]@{ Port = $port; HolderPid = $ownerPid; Exe = $exe; Holder = $holder }
+    }
+    if ($hits.Count -eq 0) { return }
+
+    $other = $hits[0].Holder
+    if ($other -eq "go") {
+        $stopCmd = "策划一键停止业务-保留基础设施-免Docker-测试版.cmd"
+    } else {
+        $stopCmd = "Python策划一键停止业务-保留基础设施-免Docker-测试版.cmd"
+    }
+    Write-Err ("要起 {0} 栈,但 20001-20022 里有 {1} 个端口正被本工作区的 {2} 栈占着;继续下去只会得到一片 DEAD exit=1。" -f $Wanted, $hits.Count, $other)
+    foreach ($h in ($hits | Sort-Object Port | Select-Object -First 5)) {
+        Write-Host ("    :{0} PID {1} {2}" -f $h.Port, $h.HolderPid, $h.Exe) -ForegroundColor DarkGray
+    }
+    if ($hits.Count -gt 5) { Write-Host ("    ...另有 {0} 个" -f ($hits.Count - 5)) -ForegroundColor DarkGray }
+    Write-Err "先停对侧再重来(基础设施会保留,不用重起):$stopCmd"
+    exit 1
+}
 # Get-LocalPythonServiceProcess:Python 栈的 exact 服务进程。
 # Python 栈由 run stack 直接 spawn,**不落 .pid 文件**,所以身份证明只能从进程自身取。
 # 两个坑必须一起处理:
@@ -4571,14 +4652,14 @@ function Wait-LocalHubDsReady {
         $ds = Get-LocalDsChildProcess $hub.Id
         if ($ds) { break }
         if ($hub.HasExited) {
-            Write-Err "hub_allocator 自己退出了。看日志:run/dev/logs/hub_allocator.err.log"
+            Write-Err "hub_allocator 自己退出了。看日志:$(Get-HubAllocatorLogHint)"
             return $false
         }
         Start-Sleep -Seconds 1
     }
     if (-not $ds) {
         Write-Warn "${SpawnTimeoutSeconds}s 内 hub_allocator 没拉起 Hub DS。"
-        Write-Info "看日志:run/dev/logs/hub_allocator.err.log(搜 local_hub_ds_start_failed)"
+        Write-Info "看日志:$(Get-HubAllocatorLogHint)(搜 local_hub_ds_start_failed)"
         return $false
     }
     Write-Ok ("Hub DS 进程已拉起(PID {0},+{1:n0}s)。" -f $ds.ProcessId, $sw.Elapsed.TotalSeconds)

@@ -1113,11 +1113,19 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901 —— 与
             「心跳超时的分片永远不转 draining」而没有任何报错 —— 玩家被持续路由到
             一台已经死掉的 Hub。
             """
-            await safego.loop(
-                "hub_heartbeat_sweep",
-                cfg.hub.sweep_interval_td().total_seconds(),
-                uc.sweep_once,
-            )
+            # 必须挂 uc.run_heartbeat_sweep,不能挂 uc.sweep_once:sweep_once 只是那一拍里
+            # 的第 3 步(过期分片转 draining);reconcile_owner_cleanups /
+            # reconcile_shard_topology / reconcile_fleet_replicas 以及写者门控全都在
+            # heartbeat_sweep_tick 里,而 run_heartbeat_sweep 才是它的驱动器(自带
+            # safego.loop + _SweepState,以及与 Go 逐字节一致的
+            # hub_heartbeat_sweep_started/stopped 事件)。
+            #
+            # 挂成 sweep_once 的后果:本机 Hub DS 永远不被拉起 —— 它靠
+            # reconcile_shard_topology -> list_shards -> ensure_started 这条懒拉起链;
+            # 而且写者门控也在 tick 里,整条链失效时一条日志都不会打,表现为 allocator
+            # 一切正常、一键启动却恒报「90s 内没拉起 Hub DS」(2026-08-24 事故)。
+            # ds_allocator/biz_sweep.py:355 一直是对的写法。
+            await uc.run_heartbeat_sweep()
 
         background: list = [heartbeat_sweep]
         if fence is not None:
