@@ -1,6 +1,6 @@
 {
-  "version": 20260824002,
-  "generated_at_ms": 1787559866453,
+  "version": 20260824003,
+  "generated_at_ms": 1787562788275,
   "generator": "configtable-gen@0.1.0",
   "source_rev": "svn-r2256",
   "tables": [
@@ -155,8 +155,8 @@
       "name": "shop",
       "file": "shop.json",
       "proto": "pandora.config.v1.ShopTableData",
-      "checksum": "sha256:e5a3532e40472bca2ed1e44469be4d8659ec9bd362123d52ef62ca0d6bd0dd91",
-      "rows": 11
+      "checksum": "sha256:a8545b73fb44b7a089b04415093d393522b6bced8cf412a246a44c058f238f69",
+      "rows": 125
     },
     {
       "name": "skill_bullet",
