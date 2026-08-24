@@ -35,6 +35,10 @@
 //   - 修正系数(W)/ 生效次数(X)是 svn-r1844 新增的两列,客户端 FCfgSkill 至今**没有**对应成员
 //     (2026-08-06 查 Public/Table/CfgSkill.h),所以这两列只能按实测取值定型,不是照抄客户端:
 //     修正系数含 0.333333333333333 这类小数 → float;生效次数取值 1/3/5/10 全为正整数 → uint32。
+//   - 必杀技(svn 新增列,列序 I,插在 冷却时长 与 禁止移动 之间)取值只有 0/1 且列名即开关 → bool;
+//     客户端 FCfgSkill::bIsKillerSkill(Bool 默认 0),同 disable_move 不在服务端另设默认。
+//     插在列序 I 迫使 disable_move..effect_description 字段号顺次后移(9→10 … 27→28);
+//     首次生产上线日期未填写(§3.1),此重编号在整批刷新闭环内合法。
 
 syntax = "proto3";
 
@@ -42,7 +46,7 @@ package pandora.config.v1;
 
 import "pandora/config/v1/excel.proto";
 
-// SkillRow 技能表一行(列序 = 字段号序 = 表头 A..X)。
+// SkillRow 技能表一行(列序 = 字段号序 = 表头 A..AB)。
 message SkillRow {
   // ID(主键,即全链路 skill_id)。实测 63 行互不重复:1(智控自动攻击)、
   //   100101~101031(英雄技能,编制为「角色段×100+技能位×10+段序」)、200101~210131(怪物 / BOSS 技能)。
@@ -69,74 +73,79 @@ message SkillRow {
   // 冷却时长(秒;0 = 无冷却)。实测 53/63 行有值,取值 1/3/6/8/10/20/30 目前全是整数,
   //   但客户端是 float CdDuration 且秒级冷却天然可带小数 → float(见文件头类型判定)。
   float cd_duration = 8 [(excel_col) = "冷却时长"];
+  // 必杀技(1=该技能是必杀技 / 0=普通技能;源表 svn 新增列,列序 I,插在「冷却时长」与「禁止移动」之间)。
+  //   客户端 FCfgSkill::bIsKillerSkill(Bool)。空单元格取 false(= 非必杀技),同 disable_move /
+  //   need_fight_state **不设 (excel_default)**:服务端不消费本列,默认口径留客户端一份,
+  //   不在服务端另立一个可能漂移的事实源(§9.22)。
+  bool is_killer_skill = 9 [(excel_col) = "必杀技"];
   // 禁止移动(1=技能执行期间禁止移动 / 0=不禁止;源表注「1:禁止(默认)」)。
   //   实测 19/63 行填 0,其余留空。空单元格取 false(= 不禁止),**不设 (excel_default) = "1"**:
   //   源表注的"默认"与客户端构造默认(DisableMove=true)是客户端侧口径,服务端不消费本列,
   //   凭注释在服务端另造一份默认值只会多出一个可能漂移的事实源(§9.22)。
-  bool disable_move = 9 [(excel_col) = "禁止移动"];
+  bool disable_move = 10 [(excel_col) = "禁止移动"];
   // 能力资源(UE GameplayAbility 类路径,如 /Game/.../GA_Boris_Attack01.GA_Boris_Attack01_C)。
   //   实测 63 行全填且全部以 "/" 开头;没有它这行技能毫无意义 → required + 前缀约束。
-  string ability_path = 10 [(excel_col) = "能力资源", (excel_required) = true, (excel_prefix) = "/"];
+  string ability_path = 11 [(excel_col) = "能力资源", (excel_required) = true, (excel_prefix) = "/"];
   // 目标选择模式(如何挑选技能目标)。实测取值 0 / 1 / 2 / 3,48/63 行有值。
   //   0 是合法取值(见 ID=101031 行显式填 0),故必须用 uint32 而非 enum。
-  uint32 target_select_mode = 11 [(excel_col) = "目标选择模式"];
+  uint32 target_select_mode = 12 [(excel_col) = "目标选择模式"];
   // 方位类型(仅目标选择模式为「方位」时有效;源表注 1:子弹 / 2:圆形,实测另有 4)。
   //   实测 13/63 行有值,取值 1 / 2 / 4。
-  uint32 orient_target_type = 12 [(excel_col) = "方位类型"];
+  uint32 orient_target_type = 13 [(excel_col) = "方位类型"];
   // 方位配置Id(按「方位类型」索引不同的方位子表:j_技能_方位类型_子弹 / _圆形 / _扇形 / _矩形)。
   //   实测 13/63 行有值(1 / 5 / 6 / 8 / 101 / 106 / 100311 / 100321 / 100421 / 100921)。
   //   刻意**不标 (excel_fk)**:目标表随「方位类型」变化,不是单一目标表,且那几张方位子表
   //   尚未登记进 configtable;标了会让整批生成失败。
-  uint32 orient_target_id = 13 [(excel_col) = "方位配置Id"];
+  uint32 orient_target_id = 14 [(excel_col) = "方位配置Id"];
   // 阵营(目标阵营位掩码;源表注 0:无要求 / 1:中立 / 2:友方 / 4:敌人(默认))。
   //   实测 13/63 行有值且全为 0(= 无要求)——0 合法,故用 uint32 不用 enum;
   //   客户端 FCfgSkill::TargetCamp 是 ECampGroup 位掩码,后续可能出现 3 / 6 这类组合值。
-  uint32 target_camp = 14 [(excel_col) = "阵营"];
+  uint32 target_camp = 15 [(excel_col) = "阵营"];
   // 技能施放范围(厘米;源表注「*默认0厘米」「*小于1则无限制」)。实测 46/63 行有值,
   //   取值 100~99999 目前全是整数,但客户端是 float UseDis(距离量纲允许小数)→ float。
-  float use_distance = 15 [(excel_col) = "技能施放范围"];
+  float use_distance = 16 [(excel_col) = "技能施放范围"];
   // 对目标仇恨值(源表注「默认0」)。实测 63 行全空 —— 无数据可判型,
   //   按客户端 FCfgSkill::HateToTarget(float)定型。
-  float hate_to_target = 16 [(excel_col) = "对目标仇恨值"];
+  float hate_to_target = 17 [(excel_col) = "对目标仇恨值"];
   // 对敌人仇恨值(对仇恨列表中其它敌人追加的仇恨;源表注「默认0」)。实测 63 行全空,同上取 float。
-  float hate_to_enemy = 17 [(excel_col) = "对敌人仇恨值"];
+  float hate_to_enemy = 18 [(excel_col) = "对敌人仇恨值"];
   // 需要战斗状态(1=必须处于战斗状态才能释放 / 0=否;源表注「0:否(默认)」)。
   //   实测 63 行全空 → 取零值 false,与源表标注的默认一致,无需 (excel_default)。
-  bool need_fight_state = 18 [(excel_col) = "需要战斗状态"];
+  bool need_fight_state = 19 [(excel_col) = "需要战斗状态"];
   // 转向模式(能力激活期间如何转向;源表注 0:无 / 1:立即转向目标(默认) / 2:立即转向输入方向)。
   //   实测 7/63 行有值,取值 0 / 1。0 是合法取值 → uint32;同 disable_move,不在服务端另设默认。
-  uint32 rot_mode = 19 [(excel_col) = "转向模式"];
+  uint32 rot_mode = 20 [(excel_col) = "转向模式"];
   // 技能伤害系数(伤害公式里的倍率;源表注「默认1」)。实测 49/63 行有值,
   //   含 0.2 / 0.3 / 0.35 / 0.4 / 0.5 / 0.65 / 0.7 / 0.8 / 1.2 / 1.5 等小数 → float。
-  float damage_rate = 20 [(excel_col) = "技能伤害系数"];
+  float damage_rate = 21 [(excel_col) = "技能伤害系数"];
   // 技能伤害固定值(伤害公式里的常数项;源表注「默认0」)。实测 10/63 行有值(5/10/20/25/80),
   //   当前全是整数,但客户端是 float DamageValue,与 damage_rate 同属伤害公式入参 → 同族用 float。
-  float damage_value = 21 [(excel_col) = "技能伤害固定值"];
+  float damage_value = 22 [(excel_col) = "技能伤害固定值"];
   // 对自身应用Buff(技能激活时对自身应用的 buff 列表,客户端是 TArray<FName>,
   //   表里按多值列写法填写)。实测 63 行全空;因为是**列表**而非单个 ID,用 string 承载原始文本,
   //   不定成 uint32(一旦填两个 buff 就会解析失败)。
-  string apply_buffs_to_self = 22 [(excel_col) = "对自身应用Buff"];
+  string apply_buffs_to_self = 23 [(excel_col) = "对自身应用Buff"];
   // 修正系数(svn-r1844 新增,与「生效次数」成对出现)。实测 62/63 行有值(只有 ID=1 那行留空),
   //   取值 0 / 0.1 / 0.16 / 0.333333333333333 / 0.5 / 0.8 / 1 —— **含小数,只能是 float**;
   //   定成整数类型会让 0.1 这类值在导表阶段直接把整批打挂。
   //   实测与「生效次数」的乘积恒落在 0..1(0.1×10 / 0.16×5 / 0.333…×3 / 0.8×1 / 0×1),形态像
   //   「单次占比 × 次数」,但这里只按事实登记列:伤害结算权威在 DS(§9.6),服务端不据此算任何数值。
   //   不标 required —— ID=1(智控自动攻击)整行只填了寥寥几列,设必填会把导表卡死在一行占位数据上。
-  float correction_rate = 23 [(excel_col) = "修正系数"];
+  float correction_rate = 24 [(excel_col) = "修正系数"];
   // 生效次数(svn-r1844 新增;同一次施放里该技能结算的次数)。实测 62/63 行有值(同样只有 ID=1 留空),
   //   取值 1 / 3 / 5 / 10 全为正整数,是纯计数 → uint32(CLAUDE.md §5.12)。
   //   不设 (excel_default) = "1":源表第 2-6 行的说明区没给这两列写任何默认值口径,
   //   凭猜在服务端立一份默认只会多出一个会漂移的事实源(§9.22)。
-  uint32 effect_count = 24 [(excel_col) = "生效次数"];
+  uint32 effect_count = 25 [(excel_col) = "生效次数"];
   // 伤害显示(configtable-sync 追加:xlsx 新增列;类型 / 命名来源:人工指定(-sync-col))。
   // 服务端决策未自动填:如需 (excel_required) / (excel_prefix) / (excel_fk) 请人工补,并补本列业务注释。
-  uint32 damage_display = 25 [(excel_col) = "伤害显示"];
+  uint32 damage_display = 26 [(excel_col) = "伤害显示"];
   // 治疗显示(configtable-sync 追加:xlsx 新增列;类型 / 命名来源:人工指定(-sync-col))。
   // 服务端决策未自动填:如需 (excel_required) / (excel_prefix) / (excel_fk) 请人工补,并补本列业务注释。
-  uint32 heal_display = 26 [(excel_col) = "治疗显示"];
+  uint32 heal_display = 27 [(excel_col) = "治疗显示"];
   // 效果说明(configtable-sync 追加:xlsx 新增列;类型 / 命名来源:人工指定(-sync-col))。
   // 服务端决策未自动填:如需 (excel_required) / (excel_prefix) / (excel_fk) 请人工补,并补本列业务注释。
-  string effect_description = 27 [(excel_col) = "效果说明"];
+  string effect_description = 28 [(excel_col) = "效果说明"];
 }
 
 // SkillTableData 技能表整表容器(dist/skill.json 的根对象;excel_file 注解 = 导表登记)。
