@@ -152,8 +152,11 @@ func (u *PlayerUsecase) pushIsLeader(ctx context.Context) bool {
 
 func (u *PlayerUsecase) RunPushOutboxPublisher(ctx context.Context) {
 	if u.expPusher == nil {
+		// 2026-08-24 起这里**只剩** kafka.brokers 未配这一档(刻意禁用推送的开发档)。
+		// 「配了 brokers 但启动时连不上」已改由 kafkax.LazyProducer 承接:pusher 恒非 nil,
+		// 发布器照常起,投递失败按拍重试,Kafka 恢复即自动排空 —— 不再需要重启进程。
 		plog.With(ctx).Infow("msg", "push_outbox_publisher_disabled",
-			"hint", "kafka producer 未注入 → 经验推送出箱积压不丢,producer 可用后重启补发")
+			"hint", "kafka.brokers 未配 → 经验推送禁用;出箱积压不丢,配上 brokers 重启即排空")
 		return
 	}
 	interval := u.cfg.PushOutboxIntervalOrDefault()

@@ -18,6 +18,7 @@ type ownerEdgeRepo struct {
 	admitCalls   int
 	renewCalls   int
 	releaseCalls int
+	releaseSkew  time.Duration
 	sweepCalls   int
 
 	queryPlayerID  uint64
@@ -67,11 +68,12 @@ func (r *ownerEdgeRepo) RenewInstanceLease(context.Context, data.OwnerTarget, ti
 	return 0, nil
 }
 
-func (r *ownerEdgeRepo) Release(_ context.Context, playerID, ownerEpoch uint64, operationID string) (data.OwnerRecord, error) {
+func (r *ownerEdgeRepo) Release(_ context.Context, playerID, ownerEpoch uint64, operationID string, skewMargin time.Duration) (data.OwnerRecord, error) {
 	r.releaseCalls++
 	r.releasePlayer = playerID
 	r.releaseEpoch = ownerEpoch
 	r.releaseOp = operationID
+	r.releaseSkew = skewMargin
 	return r.releaseRec, r.releaseErr
 }
 

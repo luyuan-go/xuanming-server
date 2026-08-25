@@ -51,7 +51,7 @@ func (r *ownerServiceRepo) RenewInstanceLease(context.Context, data.OwnerTarget,
 	return r.renewDeadline, r.renewErr
 }
 
-func (r *ownerServiceRepo) Release(context.Context, uint64, uint64, string) (data.OwnerRecord, error) {
+func (r *ownerServiceRepo) Release(context.Context, uint64, uint64, string, time.Duration) (data.OwnerRecord, error) {
 	r.calls++
 	return r.releaseRec, r.releaseErr
 }

@@ -366,23 +366,21 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         pusher = None
         topic = kafka_topics.TOPIC_MISSION_UPDATE
         if cfg.kafka.brokers:
-            try:
-                producer = kafkax.KeyOrderedProducer(
-                    kafkax.producer_conf_from(cfg.kafka),
-                    topic,
-                )
-            except asyncio.CancelledError:
-                raise
-            except BaseException as exc:  # noqa: BLE001
-                logger.warning(
-                    "kafka_producer_init_failed",
-                    err=str(exc),
-                    hint="mission push disabled until kafka is available; outbox will accumulate",
-                )
-                producer = None
-            else:
-                pusher = MissionUpdatePusher(producer)
-                logger.info("kafka_producer_ready", topic=topic)
+            # 惰性 producer(2026-08-24,与 Go 侧 cmd/mission/main.go 同拍):装配期不建连。
+            #
+            # 旧实现在这里一次性 KeyOrderedProducer,而 kafka-python 构造期就 bootstrap 连接 ——
+            # 启动时 Kafka 恰好不可用就再也没有第二次机会:只打一条 WARN、pusher 保持 None、
+            # RunPushPublisher 直接 return **连任务都不起**,Kafka 后来恢复也不补发,必须重启
+            # 进程才排空。而 mission_push_outbox 堆积此前没有任何告警,这一档完全静默。
+            # 改惰性后:投递失败 → 发布器中断本轮 → 下一拍重试 → Kafka 恢复即自动排空。
+            producer = kafkax.LazyProducer(kafkax.producer_conf_from(cfg.kafka), topic)
+            pusher = MissionUpdatePusher(producer)
+            logger.info(
+                "kafka_producer_ready",
+                topic=topic,
+                mode="lazy",
+                hint="惰性连接:broker 此刻不可达也不阻断启动,发布器按拍重试直到接通",
+            )
         else:
             logger.warning("kafka_brokers_empty", hint="mission push disabled")
 

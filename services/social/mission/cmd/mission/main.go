@@ -144,15 +144,19 @@ func main() {
 	// 4. kafka producer → 推送(弱依赖:未配则推送禁用,出箱堆积由 dbcheck outbox 检查揭示)
 	var pusher biz.Pusher
 	if len(cfg.Kafka.Brokers) > 0 {
-		producer, perr := kafkax.NewKeyOrderedProducer(cfg.Kafka, kafkax.TopicMissionUpdate)
-		if perr != nil {
-			helper.Warnw("msg", "kafka_producer_init_failed", "err", perr,
-				"hint", "mission push disabled until kafka is available; outbox will accumulate")
-		} else {
-			defer func() { _ = producer.Close() }()
-			pusher = &missionUpdatePusher{p: producer}
-			helper.Infow("msg", "kafka_producer_ready", "topic", kafkax.TopicMissionUpdate)
-		}
+		// 惰性 producer(2026-08-24):装配期不拨号,首次投递才连。
+		//
+		// 旧实现在这里一次性 NewKeyOrderedProducer,而它构造期就拨号 —— 启动时 Kafka 恰好
+		// 不可用就再也没有第二次机会:只打一条 Warn、pusher 保持 nil、RunPushPublisher
+		// 直接 return **连 goroutine 都不起**,Kafka 后来恢复也不补发,必须重启进程才排空。
+		// 而 mission_push_outbox 堆积此前没有任何告警,这一档在生产上完全静默。
+		// 改惰性后:投递失败 → 发布器中断本轮 → 下一拍重试 → Kafka 恢复即自动排空。
+		producer := kafkax.NewLazyProducer(cfg.Kafka, kafkax.TopicMissionUpdate)
+		defer func() { _ = producer.Close() }()
+		pusher = &missionUpdatePusher{p: producer}
+		helper.Infow("msg", "kafka_producer_ready", "topic", kafkax.TopicMissionUpdate,
+			"mode", "lazy",
+			"hint", "惰性连接:broker 此刻不可达也不阻断启动,发布器按拍重试直到接通")
 	} else {
 		helper.Warnw("msg", "kafka_brokers_empty", "hint", "mission push disabled")
 	}
@@ -308,7 +312,7 @@ func main() {
 // kafka key = player_id(不变量 §9:同玩家事件保序;push 服务按 key 路由到该玩家 stream);
 // payload 是事务出箱里已序列化的 MissionUpdateEvent,直接 SendRaw 透传。
 type missionUpdatePusher struct {
-	p *kafkax.KeyOrderedProducer
+	p *kafkax.LazyProducer
 }
 
 func (k *missionUpdatePusher) PushMissionUpdate(ctx context.Context, playerID uint64, payload []byte) error {

@@ -874,6 +874,12 @@ class HeartbeatMixin:
             "owner_track": "",
             "owner_epoch": 0,
             "became_ready": False,
+            # 正常结算收口(2026-08-24,见下方 became_ended 消费点)。本跳心跳把 state
+            # 首次写成 ended 时置位,同一 CAS 内捕获释放 owner 所需的 exact 实例身份。
+            "became_ended": False,
+            "ended_pod": "",
+            "ended_uid": "",
+            "ended_players": [],
             # 断线重连(docs/design/battle-reconnect.md §2.2):捕获对局在
             # ready/running 时的玩家名单 + ds_addr,心跳成功后续期这些玩家的
             # BATTLE 位置 TTL。回调可能因 CAS 冲突重跑,故每轮重置。
@@ -919,6 +925,10 @@ class HeartbeatMixin:
         def _apply(b) -> None:  # noqa: ANN001, C901, PLR0912 —— dspb.BattleStorageRecord
             # CAS 冲突重跑时以最后一轮为准,每轮重置出参标记
             st["refresh_active"] = False
+            st["became_ended"] = False
+            st["ended_pod"] = ""
+            st["ended_uid"] = ""
+            st["ended_players"] = []
             st["empty_abandoned"] = False
             st["abandon_no_show"] = False
             st["abandon_roster_incomplete"] = False
@@ -952,6 +962,46 @@ class HeartbeatMixin:
             # 得以放行 matchmaker。
             if prev_state == STATE_WARMING and b.state in (STATE_READY, STATE_RUNNING):
                 st["became_ready"] = True
+            # ready/running → ended:DS 上报对局正常结算的那一跳。**这一跳就是收口点。**
+            #
+            # 为什么不能等下一跳:owner 释放此前只挂在下方 `HeartbeatTerminalError`
+            # 分支上,而那个分支的触发条件是「心跳到达时 record 已是 ended」——
+            # 也就是要**第二跳**。可 DS 拿到 ended ACK 后立即 StopBattleHeartbeat
+            # (PandoraBattleGameMode.cpp,ended terminal ACK 分支),第二跳永远不来。
+            # biz_sweep.py 的 ended 分支注释早已写明这个事实(「无第二跳,心跳终态
+            # kill_stranded_ds 永不触发」),与该分支自己的注释互相矛盾 —— sweep 那条
+            # 才符合实测。后果:正常结算后 owner 永远停在 BATTLE 指向一台已结算的 DS,
+            # 客户端连查 3 次拿不到完整落点 → authority_entry_terminal → 打完一局被踢
+            # 回登录(2026-08-24 实测,两个客户端同时复现;sweep 的 ended 分支要等
+            # HeartbeatTimeout 才动,晚 2 分钟,且它也不释放 owner)。
+            #
+            # exactly-once:上方 `b.state in (STATE_ENDED, STATE_ABANDONED)` 已抛
+            # HeartbeatTerminalError,故走到这里 prev_state 必非终态,本条件天然只在
+            # 首次迁入 ended 时成立;CAS 重跑由 `_apply` 顶部的重置保证不串轮。
+            #
+            # 安全边界(★ 2026-08-24 重写,原文的论证是错的,见 INC-20260824-003):
+            #
+            # 原文写的是「边界①(须在实例回收确认后才释放)是为 abandoned 写的;ended
+            # 不同,该实例结构上不可能再接纳任何人 —— 没有双 DS 的可能」。**站不住**:
+            # 边界① 防的不是「旧 DS 会不会再接纳**新**玩家」,而是「旧 DS 是否还持有
+            # **旧**玩家」;而释放这个动作本身会把再入屏障的唯一判据(owner_type=BATTLE
+            # + instance_uid)抹掉,屏障塌成 0 —— 当时不是豁免了一道门,是把门删了。
+            #
+            # 现在成立的理由是另一条:owner 侧的 release 已改为在释放 BATTLE 归属时把
+            # max(now, 本实例租约截止)+skew **盖进 admit_not_before 留存**,
+            # begin_transition 取 max 认回来(services/owner/repo.py)。屏障不再随归属
+            # 指针消失,**任何时刻释放都不会让围栏消失**,本调用点也就不再需要
+            # 「回收已确认」这道前置门。边界②exact 身份门与③compare-delete 仍由 helper
+            # 自身保证,玩家已被分到别处时双重跳过。
+            #
+            # ⚠️ 这条依赖是硬的:若哪天把 owner 的屏障留存改掉,这里必须同步退回
+            # 「回收确认后才释放」,否则每一局正常结算都会打开一个脑裂窗口。
+            if b.state == STATE_ENDED:
+                st["became_ended"] = True
+                st["ended_pod"] = b.ds_pod_name
+                st["ended_uid"] = b.gameserver_uid
+                # ★ 必须 list(...) 复制:repeated 容器属于本轮事务对象,CAS 重跑换新对象。
+                st["ended_players"] = list(b.player_ids)
             # 空场跟踪:活跃对局无人 → 盖 empty_since_ms 起计时;有人回来 → 清零;
             # 持续空场超阈 → 同一 CAS 内直接写 abandoned(与心跳写回原子,无额外竞态窗口)。
             if b.state in (STATE_READY, STATE_RUNNING):
@@ -1068,14 +1118,26 @@ class HeartbeatMixin:
             # owner 精确释放(legacy 正常结算的**真实**收口点,2026-08-04;
             # INC-20260804-001 缺口⑦)。
             #
+            # ⚠️ 2026-08-24 更正:下面这段「DS 转 ended 并继续上报心跳」的前提**不成立**。
+            # DS 在 ended terminal ACK 之后立即 StopBattleHeartbeat,第二跳永远不来,
+            # 本分支在正常结算路径上**一次都不会触发**(实测 heartbeat_terminal_stop 零条)。
+            # 正常结算的真实收口点已上移到写回成功后的 `st["became_ended"]` 分支。
+            # 本分支保留:它仍覆盖「终态后仍有心跳到达」的情形(补偿重试、孤儿 DS、
+            # 未来改回持续心跳的 DS),释放是幂等的(helper 的 exact 身份门 + compare-delete),
+            # 重复调用不会误伤。
+            #
             # 为什么在这里而不是 release_battle:legacy 面对局正常结束(含 PVE 主动
             # 退出)后,battle_result 记账 + outbox 投递完成,DS 转 ended 并继续上报心跳,
             # 由**本分支**判终态并回收 DS —— `release_battle` 在这条流程里**一次都不会
             # 被调用**(实测计数 0)。此前把释放接在 release_battle 上是接错了位置,
             # owner 因此仍停在 BATTLE/ADMITTED 指向一台已销毁的 DS:login 的 query-first
             # 一直把玩家指回去,而对局记录已终态,客户端拿到的 TARGET 缺 match_id →
-            # `incomplete owner identity` → 撞 30s 线,玩家打完副本回不了大厅
+            # `incomplete owner identity` → 判弃回登录,玩家打完副本回不了大厅
             # (2026-08-04 两轮实测)。
+            # ⚠️ 2026-08-24 订正:原文"撞 30s 线"是错的。判弃不由时间窗触发,而由**连续
+            # 次数**触发 —— `IncompleteTargetStreakLimit = 3`(MyDsRecoveryCoordinator.h),
+            # 按退避 min(8,2^clamp(n,0,3))*rand(0.75,1.25) 折算约 2.25~3.75s;
+            # `AuthorityWaitWindowSeconds` 今天是 300.0 不是 30。别再按 30s 估算窗口。
             #
             # 时序满足 owner_release_abandoned_players_weak 的安全边界①:
             # kill_stranded_ds 已发起本实例回收,此后释放不会在旧 DS 仍可服务时
@@ -1158,6 +1220,43 @@ class HeartbeatMixin:
                 authority="legacy",
                 hint="mode=enforce 且 battle 代==配置代 才会真判弃;见 decision-revisit §5",
             )
+        if st["became_ended"]:
+            # 正常结算收口(2026-08-24):对局已终态,把仍指向本实例的 BATTLE 归属释放掉,
+            # 玩家的恢复查询才会落到「无归属 → 首次进场链 → Hub」。
+            #
+            # **同步 await**:释放要发生在本跳心跳响应返回之前 —— DS 一拿到 ended ACK
+            # 就 StopBattleHeartbeat,成功路径上**再没有第二跳**,这是唯一一次机会。
+            #
+            # ⚠️ 2026-08-24 订正,原注释这里给的两条理由都不准确:
+            #   · 「客户端结算后紧接着的 GetResumeContext」—— 正常结算主路径**不走**
+            #     GetResumeContext:terminal ACK → ClientPandoraBattleSettledReturnToHub
+            #     → ReturnToHubDs → IssueDSTicketScoped("hub", fence),而那道门
+            #     (_guard_hub_route_against_active_battle)读的是 locator presence +
+            #     battle 投影,**全程不读 owner**。GetResumeContext 只是兜底路。
+            #     ⇒ 本释放修的是**兜底路**(以及释放后新 Begin 的屏障口径),不是主路。
+            #   · 「fail-closed 只等 3 轮,约 6~10s」—— 3 轮对,秒数错:按退避
+            #     min(8,2^clamp(n,0,3))*rand(0.75,1.25) 折算约 2.25~3.75s。
+            #
+            # 弱依赖:helper 内部失败只告警。sweep 的 ended 分支会再释放一次,但那要晚
+            # 一个 heartbeat_timeout(dev 档 120s)—— 体验口径上救不回本次,只保证收敛。
+            #
+            # ★ 不动本跳的返回值:DS 正是靠这跳的成功响应确认 ended ACK,
+            #   改成 COMMAND_STOP 会改变握手语义。
+            plog.get().info(
+                "battle_ended_owner_release",
+                match_id=match_id,
+                pod=st["ended_pod"],
+                players=len(st["ended_players"]),
+                authority="legacy",
+            )
+            await owner_release_abandoned_players_weak(
+                self.owner_auth,
+                st["ended_players"],
+                st["ended_pod"],
+                st["ended_uid"],
+                OWNER_RELEASE_BUDGET_SEC,
+            )
+
         if st["empty_abandoned"]:
             # 空场 / 缺员超时判弃:回收 pod + 投递补偿 + 移出 active,回 stop 指令令 DS 停机。
             return await self.finish_empty_abandon(

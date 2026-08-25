@@ -983,6 +983,11 @@ class SweepMixin:
             if b.state == STATE_ENDED:
                 ended_skip = True  # 正常结算,移出 active 不补偿
                 pod_name = b.ds_pod_name  # 捕获用于 local 幽灵 DS 收尾(见 kill_stranded_ds)
+                # 2026-08-24:同时捕获 exact 实例身份与花名册 —— 下方 ended 分支要拿它们
+                # 补一次 owner 释放(主收口在心跳侧,这里只兜底重试,见该分支注释)。
+                instance_uid = b.gameserver_uid
+                # ★ 必须 list(...) 复制:repeated 容器属于本轮事务对象,CAS 重跑换新对象。
+                player_ids = list(b.player_ids)
                 return
             # first_abandon 仅在本事务把状态从非 abandoned 首次写成 abandoned 时为 True。
             # WATCH CAS 保证该迁移跨副本 / 跨 sweep 轮次全局只成功一次:并发副本撞
@@ -1024,6 +1029,19 @@ class SweepMixin:
             # `kill_orphan_on_stop` 门控:仅 local 打开;Agones 关(DS 已自身 Shutdown,
             # pod 交 Fleet 回收)。
             self.kill_stranded_ds(mid, pod_name, "ended")
+            # owner 释放的**兜底重试**(2026-08-24)。主收口在心跳侧:DS 上报 ended 的
+            # 那一跳写回成功后即释放(biz_heartbeat.py 的 `st["became_ended"]` 分支)。
+            # 这里再补一次,覆盖那一跳的释放失败(owner 抖动 / 超预算)——
+            # 否则没有任何人重试,玩家结算后永远回不了大厅。
+            # 幂等:helper 的 exact 身份门(pod+uid+BATTLE)+ compare-delete 保证
+            # 已释放 / 已改派的玩家一律跳过,重复调用不会误伤。
+            # 时序上比心跳侧晚一个 HeartbeatTimeout(本机 120s),救不了体验,只保证最终收敛。
+            plog.get().info(
+                "ended_owner_release_retry", match_id=mid, pod=pod_name, players=len(player_ids)
+            )
+            await owner_release_abandoned_players_weak(
+                self.owner_auth, player_ids, pod_name, instance_uid, OWNER_RELEASE_BUDGET_SEC
+            )
             await _discard_error(self.repo.remove_active(mid))
             return
         # 仅首次迁移 abandoned 的赢家事务回收 pod(并发副本 / 补偿重试轮次 first_abandon

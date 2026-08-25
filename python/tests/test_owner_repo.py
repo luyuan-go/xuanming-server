@@ -359,7 +359,7 @@ async def test_release_keeps_epoch_and_source_revision(repo) -> None:
         10001, 0, op, odata.OWNER_TYPE_HUB, target, source_revision=77, skew_margin_seconds=SKEW
     )
     await repo.admit(10001, 1, op, target)
-    released = await repo.release(10001, 1, op)
+    released = await repo.release(10001, 1, op, SKEW)
     assert released.owner_epoch == 1, "Release 把 epoch 清零了"
     assert released.hub_source_revision == 77, "Release 把来源版本清零了"
     assert released.owner_type == odata.OWNER_TYPE_NONE
@@ -376,7 +376,7 @@ async def test_stale_release_is_noop_not_error(repo) -> None:
     op1, target = _op(), _target()
     await repo.begin_transition(11001, 0, op1, odata.OWNER_TYPE_HUB, target, 0, SKEW)
     # 迟到的 Release 拿着旧 epoch / 别的 operation
-    rec = await repo.release(11001, 999, _op())
+    rec = await repo.release(11001, 999, _op(), SKEW)
     assert rec.owner_epoch == 1, "迟到 Release 影响了当前记录"
     assert rec.owner_type == odata.OWNER_TYPE_HUB
 
@@ -478,7 +478,7 @@ async def test_transition_log_written_for_each_op(repo, pool) -> None:
     op, target = _op(), _target()
     await repo.begin_transition(15001, 0, op, odata.OWNER_TYPE_HUB, target, 0, SKEW)
     await repo.admit(15001, 1, op, target)
-    await repo.release(15001, 1, op)
+    await repo.release(15001, 1, op, SKEW)
     async with pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
             "SELECT op, detail FROM owner_transition_log WHERE player_id=%s ORDER BY id",
@@ -598,6 +598,11 @@ async def test_barrier_error_carries_retry_after_and_record(repo) -> None:
 async def test_release_preserves_operation_and_barrier_columns(repo) -> None:
     """★ Release 不得清 operation_id / admit_not_before_ms / hub_source_revision。
 
+    注:2026-08-24 起 admit_not_before_ms 对 **BATTLE** 归属会被盖上算好的再入屏障
+    (INC-20260824-003,见 test_released_battle_retains_barrier)。本用例走的是 HUB
+    归属,该分支不盖新值,「不得清空」在这里仍是原样成立的断言。
+
+
     清掉 hub_source_revision 的后果:「打完一局 / 掉一次线」就把该玩家的门重新对
     legacy(0)敞开,滚动窗口里的旧写者随即又能写进来。
 
@@ -612,7 +617,7 @@ async def test_release_preserves_operation_and_barrier_columns(repo) -> None:
     await repo.begin_transition(pid, 0, op, odata.OWNER_TYPE_HUB, target, rev, SKEW)
     await repo.admit(pid, 1, op, target)
 
-    released = await repo.release(pid, 1, op)
+    released = await repo.release(pid, 1, op, SKEW)
     assert released.owner_type == odata.OWNER_TYPE_NONE
     assert released.owner_epoch == 1, "epoch 被清零 —— 下一次 Begin 的 expect_epoch=0 会通过"
     assert released.hub_source_revision == rev, "释放把来源版本高水位一起抹掉了"
@@ -620,9 +625,61 @@ async def test_release_preserves_operation_and_barrier_columns(repo) -> None:
 
     # 重放的 Release 必须是 no-op(靠守卫里的 owner_type == NONE 拦下,
     # 而不是靠"operation_id 已被清空"这种副作用)
-    again = await repo.release(pid, 1, op)
+    again = await repo.release(pid, 1, op, SKEW)
     assert again.owner_type == odata.OWNER_TYPE_NONE
     assert again.hub_source_revision == rev
+
+
+async def test_released_battle_retains_barrier(repo) -> None:
+    """★ 释放 BATTLE 归属不得把再入屏障一起抹掉(INC-20260824-003)。
+
+    屏障的唯一判据是 owner_type=BATTLE + instance_uid,而 release 的 UPDATE 正要清空
+    这两列。修复前:释放之后的下一次 begin 落到「无旧 BATTLE 归属」分支、屏障 = now,
+    而那台旧战斗 DS 可能仍活着(Pawn 仍被模拟、journal 迟到写在途)——§9.22 的核心
+    时序不等式「旧 DS 最晚停止可玩 < 新 DS 最早开始可玩」被反转。
+
+    这条路径不是边角:login 登出释放对 BATTLE 归属一视同仁(判据只有 owner_type != 0),
+    「对局中登出 → 立刻重登」早就走在上面。
+
+    ★ 变异(两处任一,都会让本用例红):
+      ① 删掉 release 里算 retained_barrier 并写进 _SQL_RELEASE 的那段;
+      ② 删掉 begin_transition 里 `current.admit_not_before_ms > barrier` 的取 max。
+    """
+    pid = 9105
+    op_a, op_b = _op(), _op()
+    battle_target = _target(instance_uid="uid-r-battle")
+    hub_target = _target(instance_uid="uid-r-hub")
+    await repo.begin_transition(
+        pid, 0, op_a, odata.OWNER_TYPE_BATTLE, battle_target, 0, SKEW
+    )
+    await repo.admit(pid, 1, op_a, battle_target)
+    lease_deadline = await repo.renew_instance_lease(battle_target, 20)
+    want_min = lease_deadline + SKEW * 1000
+
+    released = await repo.release(pid, 1, op_a, SKEW)
+    # ① 释放照常放弃归属……
+    assert released.owner_type == odata.OWNER_TYPE_NONE
+    assert released.target.instance_uid == ""
+    # ……但必须把屏障算好留下,而不是连同判据一起清零。
+    assert released.admit_not_before_ms >= want_min, (
+        f"释放必须留存屏障: admit={released.admit_not_before_ms} "
+        f"want>={want_min}(旧租约={lease_deadline} 余量={SKEW * 1000}ms)"
+    )
+    # ② 留存值必须真的落库,不能只活在返回值里。
+    persisted = await repo.query(pid)
+    assert persisted.admit_not_before_ms == released.admit_not_before_ms, "留存屏障未落库"
+
+    # ③ 释放后的下一次迁移此时**已无旧 owner**,正是修复前塌成 now 的那一步。
+    #    这里刻意传 skew=0:屏障必须完全由留存值顶住,不靠本次余量。
+    nxt = await repo.begin_transition(pid, 1, op_b, odata.OWNER_TYPE_HUB, hub_target, 0, 0)
+    assert nxt.admit_not_before_ms >= want_min, (
+        f"释放后 begin 屏障塌陷: admit={nxt.admit_not_before_ms} want>={want_min}"
+    )
+
+    # ④ 屏障必须**真生效**,不只是存下来的一个数:未开时 admit 须拒并带 retry_after。
+    with pytest.raises(errcode.PandoraError) as ei:
+        await repo.admit(pid, 2, op_b, hub_target)
+    assert ei.value.code == errcode.ErrOwnerBarrierNotOpen
 
 
 async def test_release_noop_reason_distinguishes_causes(repo) -> None:

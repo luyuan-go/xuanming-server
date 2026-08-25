@@ -2767,6 +2767,11 @@ func (u *AllocatorUsecase) heartbeatLegacy(ctx context.Context, matchID uint64, 
 	var ownerEpoch uint32
 
 	var becameReady bool
+	// 正常结算收口(2026-08-24,见下方 becameEnded 消费点)。本跳心跳把 State 首次写成
+	// ended 时置位,同一 CAS 内捕获释放 owner 所需的 exact 实例身份。
+	var becameEnded bool
+	var endedPod, endedUID string
+	var endedPlayers []uint64
 	// 断线重连(docs/design/battle-reconnect.md §2.2):捕获对局在 ready/running 时的玩家名单 +
 	// ds_addr,心跳成功后续期这些玩家的 BATTLE 位置 TTL。回调可能因 CAS 冲突重跑,故每轮重置。
 	var refreshActive bool
@@ -2807,6 +2812,10 @@ func (u *AllocatorUsecase) heartbeatLegacy(ctx context.Context, matchID uint64, 
 	err := u.repo.UpdateBattleWithLock(ctx, matchID, updateMaxRetry, func(b *dsv1.BattleStorageRecord) error {
 		// CAS 冲突重跑时以最后一轮为准,每轮重置出参标记
 		refreshActive = false
+		becameEnded = false
+		endedPod = ""
+		endedUID = ""
+		endedPlayers = nil
 		emptyAbandoned = false
 		abandonNoShow = false
 		abandonRosterIncomplete = false
@@ -2837,6 +2846,50 @@ func (u *AllocatorUsecase) heartbeatLegacy(ctx context.Context, matchID uint64, 
 		// warming → ready/running:DS 首次确认就绪,这一跳让 AllocateBattle 得以放行 matchmaker。
 		if prevState == stateWarming && (b.State == stateReady || b.State == stateRunning) {
 			becameReady = true
+		}
+		// ready/running → ended:DS 上报对局正常结算的那一跳。**这一跳就是收口点。**
+		//
+		// 为什么不能等下一跳:owner 释放此前只挂在下方 `errHeartbeatTerminal` 分支上,
+		// 而那个分支的触发条件是「心跳到达时记录**已经**是 ended」(见上方 stateEnded 判定
+		// 先于 `b.State = state` 写入)—— 也就是要**第二跳**。可 UE DS 侧:
+		//   · `state="ended"` 全仓只有 SendEndedHeartbeatAndReturnToHub 发,一局只发一次;
+		//   · 周期心跳的 CurrentBattleState 永远是 "running"(SetBattleHeartbeatState 唯一
+		//     调用点恒传 "running"),周期 tick 5s;
+		//   · ended 的 ACK 回调 HandleEndedHeartbeatComplete 是毫秒级,里面立刻
+		//     StopBattleHeartbeat()。
+		// ⇒ **第二跳在物理上不可能到达**,该分支在正常结算路径上一次都不会触发。
+		// 后果:owner 永远停在 BATTLE 指向一台已结算的 DS,客户端连查 3 次拿不到完整落点
+		// → authority_entry_terminal → 打完一局被踢回登录(2026-08-24 Python 栈实测,
+		// 两个客户端同时复现;Go 与 Python 此处逐行同构,同源同错)。
+		// 本文件 sweepOnce 的 ended 分支注释早已写明「无第二跳」,与该分支自己的注释互相
+		// 矛盾 —— sweep 那条才符合实测,另一条已在下方标注更正。
+		//
+		// exactly-once:上方 stateEnded/stateAbandoned 已返回 errHeartbeatTerminal,故走到
+		// 这里 prevState 必非终态,本条件天然只在首次迁入 ended 时成立;CAS 重跑由闭包顶部
+		// 的重置保证不串轮。
+		//
+		// 安全边界(★ 2026-08-24 重写,原文的论证是错的,见 INC-20260824-003):
+		//
+		// 原文写的是「边界①(须在实例回收确认后才释放)是为 abandoned 写的;ended 不同,
+		// 该实例结构上不可能再接纳任何人」。**这个论证站不住**:边界① 防的不是「旧 DS 会
+		// 不会再接纳**新**玩家」,而是「旧 DS 是否还持有**旧**玩家」——而释放这个动作本身
+		// 会把再入屏障的唯一判据(owner_type=BATTLE + instance_uid)抹掉,屏障塌成 0。
+		// 换句话说,当时这里不是「豁免了一道门」,是把门本身删了。
+		//
+		// 现在成立的理由是另一条:owner 侧的 Release 已改为在释放 BATTLE 归属时把
+		// max(now, 本实例租约截止)+skew **盖进 admit_not_before 留存**,BeginTransition
+		// 取 max 认回来(owner_repo.go)。屏障不再随归属指针消失,因此**任何时刻释放都不会
+		// 让围栏消失**,本调用点也就不再需要「回收已确认」这道前置门。
+		// 边界②exact 身份门与③compare-delete 仍由 helper 自身保证。
+		//
+		// ⚠️ 这条依赖是硬的:若哪天把 owner 的屏障留存改掉,这里必须同步退回「回收确认后
+		// 才释放」,否则每一局正常结算都会打开一个脑裂窗口。
+		if b.State == stateEnded {
+			becameEnded = true
+			endedPod = b.GetDsPodName()
+			endedUID = b.GetGameserverUid()
+			// ★ 必须整片复制:repeated 容器属于本轮事务对象,CAS 重跑会换成新对象。
+			endedPlayers = append([]uint64(nil), b.GetPlayerIds()...)
 		}
 		// 空场跟踪:活跃对局无人 → 盖 EmptySinceMs 起计时;有人回来 → 清零;
 		// 持续空场超阈 → 同一 CAS 内直接写 abandoned(与心跳写回原子,无额外竞态窗口)。
@@ -2940,13 +2993,25 @@ func (u *AllocatorUsecase) heartbeatLegacy(ctx context.Context, matchID uint64, 
 			u.killStrandedDS(ctx, matchID, podName, "terminal")
 			// owner 精确释放(legacy 正常结算的**真实**收口点,2026-08-04;INC-20260804-001 缺口⑦)。
 			//
+			// ⚠️ 2026-08-24 更正:下面这段「DS 转 ended 并继续上报心跳」的前提**不成立**。
+			// UE DS 在 ended terminal ACK 的毫秒级回调里就 StopBattleHeartbeat,而周期心跳
+			// 的 state 恒为 "running"、tick 5s —— 第二跳物理上不可能到达,本分支在正常结算
+			// 路径上一次都不会触发(实测 heartbeat_terminal_stop 零条)。正常结算的真实收口点
+			// 已上移到写回成功后的 becameEnded 分支。本分支保留:它仍覆盖「终态后仍有心跳
+			// 到达」的情形(补偿重试、孤儿 DS、未来改回持续心跳的 DS),释放是幂等的
+			// (exact 身份门 + compare-delete),重复调用不会误伤。
+			//
 			// 为什么在这里而不是 ReleaseBattle:legacy 面对局正常结束(含 PVE 主动退出)后,
 			// battle_result 记账 + outbox 投递完成,DS 转 ended 并继续上报心跳,由**本分支**
 			// 判终态并回收 DS —— `ReleaseBattle` 在这条流程里**一次都不会被调用**(实测计数 0)。
 			// 此前把释放接在 ReleaseBattle 上是接错了位置,owner 因此仍停在 BATTLE/ADMITTED
 			// 指向一台已销毁的 DS:login 的 query-first 一直把玩家指回去,而对局记录已终态,
-			// 客户端拿到的 TARGET 缺 match_id → `incomplete owner identity` → 撞 30s 线,
+			// 客户端拿到的 TARGET 缺 match_id → `incomplete owner identity` → 判弃回登录,
 			// 玩家打完副本回不了大厅(2026-08-04 两轮实测)。
+			// ⚠️ 2026-08-24 订正:原文"撞 30s 线"是错的。判弃不由时间窗触发,而由**连续次数**
+			// 触发 —— `IncompleteTargetStreakLimit = 3`(MyDsRecoveryCoordinator.h),按退避
+			// min(8,2^clamp(n,0,3))*rand(0.75,1.25) 折算约 2.25~3.75s;`AuthorityWaitWindowSeconds`
+			// 今天是 300.0 不是 30。估算窗口时别再按 30s 算。
 			//
 			// 时序满足 ownerReleaseAbandonedPlayersWeak 的安全边界①:killStrandedDS 已发起
 			// 本实例回收,此后释放不会在旧 DS 仍可服务时放行新归属。边界②exact 身份门与
@@ -2958,11 +3023,19 @@ func (u *AllocatorUsecase) heartbeatLegacy(ctx context.Context, matchID uint64, 
 			// localInstanceIdentitySource / localBattleRosterSink 那样再叠一道类型断言。
 			// 后果:标准生产姿态(authority_mode=redis ⇒ 强制 agones+enforce,见 main.go
 			// battle_model_b_invalid_activation 门)恒走 HeartbeatAuthorizedWithPlayers,
-			// 本段不可达;但 **Agones + legacy authority_mode 的灰度部署会执行到这里**。
-			// 那正是我们要的:同一个「结算后 owner 不释放 ⇒ 玩家回不了大厅」的缺陷在灰度面
-			// 同样存在,一并修好;安全性由上述三条边界兜住,不因部署形态而不同。
-			// 将来若要把灰度面排除在外,加 `u.cfg.Mode == conf.ModeLocal` 一道门即可 ——
-			// 但那等于明知灰度面有同样的 bug 而不修,需要重新拍板。
+			// 本段不可达。
+			//
+			// ⚠️ 2026-08-24 订正(INC-20260824-003 §8):原文称「**Agones + legacy
+			// authority_mode 的灰度部署会执行到这里**,那正是我们要的」——**该形态并不存在
+			// 可达路径**,这段是为死代码写的辩护:
+			//   · legacy 面 `battle.GameserverUid` 只在 modelB(authoritative != nil)或
+			//     `u.alloc.(localInstanceIdentitySource)`(即 mode=local)才回填;
+			//   · Agones + legacy 两者皆不成立 ⇒ uid 恒空 ⇒ 若开了 owner,`ownerBeginPlayers`
+			//     在 READY 交付前就会因 target 不完整失败(OwnerTarget.Complete 要求 uid 非空),
+			//     玩家**根本进不了战斗**;若没开 owner 则 `auth == nil`,helper 首行早退。
+			// ⇒ 两种情况下本段都不对应任何真实生效路径。作用域实际被限制在 mode=local。
+			// 将来若要给 Agones + legacy 回填 gameserver_uid,必须先重新评估 INC-20260824-003
+			// 的屏障坍塌(那会把它从 dev-only 变成生产可达)。
 			if terminal, found, gerr := u.repo.GetBattle(ctx, matchID); gerr == nil && found {
 				ownerReleaseAbandonedPlayersWeak(ctx, u.ownerAuth, terminal.GetPlayerIds(),
 					terminal.GetDsPodName(), terminal.GetGameserverUid(), 2*time.Second)
@@ -3009,6 +3082,34 @@ func (u *AllocatorUsecase) heartbeatLegacy(ctx context.Context, matchID uint64, 
 			"absent_players", rosterWouldAbandonAbsentees,
 			"deadline_ms", rosterDeadlineMs, "authority", "legacy",
 			"hint", "mode=enforce 且 battle 代==配置代 才会真判弃;见 decision-revisit §5")
+	}
+	if becameEnded {
+		// 正常结算收口(2026-08-24):对局已终态,把仍指向本实例的 BATTLE 归属释放掉,
+		// 玩家的恢复查询才会落到「无归属 → 首次进场链 → Hub」。
+		//
+		// **同步调用**:释放要发生在本跳心跳响应返回之前 —— DS 一拿到 ended ACK 就
+		// StopBattleHeartbeat,成功路径上**再没有第二跳**,这是唯一一次机会。
+		//
+		// ⚠️ 2026-08-24 订正,原注释这里给的两条理由都不准确:
+		//   · 「客户端结算后紧接着的 GetResumeContext」—— 正常结算主路径**不走**
+		//     GetResumeContext:terminal ACK → ClientPandoraBattleSettledReturnToHub →
+		//     UMyMatchModel::ReturnToHubDs → IssueDSTicketScoped("hub", fence),而那道门
+		//     (guardHubRouteAgainstActiveBattle)读的是 locator presence + battle 投影,
+		//     **全程不读 owner**。GetResumeContext 只是失败/重启后的兜底路。
+		//     ⇒ 本释放修的是**兜底路**(以及释放后新 Begin 的屏障口径),不是主路。
+		//   · 「fail-closed 只等 3 拍,约 6~10s」—— 3 拍对(IncompleteTargetStreakLimit=3),
+		//     秒数错:按退避 min(8,2^clamp(n,0,3))*rand(0.75,1.25) 折算约 2.25~3.75s。
+		//
+		// 弱依赖:该函数内部失败只告警。sweepOnce 的 ended 分支会再释放一次,但那要晚一个
+		// HeartbeatTimeout(dev 档 120s)—— **体验口径上救不回本次**,只保证最终收敛。
+		//
+		// ★ 不动本跳的返回值:DS 正是靠这跳的成功响应确认 ended ACK。而且 UE 侧 ended 那跳
+		//   的回调 HandleEndedHeartbeatComplete 根本不读 Result.Command,回 stop 也会被
+		//   静默丢弃 —— 不能把 stop 当作生效通道。
+		plog.With(ctx).Infow("msg", "battle_ended_owner_release", "match_id", matchID,
+			"pod", endedPod, "players", len(endedPlayers), "authority", "legacy")
+		ownerReleaseAbandonedPlayersWeak(ctx, u.ownerAuth, endedPlayers,
+			endedPod, endedUID, 2*time.Second)
 	}
 	if emptyAbandoned {
 		// 空场 / 缺员超时判弃:回收 pod + 投递补偿 + 移出 active,回 stop 指令令 DS 停机。
@@ -3882,6 +3983,11 @@ func (u *AllocatorUsecase) sweepOnce(ctx context.Context) error {
 			if b.State == stateEnded {
 				endedSkip = true      // 正常结算,移出 active 不补偿
 				podName = b.DsPodName // 捕获用于 local 幽灵 DS 收尾(见下方 killStrandedDS)
+				// 2026-08-24:同时捕获 exact 实例身份与花名册 —— 下方 ended 分支要拿它们补一次
+				// owner 释放。**不捕获就是静默 no-op**:ownerReleaseAbandonedPlayersWeak 开头对
+				// selfUID=="" / players 为空整体早退,加了释放也等于没加。
+				instanceUID = b.GetGameserverUid()
+				playerIDs = append([]uint64(nil), b.GetPlayerIds()...)
 				return nil
 			}
 			// firstAbandon 仅在本事务把状态从非 abandoned 首次写成 abandoned 时为 true。
@@ -3917,6 +4023,15 @@ func (u *AllocatorUsecase) sweepOnce(ctx context.Context) error {
 			// 此时 DS 早已通知客户端回大厅)时主动 taskkill,防幽灵 DS 占端口耗尽端口池。
 			// killOrphanOnStop 门控:仅 local 打开;Agones 关(DS 已自身 Shutdown,pod 交 Fleet 回收)。
 			u.killStrandedDS(ctx, mid, podName, "ended")
+			// owner 释放的**兜底重试**(2026-08-24)。主收口在心跳侧:DS 上报 ended 的那一跳
+			// 写回成功后即释放(本文件 becameEnded 分支)。这里再补一次,覆盖那一跳的释放失败
+			// (owner 抖动 / 超预算)—— 否则没有任何人重试,玩家结算后永远回不了大厅。
+			// 幂等:exact 身份门(pod+uid+BATTLE)+ compare-delete 保证已释放 / 已改派的玩家
+			// 一律跳过。时序上比心跳侧晚一个 HeartbeatTimeout,救不了体验,只保证最终收敛。
+			plog.With(ctx).Infow("msg", "ended_owner_release_retry", "match_id", mid,
+				"pod", podName, "players", len(playerIDs))
+			ownerReleaseAbandonedPlayersWeak(ctx, u.ownerAuth, playerIDs,
+				podName, instanceUID, 2*time.Second)
 			_ = u.repo.RemoveActive(ctx, mid)
 			continue
 		}

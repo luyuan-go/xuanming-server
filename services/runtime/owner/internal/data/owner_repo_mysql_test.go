@@ -33,6 +33,7 @@ import (
 	mysql "github.com/go-sql-driver/mysql"
 
 	"github.com/luyuancpp/pandora/pkg/errcode"
+	"github.com/luyuancpp/pandora/pkg/placement"
 )
 
 const ownerMySQLTestTimeout = 15 * time.Second
@@ -159,6 +160,11 @@ func testTarget(uid string) OwnerTarget {
 const testOpA = "6f9619ff-8b86-4d01-b42d-00cf4fc964ff"
 const testOpB = "7f9619ff-8b86-4d01-b42d-00cf4fc964aa"
 const testOpC = "8f9619ff-8b86-4d01-b42d-00cf4fc964bb"
+
+// testSkewMargin 与 biz 传给 BeginTransition / Release 的是同一个常量口径
+// (placement.DSFenceSkewMarginSeconds)。Release 用它把再入屏障盖进 admit_not_before
+// 留存(INC-20260824-003),两处取值必须一致。
+const testSkewMargin = time.Duration(placement.DSFenceSkewMarginSeconds) * time.Second
 
 func TestOwnerRepoMySQL(t *testing.T) {
 	f := openOwnerMySQLFixture(t)
@@ -526,14 +532,77 @@ func TestOwnerRepoMySQL(t *testing.T) {
 		if _, _, err := repo.Admit(ctx, player, 1, testOpA, target); err != nil {
 			t.Fatalf("admit: %v", err)
 		}
-		rec, err := repo.Release(ctx, player, 1, testOpA)
+		rec, err := repo.Release(ctx, player, 1, testOpA, testSkewMargin)
 		if err != nil || rec.OwnerType != OwnerTypeNone || rec.OwnerEpoch != 1 {
 			t.Fatalf("释放: %+v err=%v", rec, err)
 		}
 		// 迟到 Release(旧 operation)幂等 no-op。
-		late, err := repo.Release(ctx, player, 1, testOpB)
+		late, err := repo.Release(ctx, player, 1, testOpB, testSkewMargin)
 		if err != nil || late.OwnerType != OwnerTypeNone {
 			t.Fatalf("迟到释放应 no-op: %+v err=%v", late, err)
+		}
+	})
+
+	t.Run("ReleasedBattleRetainsBarrier", func(t *testing.T) {
+		// INC-20260824-003 回归:**释放 BATTLE 归属不得把再入屏障一起抹掉**。
+		//
+		// 屏障的唯一判据是 owner_type=BATTLE + instance_uid,而 Release 的 UPDATE 正要清空
+		// 这两列。修复前:释放之后的下一次 Begin 落到 `no_old_battle_owner`、屏障 = now,
+		// 而那台旧战斗 DS 可能仍活着(Pawn 仍被模拟、journal 迟到写在途)——§9.22 的核心
+		// 时序不等式「旧 DS 最晚停止可玩 < 新 DS 最早开始可玩」被反转。
+		// 这条路径不是边角:login 登出释放对 BATTLE 归属一视同仁(判据只有 owner_type != 0),
+		// 「对局中登出 → 立刻重登」早就走在上面。
+		//
+		// ★ 变异(两处任一,都会让本用例红):
+		//   ① 删掉 Release 里盖 admit_not_before 的那段(退回原 UPDATE 列清单);
+		//   ② 删掉 BeginTransition 里 `rec.AdmitNotBeforeMs > admitNotBefore` 的取 max。
+		const player = 307
+		battleTarget := testTarget("uid-r-battle")
+		hubTarget := testTarget("uid-r-hub")
+		if _, err := repo.BeginTransition(ctx, player, 0, testOpA, OwnerTypeBattle, battleTarget, 0, 0); err != nil {
+			t.Fatalf("battle owner 建立: %v", err)
+		}
+		if _, _, err := repo.Admit(ctx, player, 1, testOpA, battleTarget); err != nil {
+			t.Fatalf("battle admit: %v", err)
+		}
+		leaseDeadline, err := repo.RenewInstanceLease(ctx, battleTarget, 20*time.Second)
+		if err != nil {
+			t.Fatalf("战斗实例续租: %v", err)
+		}
+		const margin = 5 * time.Second
+		wantMin := leaseDeadline + margin.Milliseconds()
+
+		released, err := repo.Release(ctx, player, 1, testOpA, margin)
+		if err != nil {
+			t.Fatalf("释放: %v", err)
+		}
+		// ① 释放照常放弃归属……
+		if released.OwnerType != OwnerTypeNone || released.Target.InstanceUID != "" {
+			t.Fatalf("释放后应无归属: %+v", released)
+		}
+		// ……但必须把屏障算好留下,而不是连同判据一起清零。
+		if released.AdmitNotBeforeMs < wantMin {
+			t.Fatalf("释放必须留存屏障: admit=%d want>=%d(旧租约=%d 余量=%dms)",
+				released.AdmitNotBeforeMs, wantMin, leaseDeadline, margin.Milliseconds())
+		}
+		// ② 留存值必须真的落库,不能只活在返回值里。
+		persisted, err := repo.Query(ctx, player)
+		if err != nil || persisted.AdmitNotBeforeMs != released.AdmitNotBeforeMs {
+			t.Fatalf("留存屏障未落库: persisted=%d released=%d err=%v",
+				persisted.AdmitNotBeforeMs, released.AdmitNotBeforeMs, err)
+		}
+		// ③ 释放后的下一次迁移此时**已无旧 owner**,正是修复前塌成 now 的那一步。
+		//    这里刻意传 margin=0:屏障必须完全由留存值顶住,不靠本次余量。
+		next, err := repo.BeginTransition(ctx, player, 1, testOpB, OwnerTypeHub, hubTarget, 0, 0)
+		if err != nil {
+			t.Fatalf("释放后迁移: %v", err)
+		}
+		if next.AdmitNotBeforeMs < wantMin {
+			t.Fatalf("释放后 Begin 屏障塌陷: admit=%d want>=%d", next.AdmitNotBeforeMs, wantMin)
+		}
+		// ④ 屏障必须**真生效**,不只是存下来的一个数:未开时 Admit 须拒并带 retry_after。
+		if _, retry, aerr := repo.Admit(ctx, player, 2, testOpB, hubTarget); errcode.As(aerr) != errcode.ErrOwnerBarrierNotOpen || retry <= 0 {
+			t.Fatalf("留存屏障未开时 Admit 应拒: retry=%d err=%v", retry, aerr)
 		}
 	})
 

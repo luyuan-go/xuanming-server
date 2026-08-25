@@ -700,31 +700,28 @@ async def _main_async(args: argparse.Namespace) -> int:  # noqa: C901, PLR0911, 
         http_app = pserver.build_http_app(SERVICE_NAME)
 
         # ── 经验推送出箱 producer(弱依赖)────────────────────────────────
-        # producer 可用才注入,失败**只警告**(出箱积压不丢,producer 可用后重启补发)。
+        # 惰性 producer(2026-08-24,与 Go 侧 cmd/player/main.go 同拍):装配期不建连。
+        #
+        # 旧实现在这里一次性 KeyOrderedProducer,而 kafka-python 构造期就 bootstrap 连接 ——
+        # 启动时 Kafka 恰好不可用就再也没有第二次机会:只打一条 WARN、pusher 保持 None、
+        # RunPushOutboxPublisher 直接 return **连任务都不起**,Kafka 后来恢复也不补发,
+        # 必须重启进程才排空。而 player_push_outbox 堆积此前没有任何告警,这一档完全静默。
+        # 改惰性后:投递失败 → 发布器中断本轮 → 下一拍重试 → Kafka 恢复即自动排空。
+        #
+        # 构造不做任何 I/O,故这里不再需要 try/except —— 原来那段 CancelledError 穿透
+        # 的处理随之一起去掉(没有可抛异常的调用了)。
         if cfg.kafka.brokers:
-            try:
-                exp_producer = kafkax.KeyOrderedProducer(
-                    kafkax.producer_conf_from(cfg.kafka),
-                    kafka_topics.TOPIC_PLAYER_EXPERIENCE,
-                )
-            except asyncio.CancelledError:
-                # ★ 取消必须穿透:CancelledError 是 BaseException,会被下面那条宽 except 吞掉。
-                # 吞掉之后取消就**不再传播** —— 该停的停不下来:
-                #   业务路径上 grpc.aio 用取消终止在途 handler,吞了会把取消变成一个正常应答;
-                #   启动路径上则是 Ctrl-C / 上层取消被翻译成某道闸的失败,报出假的失败原因。
-                # 两种都让 §9.16 的「先摘流量 → 再排空在途」失效。
-                raise
-            except BaseException as exc:  # noqa: BLE001
-                logger.warning(
-                    "player_push_producer_init_failed",
-                    err=str(exc),
-                    hint="经验推送出箱积压不丢,producer 可用后重启补发",
-                )
-            else:
-                uc.set_experience_pusher(PlayerEventPusher(exp_producer))
-                logger.info(
-                    "player_push_producer_ready", topic=kafka_topics.TOPIC_PLAYER_EXPERIENCE
-                )
+            exp_producer = kafkax.LazyProducer(
+                kafkax.producer_conf_from(cfg.kafka),
+                kafka_topics.TOPIC_PLAYER_EXPERIENCE,
+            )
+            uc.set_experience_pusher(PlayerEventPusher(exp_producer))
+            logger.info(
+                "player_push_producer_ready",
+                topic=kafka_topics.TOPIC_PLAYER_EXPERIENCE,
+                mode="lazy",
+                hint="惰性连接:broker 此刻不可达也不阻断启动,发布器按拍重试直到接通",
+            )
 
         # ── ⑰⑱⑲⑳㉑ 推送出箱发布器的单写者选举 ───────────────────────
         try:

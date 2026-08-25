@@ -154,6 +154,7 @@ import asyncio  # noqa: E402
 import dataclasses  # noqa: E402
 
 from pandorapy import log as _plog  # noqa: E402
+from pandorapy import metrics as _pmetrics  # noqa: E402
 
 # push 域内事件类型判别键的 kafka header 名。对应 Go 的 kafkax.HeaderEventType。
 # 缺省(老 producer 不填)→ consumer 读到 0 → 客户端按该 topic 的旧事件解析(向后兼容),
@@ -315,9 +316,9 @@ class KeyOrderedProducer:
         try:
             await asyncio.to_thread(self._send_blocking, key, payload, partition, headers)
         except Exception:
-            self._failed += 1
+            self._record_send(False)
             raise
-        self._sent += 1
+        self._record_send(True)
 
     async def send_raw_with_headers(self, key: str, payload: bytes, headers) -> None:
         """发原始字节并**原样携带一组 header**。对应 Go 的 SendRawWithHeaders。
@@ -344,9 +345,9 @@ class KeyOrderedProducer:
                 self._send_blocking, key, payload, partition, list(headers or [])
             )
         except Exception:
-            self._failed += 1
+            self._record_send(False)
             raise
-        self._sent += 1
+        self._record_send(True)
 
     def _send_blocking(self, key: str, payload: bytes, partition: int, headers) -> None:
         fut = self._producer.send(
@@ -413,6 +414,19 @@ class KeyOrderedProducer:
         _plog.get().warning("push_to_players_send_failed", **fields)
 
     # ── 生命周期 ──────────────────────────────────────────────────────────
+    def _record_send(self, ok: bool) -> None:
+        """两条发送路径(send_raw / send_raw_with_headers)共用的记账点。
+
+        对应 Go 的 KeyOrderedProducer.recordSend,收敛成一处的理由相同:
+        「成功/失败恰好记一次」是这里唯一的正确性要求,分散写就是给漏记留缝。
+        """
+        if ok:
+            self._sent += 1
+            _pmetrics.KAFKA_PRODUCE_TOTAL.labels(self._topic, "ok").inc()
+            return
+        self._failed += 1
+        _pmetrics.KAFKA_PRODUCE_TOTAL.labels(self._topic, "error").inc()
+
     def stats(self) -> tuple[int, int]:
         return self._sent, self._failed
 
@@ -442,6 +456,94 @@ class KeyOrderedProducer:
 #     也没留证、还告诉 broker 我收到了" —— 事件静默消失。三态必须是:
 #     没配 DLQ → 丢弃并 ack(loss-tolerant,但要打 DROPPED 让它可观测);
 #     DLQ 成功 → ack;DLQ 失败 → **不 ack**,等重投。
+
+
+class LazyProducer:
+    """惰性生产者。对应 Go 的 kafkax.LazyProducer(pkg/kafkax/lazy.go)。
+
+    **要解决的缺陷**(两栈同构):`KeyOrderedProducer.__init__` 会直接构造
+    `KafkaProducer(...)`,而 kafka-python 在构造期就做 bootstrap 连接,broker 不可达时
+    抛 `NoBrokersAvailable`。在装配期一次性构造 producer 的服务上,这造成一个静默且
+    **不可自愈**的状态:
+
+        启动时 Kafka 恰好不可用 → producer 构造抛异常 → 只打一条 WARN、pusher 保持 None
+        → 出箱发布器 `if pusher is None: return` 直接退出、**连任务都不起**
+        → Kafka 后来恢复也不会补发,出箱只增不减,**必须重启进程**才排空。
+
+    而出箱堆积此前没有任何告警规则,所以这一档在生产上是完全静默的。
+
+    改惰性后:首次投递才连,broker 不可达时 send_raw 抛错 → 发布器按既有的
+    「投递失败 → 中断本轮保序」路径退出本轮 → 下一拍重试 → Kafka 恢复即自动排空。
+
+    **不改变的语义边界**:「brokers 未配 = 推送刻意禁用」那一档不归本类管 —— 调用方仍在
+    装配期判 `cfg.kafka.brokers` 为空后根本不构造 LazyProducer,pusher 保持 None。
+    本类只覆盖「配了 brokers 但此刻连不上」,也就是原来会永久卡死的那一档。
+
+    并发安全:用 `asyncio.Lock` 串行化建连(本类只在事件循环里被 await,不需要线程锁);
+    建连本身仍走 `asyncio.to_thread`,不阻塞事件循环。
+    """
+
+    __slots__ = ("_conf", "_topic", "_producer", "_closed", "_lock")
+
+    def __init__(self, conf: ProducerConf, topic: str) -> None:
+        self._conf = conf
+        self._topic = topic
+        self._producer: KeyOrderedProducer | None = None
+        self._closed = False
+        self._lock = asyncio.Lock()
+
+    @property
+    def topic(self) -> str:
+        return self._topic
+
+    async def _get(self) -> KeyOrderedProducer:
+        """返回已就绪的底层生产者,必要时建连。
+
+        建连失败**不缓存失败态** —— 下一次投递会再试一次,这正是「Kafka 恢复即自愈」
+        的来源。与 Go 的 LazyProducer.producer() 双检结构等价。
+        """
+        if self._closed:
+            raise RuntimeError(f"kafkax: lazy producer closed (topic={self._topic})")
+        if self._producer is not None:
+            return self._producer
+        async with self._lock:
+            # 等锁期间可能已被别的调用方建好或已关闭。
+            if self._closed:
+                raise RuntimeError(f"kafkax: lazy producer closed (topic={self._topic})")
+            if self._producer is not None:
+                return self._producer
+            # KafkaProducer 构造是阻塞 I/O,必须挪出事件循环(同本模块顶部的线程池纪律)。
+            producer = await asyncio.to_thread(KeyOrderedProducer, self._conf, self._topic)
+            if self._closed:
+                # 建连期间被 close 了:把刚建好的客户端还回去,不能泄漏。
+                await producer.close()
+                raise RuntimeError(f"kafkax: lazy producer closed (topic={self._topic})")
+            self._producer = producer
+            return producer
+
+    async def send_raw(self, key: str, payload: bytes, event_type: int = 0) -> None:
+        """见 KeyOrderedProducer.send_raw;producer 未就绪时先按需建连。"""
+        producer = await self._get()
+        await producer.send_raw(key, payload, event_type)
+
+    async def close(self) -> None:
+        """关闭底层生产者(若已建连)。从未建连时是无害 no-op。"""
+        if self._closed:
+            return
+        self._closed = True
+        producer, self._producer = self._producer, None
+        if producer is not None:
+            await producer.close()
+
+
+# 消费主循环的重连退避。与 Go 侧 consumeBackoffMin / consumeBackoffMax 逐值一致
+# (200ms → 30s 指数翻倍,任何一次 poll 正常返回都立刻复位)。
+#
+# 没有退避时,broker 挂掉会让循环变成不受控的忙循环:单核打满 + 日志以每秒数千条的
+# 速度刷满磁盘,把真正有用的上下文冲出保留窗口。而 dev 永远试不出来这一档 ——
+# 那几个消费型服务在 broker 不可达时是启动期 fail-fast,根本活不到进主循环。
+_CONSUME_BACKOFF_MIN_SEC = 0.2
+_CONSUME_BACKOFF_MAX_SEC = 30.0
 
 
 class PoisonError(Exception):
@@ -523,9 +625,32 @@ class KeyOrderedConsumer:
         logger.info(
             "kafka_consumer_started", topic=self._conf.topic, group_id=self._conf.group_id
         )
+        backoff = _CONSUME_BACKOFF_MIN_SEC
         try:
             while not self._stopped:
-                batch = await asyncio.to_thread(self._consumer.poll, self._conf.poll_timeout_ms)
+                try:
+                    batch = await asyncio.to_thread(
+                        self._consumer.poll, self._conf.poll_timeout_ms
+                    )
+                except asyncio.CancelledError:
+                    raise  # 取消必须穿透,否则停机时循环退不出去
+                except BaseException as exc:  # noqa: BLE001
+                    # poll 抛错此前会**直接逃出 run()**,消费循环就此死掉(safego 记一条就没了),
+                    # 消费组看着还在、lag 一路涨。改成记数 + 退避 + 继续,与 Go 侧
+                    # Start() 里 Consume 返错的处理逐条对齐(pkg/kafkax/consumer.go)。
+                    _pmetrics.KAFKA_CONSUME_LOOP_ERROR_TOTAL.labels(
+                        self._conf.topic, self._conf.group_id
+                    ).inc()
+                    logger.error(
+                        "kafka_consume_loop_failed",
+                        topic=self._conf.topic, group=self._conf.group_id,
+                        backoff=backoff, err=str(exc),
+                        hint="broker 不可达 / rebalance 失败;本条持续刷 = Kafka 侧问题,不是业务 handler 的问题",
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, _CONSUME_BACKOFF_MAX_SEC)
+                    continue
+                backoff = _CONSUME_BACKOFF_MIN_SEC
                 if not batch:
                     continue
                 for tp, messages in batch.items():
@@ -537,6 +662,25 @@ class KeyOrderedConsumer:
     async def _consume_partition(self, tp, messages) -> None:
         """顺序处理一个 partition 的一批消息,只提交连续成功的水位。"""
         commit_upto = None
+        # 分区滞后:highwater 是随 fetch 一起带回来的本地缓存值,读它不产生额外 broker
+        # 请求。空闲分区没有消息也就没有本回调,值会停在最后一次观测 —— 判「消费卡住」
+        # 必须配合 pandora_kafka_consume_total 的 rate 一起看(与 Go 侧同一口径)。
+        #
+        # ★ 整段被 getattr 兜住:**指标绝不能反过来打断消费**。highwater 只在真的
+        # KafkaConsumer 上有,consumer_factory 注入的替身(测试桩、将来可能的其它来源)
+        # 没有它;少一条 gauge 是可接受的,为了一条 gauge 让整条消费链抛 AttributeError
+        # 不可接受。tp.partition 同理走 getattr —— 替身的 tp 未必是 TopicPartition。
+        if messages:
+            highwater_fn = getattr(self._consumer, "highwater", None)
+            partition = getattr(tp, "partition", None)
+            if callable(highwater_fn) and partition is not None:
+                highwater = highwater_fn(tp)
+                if highwater is not None:
+                    lag = highwater - messages[-1].offset - 1
+                    if lag >= 0:
+                        _pmetrics.KAFKA_CONSUMER_LAG.labels(
+                            self._conf.topic, self._conf.group_id, str(partition)
+                        ).set(lag)
         for msg in messages:
             if self._stopped:
                 break
@@ -559,9 +703,11 @@ class KeyOrderedConsumer:
         logger = _plog.get()
         err = await self._call_handler(msg)
         if err is None:
+            self._count(_pmetrics.KAFKA_RESULT_OK)
             return True
 
         if isinstance(err, PoisonError):
+            self._count(_pmetrics.KAFKA_RESULT_POISON)
             logger.error(
                 "kafka_poison_message", topic=msg.topic, partition=msg.partition,
                 offset=msg.offset, key=_key_str(msg), err=str(err),
@@ -575,19 +721,23 @@ class KeyOrderedConsumer:
             await asyncio.sleep(backoff)
             err = await self._call_handler(msg)
             if err is None:
+                self._count(_pmetrics.KAFKA_RESULT_OK)
                 return True
             if isinstance(err, PoisonError):
+                self._count(_pmetrics.KAFKA_RESULT_POISON)
                 logger.error(
                     "kafka_poison_on_retry", attempt=attempt, topic=msg.topic,
                     partition=msg.partition, offset=msg.offset,
                     key=_key_str(msg), err=str(err),
                 )
                 return await self._to_dlq(msg)
+            self._count(_pmetrics.KAFKA_RESULT_RETRY)
             logger.warning(
                 "kafka_handler_retry_failed", attempt=attempt,
                 max_retries=self._conf.retry.max_retries, topic=msg.topic,
                 partition=msg.partition, offset=msg.offset, key=_key_str(msg), err=str(err),
             )
+        self._count(_pmetrics.KAFKA_RESULT_EXHAUSTED)
         logger.error(
             "kafka_handler_retries_exhausted", topic=msg.topic, partition=msg.partition,
             offset=msg.offset, key=_key_str(msg), err=str(err),
@@ -640,6 +790,7 @@ class KeyOrderedConsumer:
         if self._dlq is None:
             # 没配 DLQ:消息被丢弃并 ack。必须显式记"丢弃"——上游日志写的是"→ DLQ",
             # 运维照此去 DLQ 会白找。
+            self._count(_pmetrics.KAFKA_RESULT_DLQ_DROPPED)
             logger.warning(
                 "kafka_message_dropped_no_dlq", topic=msg.topic, partition=msg.partition,
                 offset=msg.offset, key=_key_str(msg),
@@ -657,16 +808,27 @@ class KeyOrderedConsumer:
             await self._dlq.send_raw_with_headers(_key_str(msg), msg.value, headers)
         except BaseException as exc:  # noqa: BLE001
             # ★ 不 ack。ack 了就是"处理不了、没留证、还说收到了"= 事件静默消失。
+            _pmetrics.KAFKA_DLQ_TOTAL.labels(
+                self._conf.topic, self._conf.group_id, "failed"
+            ).inc()
             logger.error(
                 "kafka_dlq_send_failed_will_not_ack", topic=msg.topic, partition=msg.partition,
                 offset=msg.offset, key=_key_str(msg), err=str(exc),
             )
             return False
+        # ⚠️ 全仓没有 DLQ 消费者/回放器,本指标是 DLQ 唯一的发现手段(同 Go 侧 DLQTotal)。
+        _pmetrics.KAFKA_DLQ_TOTAL.labels(self._conf.topic, self._conf.group_id, "ok").inc()
         logger.warning(
             "kafka_message_moved_to_dlq", topic=msg.topic, partition=msg.partition,
             offset=msg.offset, key=_key_str(msg),
         )
         return True
+
+    def _count(self, result: str) -> None:
+        """记一次消息处理结果。与 Go 的 ConsumeTotal.WithLabelValues(...).Inc() 一一对应。"""
+        _pmetrics.KAFKA_CONSUME_TOTAL.labels(
+            self._conf.topic, self._conf.group_id, result
+        ).inc()
 
     def stop(self) -> None:
         self._stopped = True

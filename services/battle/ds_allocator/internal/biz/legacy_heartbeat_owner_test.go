@@ -209,6 +209,20 @@ func TestLegacyReleaseBattle_SkipsOwnerPointingElsewhere(t *testing.T) {
 // 教训:上一版把释放接在 ReleaseBattle 上,单测同样全绿,但真机计数显示
 // ReleaseBattle 在这条流程里一次都不会被调用,玩家照样回不了大厅。
 // 本测试直接驱动「记录已 ended → 再来一跳心跳」这条真实路径,不测那个不会被走到的函数。
+// 2026-08-24 改判:owner 释放上移到「首次迁入 ended 的那一跳」。
+//
+// 本用例此前断言「第一跳不释放、第二跳才释放」,依据是 allocator.go 里那句
+// 「DS 转 ended 并继续上报心跳」—— 该前提**不成立**。UE DS 侧:`state="ended"` 一局只由
+// SendEndedHeartbeatAndReturnToHub 发一次;它的 ACK 回调 HandleEndedHeartbeatComplete 在
+// 毫秒级里就 StopBattleHeartbeat();而周期心跳的 state 恒为 "running"
+// (SetBattleHeartbeatState 唯一调用点恒传 "running")、tick 5s。⇒ **第二跳物理上不可能到达。**
+//
+// 于是按旧断言写出来的实现,在生产上等价于「永不释放」:owner 停在 BATTLE 指向一台已结算的
+// DS,客户端连查 3 拍拿不到完整 TARGET → authority_entry_terminal → 打完一局被踢回登录
+// (2026-08-24 实测,两个客户端同时复现)。本文件 sweepOnce 的 ended 分支注释早就写着
+// 「无第二跳」,两处注释一直互相矛盾 —— sweep 那条才是对的。
+//
+// ★ 变异:把释放挪回 errHeartbeatTerminal 分支 → 第一段断言红。
 func TestLegacyTerminalHeartbeat_ReleasesOwner(t *testing.T) {
 	const matchID uint64 = 93001
 	uc, _, pod := legacyOwnerFixture(t, matchID, []uint64{4001})
@@ -216,23 +230,28 @@ func TestLegacyTerminalHeartbeat_ReleasesOwner(t *testing.T) {
 	auth := &releaseRecordingOwnerAuthority{pod: pod, uid: "uid-legacy-battle"}
 	uc.SetOwnerAuthority(auth)
 
-	// 第一跳把对局推进到 ended(此跳尚未触发终态分支)。
-	if _, err := uc.Heartbeat(ctx, matchID, pod, 1, "ended", time.Now().UnixMilli()); err != nil {
+	// 首次迁入 ended 的那一跳:当场释放 owner,且**不**下 stop ——
+	// DS 正是靠这跳的成功响应确认 ended ACK,回 stop 会改动握手语义
+	// (且 UE 侧 ended 那跳的回调根本不读 Result.Command,回了也是静默丢弃)。
+	res, err := uc.Heartbeat(ctx, matchID, pod, 1, "ended", time.Now().UnixMilli())
+	if err != nil {
 		t.Fatalf("ended 心跳 err: %v", err)
 	}
-	if len(auth.released) != 0 {
-		t.Fatal("推进到 ended 的那一跳本身不应释放(DS 尚未被回收)")
+	if res.Command == commandStop {
+		t.Fatal("首次 ended 心跳不得下发 stop:DS 靠这跳的成功响应确认 ended ACK")
 	}
-	// 第二跳撞终态分支:回收 DS + 释放 owner。
-	res, err := uc.Heartbeat(ctx, matchID, pod, 1, "ended", time.Now().UnixMilli())
+	if len(auth.released) != 1 || auth.released[0] != 4001 {
+		t.Fatalf("首次迁入 ended 的那一跳必须释放本局玩家 owner 归属, got %v", auth.released)
+	}
+
+	// 第二跳在真实链路上不会到达(见上),但补偿重试 / 孤儿 DS 仍可能撞进来:
+	// 此时走终态分支 → stop + kill,释放幂等重复一次不误伤。
+	res2, err := uc.Heartbeat(ctx, matchID, pod, 1, "ended", time.Now().UnixMilli())
 	if err != nil {
 		t.Fatalf("终态心跳 err: %v", err)
 	}
-	if res.Command != commandStop {
-		t.Fatalf("终态心跳应下发 stop, got %q", res.Command)
-	}
-	if len(auth.released) != 1 || auth.released[0] != 4001 {
-		t.Fatalf("终态心跳必须释放本局玩家 owner 归属, got %v", auth.released)
+	if res2.Command != commandStop {
+		t.Fatalf("终态心跳应下发 stop, got %q", res2.Command)
 	}
 }
 

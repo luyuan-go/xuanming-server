@@ -43,7 +43,7 @@ func (f *fakeOwnerRepo) RenewInstanceLease(_ context.Context, _ data.OwnerTarget
 	return 0, nil
 }
 
-func (f *fakeOwnerRepo) Release(context.Context, uint64, uint64, string) (data.OwnerRecord, error) {
+func (f *fakeOwnerRepo) Release(context.Context, uint64, uint64, string, time.Duration) (data.OwnerRecord, error) {
 	return data.OwnerRecord{}, nil
 }
 

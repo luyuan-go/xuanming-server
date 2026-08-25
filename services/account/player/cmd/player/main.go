@@ -351,15 +351,19 @@ func main() {
 	pubCtx, pubCancel := context.WithCancel(context.Background())
 	defer pubCancel()
 	if len(cfg.Kafka.Brokers) > 0 {
-		producer, perr := kafkax.NewKeyOrderedProducer(cfg.Kafka, kafkax.TopicPlayerExperience)
-		if perr != nil {
-			helper.Warnw("msg", "player_push_producer_init_failed", "err", perr,
-				"hint", "经验推送出箱积压不丢,producer 可用后重启补发")
-		} else {
-			defer func() { _ = producer.Close() }()
-			uc.SetExperiencePusher(&playerEventPusher{p: producer})
-			helper.Infow("msg", "player_push_producer_ready", "topic", kafkax.TopicPlayerExperience)
-		}
+		// 惰性 producer(2026-08-24):装配期不拨号,首次投递才连。
+		//
+		// 旧实现在这里一次性 NewKeyOrderedProducer,而它构造期就拨号 —— 启动时 Kafka 恰好
+		// 不可用就再也没有第二次机会:只打一条 Warn、pusher 保持 nil、RunPushOutboxPublisher
+		// 直接 return **连 goroutine 都不起**,Kafka 后来恢复也不补发,必须重启进程才排空。
+		// 而 player_push_outbox 堆积此前没有任何告警,这一档在生产上完全静默。
+		// 改惰性后:投递失败 → 发布器中断本轮 → 下一拍重试 → Kafka 恢复即自动排空。
+		producer := kafkax.NewLazyProducer(cfg.Kafka, kafkax.TopicPlayerExperience)
+		defer func() { _ = producer.Close() }()
+		uc.SetExperiencePusher(&playerEventPusher{p: producer})
+		helper.Infow("msg", "player_push_producer_ready", "topic", kafkax.TopicPlayerExperience,
+			"mode", "lazy",
+			"hint", "惰性连接:broker 此刻不可达也不阻断启动,发布器按拍重试直到接通")
 	}
 	// 推送出箱发布器的写者继任租约(单写者选举;推导见 conf.PushWriterLeaseConf)。
 	//
@@ -529,7 +533,7 @@ func mustBuildConsumers(cfg *conf.Config, uc *biz.PlayerUsecase, h *klog.Helper)
 // playerEventPusher 把 biz.ExperiencePusher 适配到 kafkax.KeyOrderedProducer。
 // key=player_id(不变量 §9 同玩家事件保序);event_type 走 kafka header(push.proto 域内路由)。
 type playerEventPusher struct {
-	p *kafkax.KeyOrderedProducer
+	p *kafkax.LazyProducer
 }
 
 func (k *playerEventPusher) PushPlayerEvent(ctx context.Context, playerID uint64, eventType uint32, payload []byte) error {

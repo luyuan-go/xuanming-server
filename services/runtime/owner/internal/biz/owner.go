@@ -177,7 +177,11 @@ func (u *OwnerUsecase) Release(ctx context.Context, playerID, ownerEpoch uint64,
 			"owner_epoch", ownerEpoch, "operation_id", operationID)
 		return data.OwnerRecord{}, errcode.New(errcode.ErrOwnerInvalidOperation, "operation_id must be canonical UUIDv4")
 	}
-	return u.repo.Release(ctx, playerID, ownerEpoch, operationID)
+	// skewMargin 与 BeginTransition 同源同值:释放 BATTLE 归属时数据层要用同一个公式
+	// 把再入屏障盖进 admit_not_before 留存(INC-20260824-003)。两处取值必须一致,
+	// 否则「释放算出来的屏障」与「迁移算出来的屏障」会在同一条时间线上打架。
+	return u.repo.Release(ctx, playerID, ownerEpoch, operationID,
+		time.Duration(placement.DSFenceSkewMarginSeconds)*time.Second)
 }
 
 // RunTransitionLogSweep 周期清理审计流水(§9.24)。

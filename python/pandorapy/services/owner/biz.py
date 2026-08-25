@@ -278,7 +278,15 @@ class OwnerUsecase:
             raise errcode.PandoraError(
                 errcode.ErrOwnerInvalidOperation, "operation_id must be canonical UUIDv4"
             )
-        return await self._repo.release(player_id, owner_epoch, operation_id)
+        # skew 与 begin_transition 同源同值:释放 BATTLE 归属时数据层要用同一个公式
+        # 把再入屏障盖进 admit_not_before 留存(INC-20260824-003)。两处取值必须一致,
+        # 否则「释放算出来的屏障」与「迁移算出来的屏障」会在同一条时间线上打架。
+        return await self._repo.release(
+            player_id,
+            owner_epoch,
+            operation_id,
+            placement.DS_FENCE_SKEW_MARGIN_SECONDS,
+        )
 
     async def run_transition_log_sweep(self, batch: int) -> int:
         """周期清理审计流水(§9.24)。"""

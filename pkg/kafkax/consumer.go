@@ -156,11 +156,26 @@ func NewKeyOrderedConsumer(cfg ConsumerConfig, handler Handler) (*KeyOrderedCons
 	}, nil
 }
 
+// 消费主循环的重连退避(2026-08-24)。
+//
+// 原实现在 Consume 返错后**原地立即重试且每轮打一条日志**:broker 挂掉时(免Docker
+// Windows 链已有 8 类 broker 自杀故障)会变成不受控的忙循环 —— 单核打满、日志以每秒
+// 数千条的速度刷满磁盘,把真正有用的上下文冲出保留窗口。而 dev 永远试不出来这一档:
+// 那三个消费型服务在 broker 不可达时是启动期 os.Exit(1),根本活不到进主循环。
+//
+// 退避从 consumeBackoffMin 起指数翻倍到 consumeBackoffMax;**任何一次 Consume 正常返回
+// 都立刻复位**(正常 rebalance 也会让 Consume 返回 nil,不能把它算成失败)。
+const (
+	consumeBackoffMin = 200 * time.Millisecond
+	consumeBackoffMax = 30 * time.Second
+)
+
 // Start 启动消费循环。
 func (k *KeyOrderedConsumer) Start() {
 	k.wg.Add(1)
 	go func() {
 		defer k.wg.Done()
+		backoff := consumeBackoffMin
 		for {
 			select {
 			case <-k.ctx.Done():
@@ -171,8 +186,25 @@ func (k *KeyOrderedConsumer) Start() {
 				if errors.Is(err, sarama.ErrClosedConsumerGroup) {
 					return
 				}
-				klog.Errorf("[kafkax] consume err topic=%s: %v", k.topic, err)
+				ConsumeLoopErrorTotal.WithLabelValues(k.topic, k.groupID).Inc()
+				klog.Errorw("msg", "kafka_consume_loop_failed",
+					"topic", k.topic, "group", k.groupID,
+					"backoff", backoff.String(), "err", err,
+					"hint", "broker 不可达 / rebalance 失败;本条持续刷 = Kafka 侧问题,不是业务 handler 的问题")
+				// ctx 感知的退避:停机时立刻退出,不空等一个完整退避周期。
+				timer := time.NewTimer(backoff)
+				select {
+				case <-k.ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+				if backoff *= 2; backoff > consumeBackoffMax {
+					backoff = consumeBackoffMax
+				}
+				continue
 			}
+			backoff = consumeBackoffMin
 		}
 	}()
 
@@ -221,6 +253,13 @@ func (k *KeyOrderedConsumer) ConsumeClaim(
 			if !ok {
 				return nil
 			}
+			// 分区滞后:高水位是 sarama 随 fetch 一起带回来的,读它不产生额外 broker 请求,
+			// 故可逐条刷新。空闲分区没有消息也就没有回调,值会停在最后一次观测 —— 判「消费
+			// 卡住」必须配合 ConsumeTotal 的 rate 一起看(见 metrics.go ConsumerLag 注释)。
+			if lag := claim.HighWaterMarkOffset() - msg.Offset - 1; lag >= 0 {
+				ConsumerLag.WithLabelValues(k.topic, k.groupID,
+					strconv.FormatInt(int64(msg.Partition), 10)).Set(float64(lag))
+			}
 			if k.processMessage(sess.Context(), msg) {
 				sess.MarkMessage(msg, "")
 				continue
@@ -244,9 +283,11 @@ func (k *KeyOrderedConsumer) ConsumeClaim(
 func (k *KeyOrderedConsumer) processMessage(ctx context.Context, msg *sarama.ConsumerMessage) bool {
 	err := k.callHandler(ctx, msg)
 	if err == nil {
+		ConsumeTotal.WithLabelValues(k.topic, k.groupID, consumeResultOK).Inc()
 		return true
 	}
 	if isPoison(err) {
+		ConsumeTotal.WithLabelValues(k.topic, k.groupID, consumeResultPoison).Inc()
 		klog.Errorf("[kafkax] poison message → DLQ topic=%s partition=%d offset=%d key=%s: %v",
 			msg.Topic, msg.Partition, msg.Offset, string(msg.Key), err)
 		return k.toDLQ(ctx, msg)
@@ -264,16 +305,20 @@ func (k *KeyOrderedConsumer) processMessage(ctx context.Context, msg *sarama.Con
 		}
 		err = k.callHandler(ctx, msg)
 		if err == nil {
+			ConsumeTotal.WithLabelValues(k.topic, k.groupID, consumeResultOK).Inc()
 			return true
 		}
 		if isPoison(err) {
+			ConsumeTotal.WithLabelValues(k.topic, k.groupID, consumeResultPoison).Inc()
 			klog.Errorf("[kafkax] poison on retry %d → DLQ topic=%s partition=%d offset=%d key=%s: %v",
 				attempt, msg.Topic, msg.Partition, msg.Offset, string(msg.Key), err)
 			return k.toDLQ(ctx, msg)
 		}
+		ConsumeTotal.WithLabelValues(k.topic, k.groupID, consumeResultRetry).Inc()
 		klog.Warnf("[kafkax] handler retry %d/%d failed topic=%s partition=%d offset=%d key=%s: %v",
 			attempt, k.retry.MaxRetries, msg.Topic, msg.Partition, msg.Offset, string(msg.Key), err)
 	}
+	ConsumeTotal.WithLabelValues(k.topic, k.groupID, consumeResultExhausted).Inc()
 	klog.Errorf("[kafkax] handler retries exhausted → DLQ topic=%s partition=%d offset=%d key=%s: %v",
 		msg.Topic, msg.Partition, msg.Offset, string(msg.Key), err)
 	return k.toDLQ(ctx, msg)
@@ -304,6 +349,7 @@ func (k *KeyOrderedConsumer) toDLQ(ctx context.Context, msg *sarama.ConsumerMess
 	if k.dlq == nil {
 		// 未配 DLQ 的 loss-tolerant 消费者:消息被丢弃并 ack。调用点日志说"→ DLQ"实则无 DLQ,
 		// 运维照此去 DLQ 会白找;此处显式记真实去向(消息被丢弃),让"丢弃的 kafka 消息"可观测。
+		ConsumeTotal.WithLabelValues(k.topic, k.groupID, consumeResultDLQDrop).Inc()
 		klog.Warnf("[kafkax] message DROPPED (no DLQ configured) topic=%s partition=%d offset=%d key=%s",
 			msg.Topic, msg.Partition, msg.Offset, string(msg.Key))
 		return true // 无 DLQ 通道:沿用旧行为 log + ack
@@ -321,10 +367,13 @@ func (k *KeyOrderedConsumer) toDLQ(ctx context.Context, msg *sarama.ConsumerMess
 		sarama.RecordHeader{Key: []byte("dlq-src-offset"), Value: []byte(strconv.FormatInt(msg.Offset, 10))},
 	)
 	if err := k.dlq.SendRawWithHeaders(ctx, string(msg.Key), msg.Value, headers); err != nil {
+		DLQTotal.WithLabelValues(k.topic, k.groupID, "failed").Inc()
 		klog.Errorf("[kafkax] DLQ send failed (will not ack) topic=%s partition=%d offset=%d key=%s: %v",
 			msg.Topic, msg.Partition, msg.Offset, string(msg.Key), err)
 		return false
 	}
+	// ⚠️ 全仓没有 DLQ 消费者/回放器,本指标是 DLQ 唯一的发现手段(见 metrics.go DLQTotal 注释)。
+	DLQTotal.WithLabelValues(k.topic, k.groupID, "ok").Inc()
 	klog.Warnf("[kafkax] message moved to DLQ topic=%s partition=%d offset=%d key=%s",
 		msg.Topic, msg.Partition, msg.Offset, string(msg.Key))
 	return true

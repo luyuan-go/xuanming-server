@@ -58,6 +58,13 @@ match:
   # allow_missing_team: false
   # ds_allocator_addr: ds_allocator 服务 gRPC 直连地址(全员确认后拉战斗 DS);留空用 StubDSAllocator
   ds_allocator_addr: "127.0.0.1:20020"
+  # ds_allocate_timeout: 调 ds_allocator.AllocateBattle 的客户端超时(默认 60s)。
+  # 该 RPC 服务端阻塞等 DS ready 心跳(allocate + ready_wait 300s + 余量),
+  # 必须 ≥ ds_allocator 侧 server.grpc.timeout(330s),否则客户端先超时白等。
+  # 2026-08-24: 本文件此前漏配,回落代码默认 60s —— 而 mode=local + launcher=editor 的
+  # 战斗 DS 冷启动(MobaLevel)远超 60s,导致 5v5_ranked 每 60s 被砍一次、无限重分配,
+  # 玩家永远卡在「分配战斗服」。matchmaker-pve.yaml 早已配 330s,故 PVE 能进、PVP 不能。
+  ds_allocate_timeout: "330s"
   # locator_addr: player_locator 服务 gRPC 直连地址（成局→MATCHING / 就绪→BATTLE 位置上报 + StartMatch 前置查战斗态）;留空不上报也不拦截
   locator_addr: "127.0.0.1:20006"
   # Login→Matchmaker internal resume RPC only. Shared Redis consumes each

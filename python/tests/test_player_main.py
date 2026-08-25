@@ -88,7 +88,10 @@ def test_gate_event_names_exist_in_go_source(repo_root: pathlib.Path) -> None:
         "instance_ownership_checker_missing",
         "ds_auth_guard_init_failed",
         "ds_callback_guard_ready",
-        "player_push_producer_init_failed",
+        # player_push_producer_init_failed 于 2026-08-24 **两栈同时删除**:经验推送 producer
+        # 改成 kafkax.LazyProducer 惰性建连,装配期不再有可失败的构造,这条事件永远不会再打。
+        # 留着它会让本用例变成"要求 Go 保留一条死代码"。对应的可观测出口换成
+        # player_push_producer_ready 里的 mode="lazy" 字段。
         "player_push_producer_ready",
         "player_push_writer_lease_mode_invalid",
         "player_push_writer_lease_rollingupdate_without_enforce",

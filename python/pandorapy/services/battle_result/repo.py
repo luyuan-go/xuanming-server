@@ -595,7 +595,14 @@ class MySQLBattleRepo(bprogress.ProgressRepoMixin, bterminal.TerminalReleaseRepo
             instances = [] if drops_suppressed else d.instance_item_config_ids
             # 判据必须把金币算进来:旧判据 `not d.item_config_ids → continue` 会把
             # "只有金币、没有掉落"的行整条丢掉(而那正是最常见的一局)。
-            if not items and d.currency_amount <= 0:
+            #
+            # 而且要看**三列并集**,不能只看 items:items 是审计视图,
+            # stacks/instances 才是发放路由列,两者相等只靠 build_drop_outbox 这**唯一一个**
+            # 生产者在同一处一次写三列来维持 —— 那是个不变量,不是类型保证。
+            # 将来任何只填路由列的新生产者会被**静默整行丢弃、零日志**
+            # (出箱表没行、日志没错、玩家掉落凭空消失)。看并集在今天是零行为差异,
+            # 却把这个失败模式从机制上消掉。与 Go 侧 data.SettleDropOutboxRow 同口径。
+            if not items and not stacks and not instances and d.currency_amount <= 0:
                 continue
             try:
                 await cur.execute(

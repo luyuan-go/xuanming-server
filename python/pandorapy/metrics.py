@@ -87,6 +87,52 @@ RATELIMIT_DROPPED = Counter(
 )
 
 
+# ── Kafka 指标 ──────────────────────────────────────────────────────────────
+#
+# ★ 名字与 label 必须与 Go 侧 pkg/kafkax/metrics.go **逐字一致**(理由同上面 RPC 那族:
+#   名字漂移 = 按 pandora_kafka_* 建的告警对 Python 实例是 NoData 而不是告警)。
+#
+# 补这一族的原因见 Go 侧注释:此前全仓 0 个 Kafka 指标,「Kafka 半死不活」这一档
+# 完全不可观测 —— 出箱堆积、DLQ 投递、消费空转都查不到数,只能靠人翻日志。
+# docs/design/infra.md §10 早把 pandora_kafka_consumer_lag 举成示例,代码里一直不存在。
+#
+# 基数:topic ≤ 22、group 4 个、partition 现网 4 个、result 为有限枚举,全部低基数。
+# 禁止把 player_id / match_id 放进 label(§10 硬规)。
+
+KAFKA_PRODUCE_TOTAL = Counter(
+    "pandora_kafka_produce_total",
+    "kafka 投递总次数,按 topic 与结果(ok/error)分。",
+    ["topic", "result"],
+)
+KAFKA_CONSUME_TOTAL = Counter(
+    "pandora_kafka_consume_total",
+    "kafka 消息处理总次数,按 topic / 消费组 / 结果分。",
+    ["topic", "group", "result"],
+)
+KAFKA_DLQ_TOTAL = Counter(
+    "pandora_kafka_dlq_total",
+    "投递到 DLQ 的消息数,按原 topic / 消费组 / 结果(ok/failed)分。",
+    ["topic", "group", "result"],
+)
+KAFKA_CONSUMER_LAG = Gauge(
+    "pandora_kafka_consumer_lag",
+    "kafka 分区消费滞后条数(高水位 - 已处理 offset - 1),按 topic / 消费组 / 分区分。",
+    ["topic", "group", "partition"],
+)
+KAFKA_CONSUME_LOOP_ERROR_TOTAL = Counter(
+    "pandora_kafka_consume_loop_error_total",
+    "消费主循环 poll 返错次数(broker 不可达 / rebalance 失败),按 topic / 消费组分。",
+    ["topic", "group"],
+)
+
+# consume 结果枚举 —— 与 Go 侧 pkg/kafkax/metrics.go 的 consumeResult* 常量逐字一致。
+KAFKA_RESULT_OK = "ok"
+KAFKA_RESULT_POISON = "poison"
+KAFKA_RESULT_RETRY = "retry"
+KAFKA_RESULT_EXHAUSTED = "exhausted"
+KAFKA_RESULT_DLQ_DROPPED = "dlq_dropped"
+
+
 # ── 运行时标识 ──────────────────────────────────────────────────────────────
 
 RUNTIME_INFO = Gauge(

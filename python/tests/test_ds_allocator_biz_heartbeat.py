@@ -955,6 +955,36 @@ async def test_legacy_terminal_stops_kills_and_releases_owner(owner_tape: list) 
 
 
 @pytest.mark.asyncio
+async def test_legacy_running_to_ended_releases_owner_on_the_same_beat(
+    owner_tape: list,
+) -> None:
+    """running → ended 的**那一跳**就要释放 owner —— 不能等第二跳(2026-08-24)。
+
+    与上一条的差别是致命的:上一条喂的是「记录**已经**是 ended」,靠
+    `HeartbeatTerminalError` 收口;而真实序列是「对局还在 running,DS 上报
+    state=ended」。DS 拿到 ended ACK 后立即 StopBattleHeartbeat
+    (PandoraBattleGameMode.cpp 的 ended terminal ACK 分支),**第二跳永远不来**
+    ⇒ 上一条覆盖的那个分支在正常结算路径上一次都不会触发,owner 永远停在 BATTLE,
+    玩家结算后拿不到完整落点 → authority_entry_terminal → 被踢回登录
+    (2026-08-24 实测,两个客户端同时复现)。
+
+    三条断言各自钉一件事:
+      · 不改握手语义 —— DS 正是靠这跳的成功响应确认 ended ACK;
+      · 不早杀 DS —— 它还要把「回 Hub」通知发给客户端,回收归 sweep 的 ended 分支;
+      · owner 必须在本跳释放。
+
+    ★ 变异:删掉 `st["became_ended"]` 那段释放 → 本条红。
+    """
+    u = Harness(cfg=legacy_cfg(), repo=FakeRepo(mk_battle(state=STATE_RUNNING)))
+    res = await u.heartbeat(MATCH_ID, POD, 0, STATE_ENDED, 0)
+    assert res.command == COMMAND_NONE
+    assert u.tape == []
+    assert owner_tape == [
+        ("owner_release_abandoned_players_weak", [P1, P2], POD, UID, 2.0)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_legacy_terminal_read_failure_still_stops(owner_tape: list) -> None:
     """终态回读失败 → 只告警,仍然 stop(释放留给下一跳心跳重试)。
 

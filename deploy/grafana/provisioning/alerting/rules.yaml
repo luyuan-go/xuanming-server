@@ -232,3 +232,200 @@ groups:
               conditions:
                 - evaluator: { type: lt, params: [1] }
               refId: C
+
+  # ══ 出箱积压(2026-08-24 补)═══════════════════════════════════════════════
+  # 与 Kafka 投递链相关的事务出箱有 4 处,此前一条告警规则都没有:堆积时只有 dbguard 的
+  # ERROR 日志(pkg/dbguard/dbguard.go 预算超限分支)+ 发布器自己的 WARN,没人看日志就是
+  # 完全静默 —— 而"静默堆积"恰好是玩家侧只表现为"段位没变 / 经验不动 / 任务进度不刷"的
+  # 那类故障,从 RPC 看一切正常。
+  #
+  # 【指标从哪来】pkg/kafkax/metrics.go(2026-08-24 同批次新增)有投递侧指标
+  # (pandora_kafka_produce_total / consume_total / dlq_total / consumer_lag),但它们表达的是
+  # **投递失败率**,表达不了**积压深度**。查行数唯一的来源仍是 dbguard 的
+  # pandora_db_table_rows{db,table}(information_schema 估算,毫秒级不锁表)。各服务在
+  # internal/data/budgets.go 给出箱表登记的 MaxRows **不是容量上限而是积压告警线**(三处
+  # budgets.go 的注释都明写了这一点),同一个数字由 pandora_db_table_rows_budget 一并上报,
+  # dbguard 的 metric Help 写的判据是 "rows > budget > 0";本组用 >= 1(即 rows >= budget),
+  # 比 dbguard 自己的 ERROR 日志早一格响 —— 刻意的,告警要先于"已经超了"。
+  #
+  # 【为什么用比值,不把 100000 / 200000 抄进 yaml】抄一份就有两份事实,改 budgets.go 时
+  # 告警会静默漂移(battle_result/budgets.go 为同一理由拒绝再抄一份保留期常量)。这里
+  # A = rows / (budget > 0),C 判 $A >= 1:预算改到哪告警线跟到哪。某表没登记预算
+  # (budget=0)时被 "> 0" 过滤掉 → 无序列 → NoData → OK,不会变成恒响的噪声。
+  #
+  # 【本组是"堵了很久"的兜底,不是早期信号】按容量规划口径(battle_result 1 万局/天 × 10 人),
+  # 投递链彻底断掉也要约两天才够 20 万行触发;当前量级远低于规划值时可能数周不响。真正的
+  # 早期信号在下面的 kafka-health 组(投递失败率 / 消费循环报错 / DLQ),分钟级。两组是互补的:
+  # 那组答"投不出去",本组答"已经堆了多少"。
+  #
+  # 【检测延迟的真实上界是 1h,不是 for 时长】gauge 由各服务 runCapacityGuard 的
+  # time.NewTicker(time.Hour) 刷新(启动先跑一轮),/metrics 每次抓取都有样本,但**值**一小时
+  # 才动一次。所以 for: 15m 只是防抖(滚动重启 / 抓取空档会让序列短暂消失,NoData 重置 for
+  # 计时),真正的发现延迟 ≤ 1h + 15m。要更快必须改巡检节拍,不是改这里的 for。
+  #
+  # 【已知精度边界】TABLE_ROWS 是 InnoDB 采样估算,而出箱恰好是"插了就删"的高 churn 表,
+  # 贴近空表时估算可以偏得很离谱;但真堆到 10 万行量级时数量级是准的,而告警看的就是数量级
+  # (§9.24 同款口径)。要精确值用 tools/migrate/cmd/dbcheck -exact,不放告警路径。
+  #
+  # 【盲区,照实记】noDataState=OK:表未迁移 / 服务未部署时 dbguard 压根不 Set 这些序列
+  # (Check 里 stats 查不到该表就 continue),不该误报;代价是进程挂掉 / 抓取中断时本组规则
+  # 一起被静默。ds-capacity 组是同样的取舍,那边靠 pandora-ds-allocator-down 兜底;
+  # battle_result / player / mission 目前**没有**对应的 up==0 可用性规则,这是已知缺口。
+  #
+  # 【缺第 4 条:auction 成交事件出箱无指标可查,故意不写】auction 的出箱不是独立表,而是
+  # auction_matches.event_pending=1 这个**行内 marker**(services/economy/auction/internal/
+  # data/auction_repo.go 的 ListPendingMatchEvents)。pandora_db_table_rows
+  # {table="auction_matches"} 数的是全表行数(含 90 天已结算流水,单分片预算 1350 万行),
+  # 积压再多也淹没在基数里 —— 没有任何现存指标能表达它,所以这里刻意不放一条永远不触发的
+  # 规则充数。补法(最小埋点,不新建 timer / goroutine,§15.2 + §16.10):在既有周期 worker
+  # AuctionUsecase.ReconcilePendingMatchEvents(internal/biz/auction.go)每轮开头调一个新增的
+  # repo.CountPendingMatchEvents,逐分片 Set 一个 pandora_auction_match_event_pending_rows
+  # {shard} gauge(label 只放 shard,§12 低基数);COUNT 必须与 ListPendingMatchEvents 复用
+  # **同一 WHERE**(dbguard SweepTable 强制 Count/Delete 同 where 的同款纪律,否则会出现
+  # "报告 0、实际堵着"),走已有索引 idx_match_event_ready(event_pending,
+  # event_next_attempt_at_ms, matched_at_ms, match_id)是纯索引区间扫,不必新加迁移。
+  # 埋完照本组形状加第 4 条规则即可。
+  - orgId: 1
+    name: outbox-backlog
+    folder: Pandora Alerts
+    interval: 1m
+    rules:
+      # ── 战斗结算段位出箱积压(warning)────────────────────────────────────
+      # 登记线 20 万行(services/battle/battle_result/internal/data/budgets.go),按容量规划
+      # 口径(1 万局/天 × 10 人 = 10 万 player.update/天)约等于两天的量堆着没投出去。
+      # severity 取 warning 而非 critical:出箱行落在 MySQL 不丢,player 侧 mmr_history uk
+      # 幂等吸收重投,是"要去查"而不是"服务不能用"——但**恢复未必自动**,见 description。
+      - uid: pandora-battle-result-outbox-backlog
+        title: 战斗结算出箱积压
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        labels:
+          severity: warning
+          service: battle_result
+        annotations:
+          summary: '战斗结算出箱 {{ $labels.table }} 积压达告警线,player.update(段位/经验)事件长期未投递'
+          description: '出箱投递成功即删,稳态应接近空;达到 budgets.go 登记的积压线说明 kafka 投递链已堵很久。数据不丢(行在 pandora_battle,player 侧 mmr_history uk 幂等吸收重投),但玩家会看到"打完段位没变"。恢复不一定自动,先分清两种形态:①kafka producer 已注入、只是运行期抖动 → RunOutboxPublisher 每拍重试,kafka 回来会自己排空,不用人管;②producer 根本没注入(kafka.brokers 空 / 启动时构造失败)→ 循环还在跑但每轮空转,日志每 60s 一条 outbox_pending_without_pusher,kafka 恢复后进程不会自愈,必须重启 battle_result 才会补发。区分完再查 outbox_publish_failed 的 player_id / outbox_id:同玩家按 id 保序,队首那行卡住会挡住该玩家后续全部 player.update。当前占积压线 {{ with $values.A }}{{ humanizePercentage .Value }}{{ else }}无数据{{ end }}。'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: pandora-prometheus
+            model:
+              editorMode: code
+              expr: max by (table) (pandora_db_table_rows{db="pandora_battle", table="player_update_outbox"}) / max by (table) (pandora_db_table_rows_budget{db="pandora_battle", table="player_update_outbox"} > 0)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { type: gt, params: [0, 0] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A >= 1
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+
+      # ── 玩家经验推送出箱积压(warning)────────────────────────────────────
+      # 登记线 10 万行(services/account/player/internal/data/budgets.go)。
+      # 2026-08-24 起 player 的经验 producer 改成 kafkax.LazyProducer(惰性建连),所以
+      # "kafka 挂了 → 永远不自愈"那一档已经消失:pusher 恒非 nil,发布器照常起、每拍重试。
+      # 现在只剩 kafka.brokers 根本没配这一档会让发布器入口 return,而那一档本来就要改配置。
+      - uid: pandora-player-push-outbox-backlog
+        title: 玩家推送出箱积压
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        labels:
+          severity: warning
+          service: player
+        annotations:
+          summary: '玩家推送出箱 {{ $labels.table }} 积压达告警线,经验/等级推送长期未投递'
+          description: '权威态(players.exp / level)在 MySQL 没坏,坏的是推送:客户端经验条不动,重登或下次拉取才对得上。恢复多数情况不需要重启:producer 走惰性建连(kafkax.LazyProducer),发布器一直在跑、每拍重试,kafka 回来会自己排空。只有日志出现 push_outbox_publisher_disabled 时才是另一档 —— 那表示 kafka.brokers 根本没配、发布器入口直接 return,补上配置并重启 player 才会排空。producer 正常却仍堆积时,第二个常见成因是单写者租约无人当选:查 push_outbox_leadership_changed,全体 held=false 就是没人排空(热备副本刻意不发,防投递交错);再不然看 push_outbox_publish_batch_failed。当前占积压线 {{ with $values.A }}{{ humanizePercentage .Value }}{{ else }}无数据{{ end }}。'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: pandora-prometheus
+            model:
+              editorMode: code
+              expr: max by (table) (pandora_db_table_rows{db="pandora_player", table="player_push_outbox"}) / max by (table) (pandora_db_table_rows_budget{db="pandora_player", table="player_push_outbox"} > 0)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { type: gt, params: [0, 0] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A >= 1
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+
+      # ── 任务推送出箱积压(warning)────────────────────────────────────────
+      # 登记线 10 万行(services/social/mission/internal/data/budgets.go)。
+      # 与 player 同构:2026-08-24 起也走 kafkax.LazyProducer,kafka 抖动可自愈;
+      # 只有 kafka.brokers 没配时发布器才入口 return。
+      - uid: pandora-mission-push-outbox-backlog
+        title: 任务推送出箱积压
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        labels:
+          severity: warning
+          service: mission
+        annotations:
+          summary: '任务推送出箱 {{ $labels.table }} 积压达告警线,任务进度推送长期未投递'
+          description: '权威态在 pandora_mission 没坏,客户端只能靠 ListMissions / push.resync 兜底看到正确进度,实时刷新是断的。恢复多数情况不需要重启:producer 走惰性建连(kafkax.LazyProducer),发布器一直在跑、每拍重试,kafka 回来会自己排空。只有日志出现 mission_push_publisher_disabled 时才是另一档 —— 那表示 kafka.brokers 根本没配,补上配置并重启 mission 才会排空。producer 正常却仍堆积时按日志分诊:mission_push_publish_failed = 投递失败中断本轮(本表是全局 FIFO 不是每玩家 FIFO,队首行哈希到的分区不可用会连累其它分区的玩家,这是已归档的刻意取舍,分区恢复后按原序自动排空);mission_push_publish_raced = 多副本同时在发,单写者租约未生效或正处滚动升级共存窗口;push_outbox_leadership_changed 全体 held=false = 没人排空。当前占积压线 {{ with $values.A }}{{ humanizePercentage .Value }}{{ else }}无数据{{ end }}。'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: pandora-prometheus
+            model:
+              editorMode: code
+              expr: max by (table) (pandora_db_table_rows{db="pandora_mission", table="mission_push_outbox"}) / max by (table) (pandora_db_table_rows_budget{db="pandora_mission", table="mission_push_outbox"} > 0)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { type: gt, params: [0, 0] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A >= 1
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math

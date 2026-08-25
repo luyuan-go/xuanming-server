@@ -212,7 +212,10 @@ type OwnerRepo interface {
 	RenewInstanceLease(ctx context.Context, target OwnerTarget, lease time.Duration) (int64, error)
 
 	// Release epoch+operation 匹配 → 置 none(epoch 保留);不匹配(迟到)幂等 no-op 返回当前。
-	Release(ctx context.Context, playerID, ownerEpoch uint64, operationID string) (OwnerRecord, error)
+	// 释放 BATTLE 归属时**必须把再入屏障盖进 admit_not_before 留存**(INC-20260824-003):
+	// 屏障的判据是 owner_type=BATTLE + instance_uid,而本操作正要抹掉这两列,不留存等于
+	// 亲手把屏障降到 0。skewMargin 与 BeginTransition 同源同值。
+	Release(ctx context.Context, playerID, ownerEpoch uint64, operationID string, skewMargin time.Duration) (OwnerRecord, error)
 
 	// SweepTransitionLog 删除超保留期审计行(有界批量)。
 	SweepTransitionLog(ctx context.Context, retention time.Duration, batch int) (int64, error)
@@ -582,6 +585,25 @@ func (r *MySQLOwnerRepo) BeginTransition(ctx context.Context, playerID, expectEp
 		barrierSource = "battle_old_lease"
 		oldLeaseDeadlineMs = oldDeadline
 	}
+	// **屏障必须跨 Release 存活**(INC-20260824-003,2026-08-24)。
+	//
+	// 上面这套分流的判据是「**当前**记录还指向哪台 BATTLE 实例」。可 Release 的 UPDATE
+	// 恰好把 owner_type / instance_uid 抹空 —— 于是「先释放、再迁移」这条顺序会让本函数
+	// 落到 `no_old_battle_owner`,屏障塌成 now,而那台旧战斗 DS 可能仍活着。
+	// 这不是某一条调用链的疏忽:登出释放(login 侧判据只有 owner_type != 0)对 BATTLE 归属
+	// 一视同仁,对局中登出再重登早就走在这条路上。
+	//
+	// 修法是把屏障**从「归属指针的派生量」改成「玩家这一行的留存事实」**:Release 时把
+	// 算好的屏障盖进 admit_not_before(见本文件 Release),这里再取 max 认回来。
+	// 于是「谁持有归属」与「何时才允许再次可玩」彻底解耦,安全性不再依赖
+	// 「记得在实例回收之后才释放」这种调用方纪律。
+	//
+	// 取 max 而不是直接采用:①屏障只前进,陈旧留存值(早已过期)天然失效,不会永久卡人;
+	// ②旧 owner 仍是 BATTLE 时上面算出的值已含本实例租约,与留存值取大者仍然正确。
+	if rec.AdmitNotBeforeMs > admitNotBefore {
+		admitNotBefore = rec.AdmitNotBeforeMs
+		barrierSource = "retained_released_battle"
+	}
 
 	// 高水位只前进,且**只有 HUB 迁移能推它**。
 	//
@@ -867,7 +889,7 @@ VALUES (?, ?, ?, ?, ?, ?)`
 	return newDeadline, nil
 }
 
-func (r *MySQLOwnerRepo) Release(ctx context.Context, playerID, ownerEpoch uint64, operationID string) (OwnerRecord, error) {
+func (r *MySQLOwnerRepo) Release(ctx context.Context, playerID, ownerEpoch uint64, operationID string, skewMargin time.Duration) (OwnerRecord, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return OwnerRecord{}, errcode.New(errcode.ErrInternal, "begin release tx: %v", err)
@@ -901,14 +923,44 @@ func (r *MySQLOwnerRepo) Release(ctx context.Context, playerID, ownerEpoch uint6
 	}
 	now := nowUnixMs()
 	released := rec.Target // Target 下面会被清空,先留一份给审计流水与日志
+	// **再入屏障必须在释放前算好并留存**(INC-20260824-003,2026-08-24)。
+	//
+	// 本 UPDATE 抹掉的 owner_type / instance_uid 正是 BeginTransition 计算屏障的**唯一
+	// 判据**。不留存的后果:任何「先释放、后迁移」的顺序都会让下一次 Begin 走
+	// `no_old_battle_owner`、屏障 = now,而那台旧战斗 DS 可能仍活着(玩家 Pawn 仍被模拟、
+	// 仍有 journal 迟到写在途)——即 §9.22 的核心时序不等式被反转。
+	// 这不是某一条链的疏忽:登出释放对 BATTLE 归属一视同仁,该顺序早已存在。
+	//
+	// 因此这里按与 BeginTransition **同一个公式**算出屏障并盖进 admit_not_before:
+	// 释放只放弃「归属」,不赦免「旧实例仍可能可玩的那段时间」。
+	// 只对 BATTLE 归属计算:HUB 归属的屏障按设计恒为 now(协作迁移,双写由 epoch fencing
+	// 拦、双可玩由客户端单连接拆链拦),给它盖屏障等于每次进大厅白卡 27 秒。
+	retainedBarrier := rec.AdmitNotBeforeMs
+	barrierSource := "kept_previous"
+	if rec.OwnerType == OwnerTypeBattle && rec.Target.InstanceUID != "" {
+		oldDeadline, derr := readLeaseDeadline(ctx, tx, rec.Target.InstanceUID, true)
+		if derr != nil {
+			return OwnerRecord{}, derr
+		}
+		base := now
+		if oldDeadline > base {
+			base = oldDeadline
+		}
+		// 只前进:同一玩家连续两次释放时不把已建立的屏障往回调。
+		if stamped := base + skewMargin.Milliseconds(); stamped > retainedBarrier {
+			retainedBarrier = stamped
+			barrierSource = "released_battle_lease"
+		}
+	}
 	// ⚠️ 列清单里**刻意没有** hub_source_revision(INC-20260818-003):释放归属不该把
 	// 来源版本高水位一起抹掉。抹掉的后果是「打完一局 / 掉一次线」就把该玩家的门重新对
 	// legacy(0)敞开,滚动窗口里的旧写者随即又能写进来。以后往这条 UPDATE 加列时,
 	// 别顺手把它补上 —— 它不在这里是结论,不是遗漏。
 	const upd = `UPDATE owner_record SET owner_type = ?, phase = ?, pod_name = '', instance_uid = '',
- instance_epoch = 0, assignment_or_allocation_id = '', release_track = '', updated_at_ms = ?
- WHERE player_id = ? AND owner_epoch = ?`
-	if _, uerr := tx.ExecContext(ctx, upd, OwnerTypeNone, OwnerPhaseNone, now, playerID, ownerEpoch); uerr != nil {
+ instance_epoch = 0, assignment_or_allocation_id = '', release_track = '', admit_not_before_ms = ?,
+ updated_at_ms = ? WHERE player_id = ? AND owner_epoch = ?`
+	if _, uerr := tx.ExecContext(ctx, upd, OwnerTypeNone, OwnerPhaseNone,
+		retainedBarrier, now, playerID, ownerEpoch); uerr != nil {
 		return OwnerRecord{}, errcode.New(errcode.ErrInternal, "release update player=%d: %v", playerID, uerr)
 	}
 	if aerr := appendTransitionLog(ctx, tx, playerID, rec.OwnerEpoch, rec.OwnerEpoch,
@@ -920,6 +972,7 @@ func (r *MySQLOwnerRepo) Release(ctx context.Context, playerID, ownerEpoch uint6
 	rec.Phase = OwnerPhaseNone
 	rec.Target = OwnerTarget{}
 	rec.LeaseDeadlineMs = 0
+	rec.AdmitNotBeforeMs = retainedBarrier
 	rec.UpdatedAtMs = now
 	if cerr := tx.Commit(); cerr != nil {
 		return OwnerRecord{}, errcode.New(errcode.ErrInternal, "commit release player=%d: %v", playerID, cerr)
@@ -929,6 +982,11 @@ func (r *MySQLOwnerRepo) Release(ctx context.Context, playerID, ownerEpoch uint6
 	// 而时间线只在这条日志与审计流水里。
 	plog.With(ctx).Infow("msg", "owner_released",
 		"player_id", playerID, "owner_epoch", ownerEpoch, "operation_id", operationID,
+		// 留存屏障要能对账:「释放后下一次 Begin 为什么还等 / 为什么不等」的唯一现场依据
+		// (INC-20260824-003)。缺了它,屏障塌成 0 与屏障正常留存在日志里完全同形。
+		"retained_admit_not_before_ms", retainedBarrier,
+		"retained_barrier_source", barrierSource,
+		"retained_barrier_remaining_ms", retainedBarrier-now,
 		"released_owner_type", releasedType,
 		"pod", released.PodName, "instance_uid", released.InstanceUID,
 		"instance_epoch", released.InstanceEpoch,

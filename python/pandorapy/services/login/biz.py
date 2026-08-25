@@ -1613,9 +1613,25 @@ class LoginUsecase:
                 errcode.ErrUnavailable, "battle reconnect ticket authority unavailable"
             )
 
-        state, route_err = await self._battle_ticket_issuer.inspect_battle_route(
-            player_id, bl.match_id
-        )
+        # ★ Go 的 `InspectBattleRoute` 返回 (state, err);Python 移植改成了「成功返回
+        #   单个 BattleRouteState、失败抛异常」(battleroute.py:174 / biz.py:2817),
+        #   但这里的调用点保留了 Go 的双值解包 —— `BattleRouteState` 是 IntEnum、不可迭代,
+        #   于是**只要走到这一行就必抛 TypeError**,且没有任何日志:
+        #   `IssueDSTicket` 恒返回 code=1 且 err 为空(2026-08-24 实测)。
+        #   后果是下面那条 `TERMINAL → 放行 Hub` 分支从来没有被执行过 ——
+        #   「打完一局回大厅」这条主路径在 Python 栈上结构性失效,玩家只能走降级路由;
+        #   降级路由再被 owner 未释放堵死,就是「结算后被踢回登录」。
+        #   这里把异常按 Go 语义折回 (UNKNOWN, err):UNKNOWN 是零值,天然 fail-closed,
+        #   仍然走下面的「不可证明终态 → 拒绝 + 可重试」分支,不会放宽任何门。
+        try:
+            state = await self._battle_ticket_issuer.inspect_battle_route(
+                player_id, bl.match_id
+            )
+            route_err: BaseException | None = None
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 —— 折回 Go 的 (state, err) 语义
+            state, route_err = lbattleroute.BattleRouteState.UNKNOWN, exc
         if state == lbattleroute.BattleRouteState.TERMINAL:
             log.info(
                 "battle_reconnect_skipped_terminal_match", player_id=player_id,
@@ -1749,9 +1765,25 @@ class LoginUsecase:
                 "battle route authority unavailable while locator reports BATTLE",
             )
 
-        state, route_err = await self._battle_ticket_issuer.inspect_battle_route(
-            player_id, bl.match_id
-        )
+        # ★ Go 的 `InspectBattleRoute` 返回 (state, err);Python 移植改成了「成功返回
+        #   单个 BattleRouteState、失败抛异常」(battleroute.py:174 / biz.py:2817),
+        #   但这里的调用点保留了 Go 的双值解包 —— `BattleRouteState` 是 IntEnum、不可迭代,
+        #   于是**只要走到这一行就必抛 TypeError**,且没有任何日志:
+        #   `IssueDSTicket` 恒返回 code=1 且 err 为空(2026-08-24 实测)。
+        #   后果是下面那条 `TERMINAL → 放行 Hub` 分支从来没有被执行过 ——
+        #   「打完一局回大厅」这条主路径在 Python 栈上结构性失效,玩家只能走降级路由;
+        #   降级路由再被 owner 未释放堵死,就是「结算后被踢回登录」。
+        #   这里把异常按 Go 语义折回 (UNKNOWN, err):UNKNOWN 是零值,天然 fail-closed,
+        #   仍然走下面的「不可证明终态 → 拒绝 + 可重试」分支,不会放宽任何门。
+        try:
+            state = await self._battle_ticket_issuer.inspect_battle_route(
+                player_id, bl.match_id
+            )
+            route_err: BaseException | None = None
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 —— 折回 Go 的 (state, err) 语义
+            state, route_err = lbattleroute.BattleRouteState.UNKNOWN, exc
         if state == lbattleroute.BattleRouteState.ACTIVE:
             log.warning(
                 "hub_route_rejected_active_battle", reason="battle_route_active",

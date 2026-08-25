@@ -257,6 +257,21 @@ class MySQLOwnerRepo:
                         barrier = odata.compute_admit_not_before_ms(
                             current.owner_type, old_lease, now, skew_margin_seconds
                         )
+                    # **屏障必须跨 Release 存活**(INC-20260824-003,2026-08-24)。
+                    #
+                    # 上面这套分流的判据是「**当前**记录还指向哪台 BATTLE 实例」,而
+                    # release 的 UPDATE 恰好清空 owner_type / instance_uid ——「先释放、
+                    # 后迁移」的顺序会让这里落到 now,屏障塌成 0,而那台旧战斗 DS 可能
+                    # 仍活着(Pawn 仍被模拟、journal 迟到写在途)。这不是某条链的疏忽:
+                    # login 登出释放对 BATTLE 归属一视同仁,对局中登出再重登就走它。
+                    #
+                    # 修法是把屏障从「归属指针的派生量」改成「玩家这一行的留存事实」:
+                    # release 时算好盖进 admit_not_before,这里取 max 认回来。于是
+                    # 「谁持有归属」与「何时才允许再次可玩」解耦,安全性不再依赖
+                    # 「记得在实例回收之后才释放」这种调用方纪律。
+                    # 取 max 而非直接采用:屏障只前进,陈旧留存值(早已过期)天然失效。
+                    if current.admit_not_before_ms > barrier:
+                        barrier = current.admit_not_before_ms
 
                     new_epoch = current.owner_epoch + 1
                     await cur.execute(
@@ -488,15 +503,19 @@ class MySQLOwnerRepo:
     # ── Release ──────────────────────────────────────────────────────────────
 
     async def release(
-        self, player_id: int, owner_epoch: int, operation_id: str
+        self, player_id: int, owner_epoch: int, operation_id: str, skew_margin_seconds: int
     ) -> odata.OwnerRecord:
         """epoch + operation 匹配 → 置 none(**epoch 保留**);不匹配(迟到)幂等 no-op。
 
-        ★ 两个关键点:
+        ★ 三个关键点:
           - epoch **不清零**:清零等于让下一次 Begin 的 expect_epoch=0 通过,
             旧写者的迟到 CAS 又能命中。
           - hub_source_revision **不动**:清零等于「打完一局回大厅」就把门重新对
             legacy(0)敞开,滚动窗口里的旧写者随即又能写进来(INC-20260818-003)。
+          - 释放 BATTLE 归属时 **admit_not_before 必须盖上算好的再入屏障**
+            (INC-20260824-003):屏障的判据是 owner_type=BATTLE + instance_uid,
+            而本操作正要抹掉这两列,不盖新值等于亲手把屏障降到 0。
+            skew_margin_seconds 与 begin_transition 同源同值。
         """
         now = odata.now_ms()
         async with self._pool.acquire() as conn:
@@ -549,7 +568,27 @@ class MySQLOwnerRepo:
                         )
                         return current
 
-                    await cur.execute(_SQL_RELEASE, (now, player_id, owner_epoch))
+                    # 释放前按与 begin_transition 同一个公式算好再入屏障并留存
+                    # (INC-20260824-003)。只对 BATTLE 归属算:HUB 归属的屏障按设计
+                    # 恒为 now(协作迁移,双写由 epoch fencing 拦、双可玩由客户端单连接
+                    # 拆链拦),给它盖屏障等于每次进大厅白卡一个 27s。
+                    retained_barrier = current.admit_not_before_ms
+                    if (
+                        current.owner_type == odata.OWNER_TYPE_BATTLE
+                        and current.target.instance_uid
+                    ):
+                        old_lease = await _read_lease_for_update(
+                            cur, current.target.instance_uid
+                        )
+                        stamped = odata.compute_admit_not_before_ms(
+                            current.owner_type, old_lease, now, skew_margin_seconds
+                        )
+                        # 只前进:连续两次释放不把已建立的屏障往回调。
+                        if stamped > retained_barrier:
+                            retained_barrier = stamped
+                    await cur.execute(
+                        _SQL_RELEASE, (retained_barrier, now, player_id, owner_epoch)
+                    )
                     await _write_log(
                         cur,
                         player_id,
@@ -574,6 +613,10 @@ class MySQLOwnerRepo:
             owner_epoch=owner_epoch,
             operation_id=operation_id,
             released_owner_type=current.owner_type,
+            # 留存屏障要能对账:「释放后下一次 Begin 为什么还等 / 为什么不等」的唯一现场
+            # 依据(INC-20260824-003)。缺了它,屏障塌成 0 与屏障正常留存在日志里同形。
+            retained_admit_not_before_ms=retained_barrier,
+            retained_barrier_remaining_ms=retained_barrier - now,
             pod=current.target.pod_name,
             instance_uid=current.target.instance_uid,
             instance_epoch=current.target.instance_epoch,
@@ -585,11 +628,13 @@ class MySQLOwnerRepo:
             #                            expect_epoch=0 通过,旧写者随即可回滚归属
             owner_type=odata.OWNER_TYPE_NONE,
             phase=odata.OWNER_PHASE_NONE,
-            # ★ operation_id / admit_not_before_ms 随库里一起保留(与 _SQL_RELEASE 的
-            #   列清单一致)。清空会让重放的 Release 无法与「另一条链拿过期 operation
-            #   来释放」区分开 —— 详见 _SQL_RELEASE 上方注释。
+            # ★ operation_id 随库里一起保留(与 _SQL_RELEASE 的列清单一致)。清空会让
+            #   重放的 Release 无法与「另一条链拿过期 operation 来释放」区分开 ——
+            #   详见 _SQL_RELEASE 上方注释。
             operation_id=current.operation_id,
-            admit_not_before_ms=current.admit_not_before_ms,
+            # ★ admit_not_before_ms 回显**刚盖上的留存屏障**,不是释放前的旧值
+            #   (INC-20260824-003)。调用方靠它对账「释放后下一次 Begin 为什么还等」。
+            admit_not_before_ms=retained_barrier,
             lease_deadline_ms=0,
             updated_at_ms=now,
             hub_source_revision=current.hub_source_revision,  # ★ 永不清零
@@ -644,15 +689,22 @@ _SQL_ADVANCE_SOURCE_REVISION = (
 # legacy(0)敞开,滚动窗口里的旧写者随即又能写进来。以后往这条 UPDATE 加列时,
 # 别顺手把它补上 —— 它不在这里是结论,不是遗漏。
 #
-# ⚠️ 同理**刻意没有** operation_id / admit_not_before_ms(2026-08-19 与 Go 对齐时修正:
-# 本文件此前清了这两列)。清掉它们会让「已释放」这个状态失去锚点:迟到 Release 的
-# 判定就只能靠 operation_id 对不上来兜,而那与「另一条链拿着过期 operation 来释放」
-# 完全无法区分 —— 两者在日志里都只剩 operation_mismatch。保留原值,再配合守卫里的
-# owner_type == NONE 一条,才能把 already_released 单独认出来。
+# ⚠️ 同理**刻意没有** operation_id(2026-08-19 与 Go 对齐时修正:本文件此前清了它)。
+# 清掉它会让「已释放」这个状态失去锚点:迟到 Release 的判定就只能靠 operation_id 对不上
+# 来兜,而那与「另一条链拿着过期 operation 来释放」完全无法区分 —— 两者在日志里都只剩
+# operation_mismatch。保留原值,再配合守卫里的 owner_type == NONE 一条,才能把
+# already_released 单独认出来。
+#
+# ★ admit_not_before_ms 于 2026-08-24 **改为写入**(INC-20260824-003):此前它与
+# operation_id 一并保留原值,但那是「不清空」,不是「盖新值」。屏障的判据(owner_type=
+# BATTLE + instance_uid)恰恰被本 UPDATE 清空,不盖新值等于释放即拆围栏。现在按与
+# begin_transition 同一个公式算好再盖进来 —— 它出现在列清单里是结论,不是手滑。
+# 这不影响上面那条锚点:already_released 认的是 owner_type == NONE,与本列无关。
 _SQL_RELEASE = """UPDATE owner_record SET
     owner_type = 0, phase = 0,
     pod_name = '', instance_uid = '', instance_epoch = 0,
-    assignment_or_allocation_id = '', release_track = '', updated_at_ms = %s
+    assignment_or_allocation_id = '', release_track = '',
+    admit_not_before_ms = %s, updated_at_ms = %s
 WHERE player_id = %s AND owner_epoch = %s"""
 
 _SQL_SELECT_LEASE = (

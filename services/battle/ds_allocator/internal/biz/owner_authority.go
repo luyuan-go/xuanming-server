@@ -311,14 +311,33 @@ func ownerBeginPlayers(ctx context.Context, auth OwnerAuthority, players []uint6
 // 一直返回 TARGET(已删除的 battle Pod),客户端按 §9.23 反复 Travel 到不存在的实例,
 // 比不接 owner 更糟。释放后恢复查询才会落到「无归属 → 首次进场链 → Hub」。
 //
-// 安全边界(三条,缺一不可):
+// 安全边界:
 //
-//	① **时序**:只能在被判弃实例的 GameServer 回收已确认之后调用(与 deliverAbandoned
-//	   同一门控)。提前释放会在旧 DS 可能仍在跑时放行新归属 = 双 DS(§9.22)。
+//	① **时序**(★ 2026-08-24 已由 owner 侧不变量取代,见下)。原文是:「只能在被判弃实例
+//	   的 GameServer 回收已确认之后调用;提前释放会在旧 DS 可能仍在跑时放行新归属 =
+//	   双 DS(§9.22)」。
 //	② **exact 身份**:只释放「记录仍指向本次被判弃的 pod+uid 且类型为 BATTLE」的玩家。
 //	   玩家已被迁到新 DS(epoch 已推进、pod/uid 已变)时必须跳过,否则误删活归属。
 //	③ **compare-delete**:带 Query 读到的 owner_epoch + operation_id 调用,owner 侧按
 //	   epoch 比对拒绝陈旧释放(同 §9.23「迟到 Logout 只能删自己」)。
+//
+// ★ 边界① 为什么不再是调用方的责任(INC-20260824-003,2026-08-24):
+//
+// 边界① 真正要守的是 pkg/placement §「旧 DS 最晚停止可玩时间 < 新 DS 最早开始可玩时间」,
+// 而这条不等式在服务端的**唯一**执行点是 owner 的再入屏障 admit_not_before。问题在于:
+// 屏障此前只能从「当前归属指针」推导(owner_type=BATTLE + instance_uid),而 Release 的
+// UPDATE 恰恰清空这两列 —— **释放本身就是删掉屏障的判据**,屏障随即塌成 0。
+// 于是边界① 实际上是在用「调用方记得晚点再释放」来替代一条本该由权威保证的不变量;
+// 而 login 登出释放(判据只有 owner_type != 0)从来就没遵守过它。
+//
+// 已改为:owner 的 Release 在释放 BATTLE 归属时,按与 BeginTransition 同一公式算出
+// max(now, 本实例租约截止)+skew 并**盖进 admit_not_before 留存**,BeginTransition 再取
+// max 认回来(owner_repo.go 两处)。屏障从此是**玩家这一行的留存事实**,不再是归属指针的
+// 派生量 —— 什么时候释放都不会让围栏消失。
+//
+// ⇒ 本函数的调用点不再需要「回收已确认」这道前置门来保证 §9.22 的正确性;边界②③ 仍然
+//   必须遵守(它们管的是「删哪一条」,与屏障无关)。若将来把屏障留存逻辑改掉或绕过,
+//   边界① 立刻恢复为硬要求 —— 两者是同一条不变量的两种实现,只能有一个在岗。
 //
 // 失败只告警:owner 未启用 / 抖动时,login 侧 InspectBattleRoute 的
 // abandoned→(过再入屏障)→Terminal→Hub 旧门仍能让玩家收敛,不影响正确性。

@@ -38,6 +38,9 @@
     provision : 只备料不启动(适合提前在共享盘上做好离线包);比 up 多备一份 PowerShell 7
                 免安装包,供「连 pwsh 都没有」的策划机用 bootstrap_pwsh.cmd 自举
     reset     : 停止并删除 data 目录(MySQL / Kafka / Redis 数据全清,下次 up 会重新初始化)
+    kafka-health : 只读的 Kafka 运行期存活检测;broker 已死或正在自杀时 exit 1。
+                 Windows 上 broker 会在启动很久之后才自杀,而它一死 matchmaker /
+                 matchmaker_pve / battle_result 会同时 exit 1(查那三个服务是白查)
 
 .PARAMETER Force
     provision / up 时强制重新下载并解包(默认已就位则跳过)。
@@ -50,7 +53,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('up', 'down', 'status', 'provision', 'reset')]
+    [ValidateSet('up', 'down', 'status', 'kafka-health', 'provision', 'reset')]
     [string]$Action = 'up',
 
     [switch]$Force,
@@ -75,6 +78,7 @@ $CacheDir = Join-Path $Root 'cache'     # 下载的压缩包
 . (Join-Path $PSScriptRoot 'lib/planner_mysql_startup.ps1')
 . (Join-Path $PSScriptRoot 'lib/planner_infra_fast_start.ps1')
 . (Join-Path $PSScriptRoot 'lib/planner_start_timing.ps1')
+. (Join-Path $PSScriptRoot 'lib/kafka_liveness.ps1')
 $LocalInfraLifecyclePlan = Get-PandoraLocalInfraLifecyclePlan -ProjectRoot $ProjectRoot
 $CentralMysqlManaged = $LocalInfraLifecyclePlan.Mode -ceq 'central-managed'
 
@@ -750,23 +754,35 @@ function Save-Pid([string]$Name, [int]$ProcessId) {
     Set-Content -LiteralPath (Get-PidFile $Name) -Value $ProcessId -Encoding ascii
 }
 
-function Read-LogTail([string]$Path, [int]$Lines = 40) {
+function Read-LogTail([string]$Path, [int]$Lines = 40, [int]$MaxTailBytes = 0) {
     <#
       读日志尾部。**不能用 Get-Content**:组件进程可能还开着这个文件(超时那条路径上它还活着),
       Get-Content 默认按 FileShare.Read 打开,撞上写者的独占写句柄会直接抛异常 ——
       于是"诊断"本身失败,现场反而看不到。这里显式用 ReadWrite 共享读。
       返回 $null = 文件不存在 / 读不了;返回空数组 = 文件在但没有内容(这本身就是结论)。
+
+      MaxTailBytes > 0 时只读文件末尾这么多字节,给**周期性**调用方用:Kafka 运行期存活检测
+      每次 status / up 都要读一遍 kafka.log,而那是 broker 的全量 stdout,长期跑能到几十 MB ——
+      为了几行尾巴整份读进来,要付上百 MB 的字符串和一次 GC。只在故障时跑一次的
+      Show-ComponentFailure 保持默认的整份读,行为不变。
+      从中间截断必然切坏第一行,所以截断后直接丢掉它,不把半行当日志报出去。
     #>
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
     $all = $null
+    $truncated = $false
     try {
         $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
         try {
+            if ($MaxTailBytes -gt 0 -and $fs.Length -gt [int64]$MaxTailBytes) {
+                [void]$fs.Seek(-1 * [int64]$MaxTailBytes, [System.IO.SeekOrigin]::End)
+                $truncated = $true
+            }
             $sr = [System.IO.StreamReader]::new($fs)
             try { $all = $sr.ReadToEnd() } finally { $sr.Dispose() }
         } finally { $fs.Dispose() }
     } catch { return $null }
     $rows = @($all -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+    if ($truncated -and $rows.Count -gt 0) { $rows = @($rows | Select-Object -Skip 1) }
     # 逗号不能省:PowerShell 会把返回的空数组拆成「什么都没返回」= $null,于是调用方那里
     # 「日志是空的」和「日志读不到」撞成同一个值 —— 而这两条结论正好相反(前者是"别在日志里
     # 找原因",后者是"路径不对")。诊断代码把人指错方向,比不诊断更糟。
@@ -2356,6 +2372,56 @@ function Start-LocalKafka {
     Write-Ok "Kafka :$KafkaPort"
 }
 
+# ===== Kafka 运行期存活检测(INC-20260821-001 行动项 A-3)=====
+#
+# 上面那段启动只证明「启动那一刻端口通」。而 Windows 上 broker 的死法几乎都发生在之后:
+# 保留期扫描、log cleaner 压缩、KRaft 快照清理各自都能把唯一 log dir 判失败,然后 broker
+# 自己关掉自己 —— 启动期的 exact listener 检查对这类死法完全无感。这正是事故档 §5.4 那条
+# 「启动期 ready 不能替代关键基础设施的运行期存活监控」。
+#
+# 判定本体在 lib/kafka_liveness.ps1(纯函数,可测);这里只负责取事实、排版和给退出码。
+
+function Get-LocalKafkaLiveness {
+    <#
+      取四份事实交给纯判定:有没有登记、登记进程还在不在、:$KafkaPort 还通不通、
+      kafka.log 尾巴长什么样。
+
+      全程只读,而且刻意用 Get-LivePidFileProcess 而不是 Get-RunningProcess ——
+      后者在 PID 查不到时会顺手删掉登记文件,而存活检测必须可以反复跑且不改变现场
+      (第一次跑就把证据删了,第二次跑就只剩「没有登记」这一个更弱的结论)。
+
+      日志取 200 行而不是 Show-ComponentFailure 那 40 行:致命串之后 Kafka 还会打一大段
+      关闭流水,尾巴太短会把「正在自杀」那一行挤出窗口,于是端口还通 + 看不到致命串
+      = 误判成健康,恰好是这次要堵的那一格。
+    #>
+    $registered = Test-Path -LiteralPath (Get-PidFile 'kafka') -PathType Leaf
+    $proc = Get-LivePidFileProcess 'kafka'
+    return Get-PandoraKafkaLivenessVerdict -Registered $registered -ProcessAlive ($null -ne $proc) `
+        -ListenerOpen (Test-PortOpen $KafkaPort) -Port $KafkaPort `
+        -LogTail (Read-LogTail -Path (Join-Path $LogDir 'kafka.log') -Lines 200 -MaxTailBytes 262144)
+}
+
+function Show-KafkaLiveness {
+    param([Parameter(Mandatory)]$Verdict)
+    # 这里**不能**再包一层 @():Format 已经用 `, @(...)` 保护过整个数组不被管线拆开,再包一层
+    # 得到的是「一个元素 = 整个数组」,foreach 只转一圈,而 Write-Err 的 [string] 形参会把整个
+    # 数组按空格拼成一行 —— 根因、证据、连带影响全挤进同一条 [ERR]。用法同 Read-LogTail。
+    $report = Format-PandoraKafkaLivenessReport -Verdict $Verdict
+    if ($Verdict.Healthy) { Write-Ok $report[0]; return }
+    # DEAD / DYING 用红色(它就是本次失败的原因),UNKNOWN 用黄色(拿不到证据,不等于死了)。
+    foreach ($line in $report) {
+        if ($Verdict.Blocking) { Write-Err $line } else { Write-Warn2 $line }
+    }
+    Write-Host "      完整日志:$(Join-Path $LogDir 'kafka.log')" -ForegroundColor DarkGray
+}
+
+function Test-LocalKafkaAlive {
+    <# 一键入口 / 巡检可以直接调用的存活闸:$true = 这条链还能当可用。 #>
+    $verdict = Get-LocalKafkaLiveness
+    Show-KafkaLiveness -Verdict $verdict
+    return (-not $verdict.Blocking)
+}
+
 # ===== Envoy =====
 
 function New-LocalEnvoyConfig {
@@ -2740,6 +2806,12 @@ function Invoke-Up {
         Invoke-PandoraPlannerTimedStep -Name '基础设施·Envoy' -Action { Start-LocalEnvoy }
         Invoke-PlannerExternalComponentReady 'envoy'
     }
+    # 启动期 ready 只证明「启动那一刻端口通」;Windows 上 Kafka 的自杀几乎都发生在这之后。
+    # 所以在打出「已就绪」之前再问一次运行期存活:此刻判死 / 判正在自杀就绝不能给绿灯,
+    # 否则策划拿到的是「基础设施 OK」加上随后三个业务服务集体 exit 1(INC-20260821-001 A-3)。
+    if (-not (Test-LocalKafkaAlive)) {
+        Fail 'Kafka 未通过运行期存活检测;本机基础设施不算就绪(根因、处置与连带影响见上方)。'
+    }
     Write-Host ''
     Write-Host '  本机基础设施已就绪(免 Docker)' -ForegroundColor Green
     # fast coordinator 已用 exact listener PID/exe/参数 + 协议探活验过全部组件；
@@ -2793,6 +2865,10 @@ function Invoke-Status {
         $color = if ($ok) { 'Green' } else { 'Red' }
         Write-Host ("  {0,-9} {1,-6} {2}" -f $r.Name, $r.Port, $txt) -ForegroundColor $color
     }
+    # 上面那行只说明 :9093 此刻通不通,而 Kafka 最常见的死法恰恰是「进程还在、端口还通,
+    # 但 log dir 已判失败正在关自己」。status 必须把运行期结论也打出来,否则巡检看到一行
+    # UP 就以为没事(INC-20260821-001 A-3)。
+    Show-KafkaLiveness -Verdict (Get-LocalKafkaLiveness)
     Write-Host ''
 }
 
@@ -2906,6 +2982,11 @@ try {
         # status 也显式返回退出码，供 start.ps1 这类父脚本可靠汇总；否则成功路径可能
         # 继承调用者残留的 $LASTEXITCODE，失败路径又可能被后续 status 子命令覆盖。
         'status' { Invoke-Status; exit 0 }
+        # kafka-health 是只读诊断:Kafka 在 Windows 上会在启动很久之后才自杀,那时启动
+        # 窗口早关了。判死时 exit 1,可以直接当父脚本 / 计划任务的门禁。不进生命周期锁
+        # (它不改任何状态),也刻意不自动重启 broker —— 重启会踩掉第一现场,而事故档
+        # A-1/A-2 要求的正是先取证再恢复。
+        'kafka-health' { if (Test-LocalKafkaAlive) { exit 0 } else { exit 1 } }
         # provision 比 up 多备一份 PowerShell 7 免安装包:它只服务于「本机连 pwsh 都没有」的
         # 策划机(由 bootstrap_pwsh.cmd 在 cmd.exe 里自举),能跑到 up 的机器用不上。
         'provision' { Invoke-ProvisionAll; Save-PwshBootstrapArchive }

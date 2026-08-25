@@ -165,10 +165,10 @@ func (p *KeyOrderedProducer) Send(ctx context.Context, key string, msg proto.Mes
 
 	_, _, err = p.producer.SendMessage(pm)
 	if err != nil {
-		atomic.AddInt64(&p.errorCount, 1)
+		p.recordSend(false)
 		return fmt.Errorf("send: %w", err)
 	}
-	atomic.AddInt64(&p.successCount, 1)
+	p.recordSend(true)
 	return nil
 }
 
@@ -192,10 +192,10 @@ func (p *KeyOrderedProducer) SendRaw(ctx context.Context, key string, payload []
 	}
 
 	if _, _, err := p.producer.SendMessage(pm); err != nil {
-		atomic.AddInt64(&p.errorCount, 1)
+		p.recordSend(false)
 		return fmt.Errorf("send: %w", err)
 	}
-	atomic.AddInt64(&p.successCount, 1)
+	p.recordSend(true)
 	return nil
 }
 
@@ -240,11 +240,11 @@ func (p *KeyOrderedProducer) SendRawWithEventType(ctx context.Context, key strin
 
 	// SendMessage 同步返回 broker 发送结果;失败只累计 errorCount,绝不能累计成功数。
 	if _, _, err := p.producer.SendMessage(pm); err != nil {
-		atomic.AddInt64(&p.errorCount, 1)
+		p.recordSend(false)
 		return fmt.Errorf("send: %w", err)
 	}
 	// 只有 Sarama 确认发送成功后才累计 successCount。
-	atomic.AddInt64(&p.successCount, 1)
+	p.recordSend(true)
 	return nil
 }
 
@@ -267,10 +267,10 @@ func (p *KeyOrderedProducer) SendRawWithHeaders(ctx context.Context, key string,
 		Headers:   headers,
 	}
 	if _, _, err := p.producer.SendMessage(pm); err != nil {
-		atomic.AddInt64(&p.errorCount, 1)
+		p.recordSend(false)
 		return fmt.Errorf("send: %w", err)
 	}
-	atomic.AddInt64(&p.successCount, 1)
+	p.recordSend(true)
 	return nil
 }
 
@@ -404,6 +404,22 @@ func (p *KeyOrderedProducer) Close() error {
 // Stats 返回成功 / 失败计数(累计)。
 func (p *KeyOrderedProducer) Stats() (success, errCount int64) {
 	return atomic.LoadInt64(&p.successCount), atomic.LoadInt64(&p.errorCount)
+}
+
+// recordSend 是四条发送路径(Send / SendRaw / SendRawWithEventType / SendRawWithHeaders)
+// 共用的记账点:进程内累计计数 + prometheus 指标。
+//
+// 收敛成一处的原因:此前四条路径各自内联 atomic.AddInt64,加指标就要在八个位置各贴一行,
+// 而"成功/失败必须恰好记一次"是这里唯一的正确性要求 —— 分散写就是给漏记留缝
+// (Stats 的进程内计数本身也只在 Close 日志里露过一次面,长期没有外部可见性)。
+func (p *KeyOrderedProducer) recordSend(ok bool) {
+	if ok {
+		atomic.AddInt64(&p.successCount, 1)
+		ProduceTotal.WithLabelValues(p.topic, produceResultOK).Inc()
+		return
+	}
+	atomic.AddInt64(&p.errorCount, 1)
+	ProduceTotal.WithLabelValues(p.topic, produceResultError).Inc()
 }
 
 func (p *KeyOrderedProducer) isClosed() bool {

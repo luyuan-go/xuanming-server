@@ -211,7 +211,7 @@ storage directory 标记为 failed。配置只有一个 `log.dirs`，所以 brok
 |---|---|---|---|
 | 在复发窗口捕获 `.timeindex` 的 exact handle owner、访问模式与时间线 | 未开始 | Windows handle/ETW 取证方案待定 | 必须能给出 PID、映像和句柄共享模式；日志脱敏。 |
 | 定谳 holder 后消除不兼容文件共享方式 | 未开始 | 未定；禁止先猜杀软排除或直接删目录 | 针对真实 holder 做修复前失败/修复后通过回归。 |
-| 为本机 Kafka 增加运行期退出检测与明确不可玩状态 | 未开始 | `local_infra.ps1` / 策划可玩门待设计 | broker 退出后必须快速报错，不得继续显示可玩。 |
+| 为本机 Kafka 增加运行期退出检测与明确不可玩状态 | 已落码，待 A-4 故障注入验证 | 判定在 `tools/scripts/lib/kafka_liveness.ps1`（纯函数）；取证与出口在 `local_infra.ps1` 的 `Get-LocalKafkaLiveness` / `Show-KafkaLiveness` / `Test-LocalKafkaAlive`：`-Action up` 在打印「已就绪」前过闸、`-Action status` 追加运行期结论、新增只读 `-Action kafka-health` 判死即 exit 1 | `pwsh tools/scripts/tests/localinfra_kafka_liveness_contract_test.ps1` 通过（DEAD / DYING / ALIVE / UNKNOWN 四态 + 点名连带服务）；本机 `-Action kafka-health` 实测在 broker 不在时 exit 1。真实自杀现场注入属 A-4，仍未执行 |
 | 设计有数据校验与有界次数的安全恢复流程 | 未开始 | 运维脚本/手册待设计 | 保留并校验 topic、segment、consumer offsets；失败不得 reset。 |
 | Windows retention sharing violation 故障注入回归 | 未开始 | 测试待设计 | 复现真实 rename 失败，验证告警、退出检测与恢复。 |
 
@@ -225,6 +225,25 @@ storage directory 标记为 failed。配置只有一个 `log.dirs`，所以 brok
 - `tools/scripts/tests/localinfra_kafka_planner_tuning_contract_test.ps1` 已通过，证明生成配置包含该开关。
 - 这只是策划机缓解措施，不等于事故关闭：尚未完成原数据目录受控恢复、topic/offset 对账、故障注入、
   运行期退出检测和玩家 E2E，以下关闭闸保持未勾选。
+
+### 7.2.2 2026-08-24 运行期存活检测落码（A-3）
+
+- 判定本体是纯函数 `tools/scripts/lib/kafka_liveness.ps1`，四态：`ALIVE` / `DYING` / `DEAD` / `UNKNOWN`。
+  关键是把「broker 进程没了」（DEAD）与「进程还在、甚至 `:9093` 还通，但 log dir 已判失败正在
+  关自己」（DYING）分成两个结论 —— 只看端口的检测正是栽在后者：Kafka 关闭顺序是先停 replicas 与
+  listener、后退进程，那一小段窗口里端口仍可连，会给出绿灯。
+- 致命串取自本事故 §2.2 与 2026-08-24 现场：`Shutdown broker because all log dirs ... have failed`
+  / `because the log directory has failed` / `KafkaStorageException` / `AccessDeniedException:
+  ...checkpoint.deleted` / `ProcessTerminatingFaultHandler`。`WARN Failed atomic move of ...
+  retrying with a non-atomic move` **刻意不入表**：那是 Kafka 自己的重试路径，非原子 move 有可能
+  成功，收进来会在正常运行时误拦一键启动。
+- 输出必须指对根因：判死时点名 `matchmaker` / `matchmaker_pve` / `battle_result` 是因强依赖 Kafka
+  被 fail-fast 连带打死的，明说别去查那三个服务，并撤销「可玩」结论。
+- 调用面：`-Action up` 在打印「已就绪」之前过闸（判死即 `Fail`，不给绿灯）、`-Action status` 追加
+  运行期结论、新增只读 `-Action kafka-health` 供独立诊断与父脚本门禁（判死 exit 1）。刻意不自动
+  重启 broker —— 重启会踩掉第一现场，而 A-1 / A-2 要求先取证再恢复。
+- 仍未覆盖：没有引入常驻 supervisor，因此仍是「被调用时才判定」，broker 在两次调用之间自杀不会
+  自动告警；A-4 的真实 sharing violation 注入回归也未执行，本项不构成关闭闸。
 
 ### 7.3 防复发规则
 
@@ -264,7 +283,7 @@ storage directory 标记为 failed。配置只有一个 `log.dirs`，所以 brok
 |---|---|---|---|---|---|
 | A-1 | P0 | 捕获并定谳 `.timeindex` exact handle owner；禁止猜测来源 | 待指定 | 未开始 | 本事故根因闭合 |
 | A-2 | P0 | 在不删除/reset data 的前提下做 storage 校验、受控重启和 topic/offset 对账 | 待指定 | 未开始 | 实际恢复 |
-| A-3 | P0 | 增加 Kafka 运行期退出检测，退出后撤销策划“可玩”状态并明确报错 | 待指定 | 未开始 | 永久修复 |
+| A-3 | P0 | 增加 Kafka 运行期退出检测，退出后撤销策划“可玩”状态并明确报错 | 待指定 | 已落码，待 A-4 故障注入验证（实现见 §7.2 与 §7.2.2） | 永久修复 |
 | A-4 | P0 | 做 Windows retention sharing violation 故障注入，验证检测、恢复和数据安全 | 待指定 | 未开始 | 防复发回归 |
 | A-5 | P0 | 完成真实 Login → Hub/Battle E2E 与 Kafka producer/consumer 恢复验证 | 用户/待指定 | 未开始 | 关闭硬门 |
 | A-6 | P1 | 完成同机杀软、索引、备份及其他文件扫描者的配置排查，只记录有证据的命中 | 待指定 | 未开始 | holder 排查 |

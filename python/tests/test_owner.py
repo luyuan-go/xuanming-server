@@ -61,8 +61,9 @@ class FakeRepo:
         self.renew_lease_seconds.append(lease_seconds)
         return 12345
 
-    async def release(self, player_id, owner_epoch, operation_id):
+    async def release(self, player_id, owner_epoch, operation_id, skew_margin_seconds):
         self.calls.append(("release", player_id, owner_epoch, operation_id))
+        self.release_skew = skew_margin_seconds
         return self.record
 
     async def sweep_transition_log(self, retention_days, batch):
