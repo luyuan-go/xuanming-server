@@ -267,6 +267,12 @@ $contractTests = @(
     'tools/scripts/tests/localinfra_bundled_packages_contract_test.ps1'
     # 免 Go 策划机必须随发布包拿到 pandora-migrate.exe；否则旧数据目录会跳过增量迁移。
     'tools/scripts/tests/release_binaries_migrate_contract_test.ps1'
+    # Windows 本机 Kafka 的两条硬约束(cleaner 关 + 保留期无限)不许被"优化"掉;
+    # 复活任何一条都会重演 INC-20260821-001 的 broker 自杀。这条测试此前没进 CI 清单。
+    'tools/scripts/tests/localinfra_kafka_planner_tuning_contract_test.ps1'
+    # Kafka 运行期存活检测(INC-20260821-001 行动项 A-3):DEAD/DYING/UNKNOWN 三态判定、
+    # 判死时点名被连带打死的三个服务、以及 up 闸与策划可玩门的位置(挪到绿灯之后即失效)。
+    'tools/scripts/tests/localinfra_kafka_liveness_contract_test.ps1'
 )
 $contractFailed = @()
 foreach ($rel in $contractTests) {

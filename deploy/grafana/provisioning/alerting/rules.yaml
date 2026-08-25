@@ -429,3 +429,160 @@ groups:
               maxDataPoints: 43200
               refId: C
               type: math
+
+  # ══ Kafka 投递链健康(2026-08-24 补)═════════════════════════════════════
+  # 与上面 outbox-backlog 组互补:那组答「已经堆了多少」(容量水位,MTTD 以天计),
+  # 本组答「现在投不投得出去」(速率,MTTD 以分钟计)。只有后者能在 broker 半夜自杀时
+  # 当场响 —— 免Docker Windows 链已有 8 类 broker 自杀故障(INC-20260821-001),而它的
+  # 现场表现是 matchmaker / matchmaker_pve / battle_result 被 fail-fast 连带 exit 1,
+  # 查那三个服务全是白查。本组的价值就是把矛头直接指回 Kafka。
+  #
+  # 【指标来源】pkg/kafkax/metrics.go(Go)与 python/pandorapy/metrics.py(Python,名字与
+  # label 逐字对齐)。15 个接 Kafka 的服务都已挂 /metrics 且在 prometheus.yml 的
+  # pandora-go-services job 里,不需要新增抓取配置。
+  #
+  # 【为什么用 rate 而不是 increase】三条都是「持续在错」而非「错过一次」才值得叫醒人:
+  # 单次投递失败在出箱型链路上下一拍就重试掉了,for 时长负责滤掉抖动。
+  - orgId: 1
+    name: kafka-health
+    folder: Pandora Alerts
+    interval: 1m
+    rules:
+      # ── 消费主循环持续报错(critical)──────────────────────────────────
+      # 这条是「Kafka 死了」最快的判据:它数的是**根本没拿到消息**(broker 不可达 /
+      # rebalance 失败 / 协调者不可用),与 pandora_kafka_consume_total 是两回事。
+      # 两者的组合就是分诊表:本条在涨而 consume_total 静止 = Kafka 侧问题;
+      # 反过来 consume_total 出现 result=retry/exhausted = 业务 handler 的问题。
+      # critical 的理由:battle_result 停止消费 ds.lifecycle 即判弃补偿链停摆,
+      # 与既有 critical 三条(分配必失败 / 写入全拒 / 补偿链停摆)同一量级。
+      - uid: pandora-kafka-consume-loop-failing
+        title: Kafka 消费循环持续报错
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Kafka 消费循环持续报错 topic={{ $labels.topic }} group={{ $labels.group }},多半是 broker 不可达'
+          description: '消费者连消息都拿不到(不是处理失败)。先确认 broker 本身:免Docker 链跑 local_infra.ps1 -Action kafka-health,k8s 看 kafka Pod。broker 若已死,matchmaker / matchmaker_pve / battle_result 会被 fail-fast 连带 exit 1,不要去查那三个服务。消费循环自带 200ms→30s 指数退避,不会打满 CPU,但在 broker 恢复前推送与判弃补偿都是停的。当前速率 {{ with $values.A }}{{ humanize .Value }}{{ else }}无数据{{ end }} 次/秒。'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: pandora-prometheus
+            model:
+              editorMode: code
+              expr: sum by (topic, group) (rate(pandora_kafka_consume_loop_error_total[5m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { type: gt, params: [0, 0] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A > 0
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+
+      # ── 投递持续失败(warning)────────────────────────────────────────────
+      # 出箱型 topic(player.update / player.experience / mission.update / auction.match)
+      # 失败只是延迟,下轮重投不丢;best-effort 型(chat.* / *.audit / 各类 push 事件)
+      # 失败即**永久丢事件**,没有任何补偿。所以按 topic 分诊,不要笼统看总量。
+      - uid: pandora-kafka-produce-failing
+        title: Kafka 投递持续失败
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Kafka 投递持续失败 topic={{ $labels.topic }},出箱型只是延迟、best-effort 型是永久丢事件'
+          description: '先按 topic 分档:pandora.player.update / .player.experience / .mission.update / .auction.match 走事务出箱,行留在 MySQL,kafka 恢复后自动排空,只是玩家看到的段位、经验、任务进度会延迟;pandora.chat.* 与 .trade.audit / .auction.audit / .leaderboard.settle 是 best-effort,这段时间的事件永久丢失、没有补偿。若同时有 pandora-kafka-consume-loop-failing 在响,那就是 broker 整体不可达,先修 broker。当前失败速率 {{ with $values.A }}{{ humanize .Value }}{{ else }}无数据{{ end }} 次/秒。'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: pandora-prometheus
+            model:
+              editorMode: code
+              expr: sum by (topic) (rate(pandora_kafka_produce_total{result="error"}[5m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { type: gt, params: [0, 0] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A > 0
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+
+      # ── 有消息进了死信队列(warning)──────────────────────────────────────
+      # ⚠️ 全仓**没有任何 DLQ 消费者 / 回放器**,infra.md §4.4 承诺的「人工介入」此前没有
+      # 任何触发机制 —— 这条规则就是 DLQ 唯一的发现手段。响了必须有人去看 DLQ topic,
+      # 否则那些消息就永远躺在那里,而链路看起来一切正常。
+      # for 只有 5m:进 DLQ 已经是重试耗尽之后的终态,不需要再等它「持续」。
+      - uid: pandora-kafka-dlq-nonzero
+        title: 有消息进入死信队列
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        labels:
+          severity: warning
+        annotations:
+          summary: '有消息进入 DLQ topic={{ $labels.topic }} group={{ $labels.group }},没有自动回放,必须人工处理'
+          description: '消息已重试耗尽或被判为毒丸,转投 pandora.dlq.<domain>.<event> 后 ack。全仓没有 DLQ 消费者,不会自动回放 —— 不去捞就是永久丢。先看 pandora_kafka_consume_total 的 result 维度定性:poison 多半是双端协议漂移(解码失败),exhausted 是下游持续不可用。再去 DLQ topic 按 dlq-src-topic / dlq-src-partition / dlq-src-offset 三个 header 溯源。当前进 DLQ 速率 {{ with $values.A }}{{ humanize .Value }}{{ else }}无数据{{ end }} 条/秒。'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: pandora-prometheus
+            model:
+              editorMode: code
+              expr: sum by (topic, group) (rate(pandora_kafka_dlq_total{result="ok"}[15m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { type: gt, params: [0, 0] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A > 0
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math

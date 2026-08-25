@@ -4783,6 +4783,26 @@ function Wait-LocalPlannerPlayable {
         Write-Err '等待 Hub DS 结束后 Envoy Login 路由已不可达。'
         return $false
     }
+    # Kafka 运行期存活(INC-20260821-001 行动项 A-3 的「撤销可玩状态」半条)。
+    #
+    # 放在最后一道而不是最前:Kafka 在 `up` 那一刻是活的已由 local_infra.ps1 的 up 闸保证,
+    # 真正没人看的是**之后**那段 —— Wait-LocalHubDsReady 等关卡加载动辄几十秒,而免Docker
+    # Windows 链已有 8 类 broker 自杀故障恰好在这种空窗里发作。与上面复查 login listener /
+    # Envoy 路由是同一个理由:等待期间死掉的东西,不复查就会被绿灯盖过去。
+    #
+    # 走子进程 -Action kafka-health 而不是 dot-source:local_infra.ps1 末尾就开始真的备料 /
+    # 起进程,dot-source 进来会有副作用;它的 exit 0/1 本来就是照「可以直接当父脚本门禁」
+    # 设计的(见 tools/scripts/tests/localinfra_kafka_liveness_contract_test.ps1)。
+    # 判死时它自己会打出根因、证据、处置,以及「别去查 matchmaker / matchmaker_pve /
+    # battle_result,它们只是被连带打死的」——A-3 的全部价值就在那句点名上。
+    #
+    # ⚠️ UNKNOWN 不拦(kafka-health 只在 DEAD / DYING 时 exit 1):为一份读不到的日志把策划
+    # 的一键启动判死,是把观测缺口升级成可用性事故。
+    & "$ScriptDir/local_infra.ps1" -Action kafka-health
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err 'Kafka broker 已死或正在自杀(详情见上方存活报告);撤销「可玩」结论 —— 撮合、PVE 撮合与战斗结算落库都起不来。'
+        return $false
+    }
     return $true
 }
 

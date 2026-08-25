@@ -242,8 +242,19 @@ storage directory 标记为 failed。配置只有一个 `log.dirs`，所以 brok
 - 调用面：`-Action up` 在打印「已就绪」之前过闸（判死即 `Fail`，不给绿灯）、`-Action status` 追加
   运行期结论、新增只读 `-Action kafka-health` 供独立诊断与父脚本门禁（判死 exit 1）。刻意不自动
   重启 broker —— 重启会踩掉第一现场，而 A-1 / A-2 要求先取证再恢复。
-- 仍未覆盖：没有引入常驻 supervisor，因此仍是「被调用时才判定」，broker 在两次调用之间自杀不会
-  自动告警；A-4 的真实 sharing violation 注入回归也未执行，本项不构成关闭闸。
+- 「撤销可玩状态」半条落在 `tools/scripts/start.ps1` 的 `Wait-LocalPlannerPlayable`：它在复查完
+  login listener 与 Envoy 路由之后再过一次 `-Action kafka-health`，判死即返回 `$false`，策划双击
+  入口不显示「现在可以登录进游戏」。放最后一道是因为 `up` 那一刻的存活已由 up 闸保证，真正没人
+  盯的是 `Wait-LocalHubDsReady` 等关卡加载那几十秒的空窗 —— 本事故这一类自杀恰好在这种空窗发作。
+  `UNKNOWN` 不拦（`kafka-health` 只在 DEAD / DYING 时 exit 1）：为一份读不到的日志把一键启动判死，
+  等于把观测缺口升级成可用性事故。
+- 仍未覆盖：没有引入常驻 supervisor，因此**本机侧**仍是「被调用时才判定」，broker 在两次调用之间
+  自杀不会自动告警。部署侧另有一条独立通道：2026-08-24 同批次给 `pkg/kafkax` 埋了
+  `pandora_kafka_consume_loop_error_total` 等指标，并在
+  `deploy/grafana/provisioning/alerting/rules.yaml` 的 `kafka-health` 组落了
+  `pandora-kafka-consume-loop-failing`（critical，for 10m）—— 那条才是真正的常驻监控，但它只覆盖
+  跑 Prometheus 的部署，覆盖不到策划本机。A-4 的真实 sharing violation 注入回归仍未执行，
+  本项不构成关闭闸。
 
 ### 7.3 防复发规则
 
@@ -283,7 +294,7 @@ storage directory 标记为 failed。配置只有一个 `log.dirs`，所以 brok
 |---|---|---|---|---|---|
 | A-1 | P0 | 捕获并定谳 `.timeindex` exact handle owner；禁止猜测来源 | 待指定 | 未开始 | 本事故根因闭合 |
 | A-2 | P0 | 在不删除/reset data 的前提下做 storage 校验、受控重启和 topic/offset 对账 | 待指定 | 未开始 | 实际恢复 |
-| A-3 | P0 | 增加 Kafka 运行期退出检测，退出后撤销策划“可玩”状态并明确报错 | 待指定 | 已落码，待 A-4 故障注入验证（实现见 §7.2 与 §7.2.2） | 永久修复 |
+| A-3 | P0 | 增加 Kafka 运行期退出检测，退出后撤销策划“可玩”状态并明确报错 | 待指定 | 已落码（检测 + 撤销可玩状态两半均已接线，实现见 §7.2 与 §7.2.2），待 A-4 故障注入验证 | 永久修复 |
 | A-4 | P0 | 做 Windows retention sharing violation 故障注入，验证检测、恢复和数据安全 | 待指定 | 未开始 | 防复发回归 |
 | A-5 | P0 | 完成真实 Login → Hub/Battle E2E 与 Kafka producer/consumer 恢复验证 | 用户/待指定 | 未开始 | 关闭硬门 |
 | A-6 | P1 | 完成同机杀软、索引、备份及其他文件扫描者的配置排查，只记录有证据的命中 | 待指定 | 未开始 | holder 排查 |

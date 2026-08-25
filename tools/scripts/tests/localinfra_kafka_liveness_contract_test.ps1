@@ -77,6 +77,20 @@ Assert-True ($report -match '不处于「可玩」状态') '判死报告撤销�
 Assert-True (((Format-PandoraKafkaLivenessReport -Verdict (Get-State $true $true $true @('[x] INFO ok'))) -join "`n") -notmatch 'matchmaker') `
     'ALIVE 时不发连带警告(误报会让人学会忽略它)'
 
+# UNKNOWN 这一格此前零覆盖,而它恰恰是最容易写错的:开关一旦写成 -not Healthy,
+# 「端口有人监听但不是本工作区起的」「kafka.log 读不到」都会打出判死级文案 ——
+# 现场完全可能是 Kafka 活得好好的。两种 UNKNOWN 来源各钉一条。
+foreach ($unknown in @((Get-State $true $true $true $null), (Get-State $false $false $true $null))) {
+    $unknownReport = (Format-PandoraKafkaLivenessReport -Verdict $unknown) -join "`n"
+    Assert-True ($unknown.State -ceq 'UNKNOWN') 'UNKNOWN 用例前提成立'
+    Assert-True ($unknownReport -notmatch 'matchmaker') `
+        'UNKNOWN 不点名那三个服务(没有证据说它死了,不许下判死结论)'
+    Assert-True ($unknownReport -notmatch '不处于「可玩」状态') `
+        'UNKNOWN 不撤销「可玩」结论(观测缺口不等于故障)'
+    Assert-True ($unknownReport -match '观测缺口') `
+        'UNKNOWN 明说这是看不清而不是坏了,并指向 -Action kafka-health'
+}
+
 # 把待测函数从 local_infra.ps1 的 AST 里抠出来真跑一次(不能 dot-source 整个脚本 ——
 # 它末尾就开始真的备料 / 起进程了)。抠的是原文,所以测的确实是仓库里那份代码。
 Invoke-Expression (Get-InfraFunction 'Show-KafkaLiveness')
@@ -108,12 +122,38 @@ Assert-True ($source -match "ValidateSet\('up', 'down', 'status', 'kafka-health'
     'local_infra.ps1 提供可独立运行的 -Action kafka-health 诊断命令'
 Assert-True ($source -match "'kafka-health' \{ if \(Test-LocalKafkaAlive\) \{ exit 0 \} else \{ exit 1 \} \}") `
     'kafka-health 判死时 exit 1,可以直接当父脚本门禁'
-Assert-True ($source -match 'if \(-not \(Test-LocalKafkaAlive\)\) \{') `
-    'Invoke-Up 在打出「已就绪」之前过存活闸,不让 broker 已死的链拿到绿灯'
+# ⚠️ 这条不能只断言字符串存在:那样把闸挪到绿灯之后、甚至挪出 Invoke-Up,测试照样全绿,
+# 而闸的全部意义就在于**位置**。所以从 AST 里抠出 Invoke-Up 的函数体,断言闸在函数体内
+# 且出现在「已就绪」那句之前。
+$invokeUpBody = Get-InfraFunction 'Invoke-Up'
+$gateIdx = $invokeUpBody.IndexOf('if (-not (Test-LocalKafkaAlive)) {')
+$readyIdx = $invokeUpBody.IndexOf('本机基础设施已就绪')
+Assert-True ($gateIdx -ge 0) 'Invoke-Up 函数体里有 Kafka 存活闸(不是散落在别处)'
+Assert-True ($readyIdx -ge 0) 'Invoke-Up 函数体里有「已就绪」绿灯(本断言的参照物还在)'
+Assert-True ($gateIdx -lt $readyIdx) `
+    'Kafka 存活闸排在「已就绪」绿灯之前,不让 broker 已死的链拿到绿灯'
 Assert-True ($source -match 'Show-KafkaLiveness -Verdict \(Get-LocalKafkaLiveness\)') `
     '-Action status 也打运行期结论,不让一行 UP 冒充健康'
 Assert-True ($source -match "Read-LogTail -Path \(Join-Path \`$LogDir 'kafka\.log'\) -Lines 200 -MaxTailBytes") `
     '存活检测读 kafka.log 走有界路径,不整份读 broker 的全量 stdout'
+
+# A-3 的另一半:「退出后**撤销策划「可玩」状态**」。检测本身只是前提,不接可玩门就等于
+# broker 已死却照样打「现在可以登录进游戏」——事故档 §7.3 明确把这条列为防复发规则。
+# 同样做位置断言而不是字符串存在断言:闸挪到 return $true 之后就形同虚设。
+$startPs1 = Join-Path $scriptsDir 'start.ps1'
+$startErrs = $null
+$startAst = [System.Management.Automation.Language.Parser]::ParseFile($startPs1, [ref]$null, [ref]$startErrs)
+if ($startErrs -and $startErrs.Count -gt 0) { throw "start.ps1 语法错误:$($startErrs[0].Message)" }
+$playable = @($startAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Wait-LocalPlannerPlayable' }, $true))
+Assert-True ($playable.Count -eq 1) 'start.ps1 里有唯一的 Wait-LocalPlannerPlayable(可玩门还在)'
+if ($playable.Count -eq 1) {
+    $playableBody = $playable[0].Extent.Text
+    $healthIdx = $playableBody.IndexOf("-Action kafka-health")
+    $returnTrueIdx = $playableBody.LastIndexOf('return $true')
+    Assert-True ($healthIdx -ge 0) '可玩门过一次 Kafka 存活(A-3「撤销可玩状态」半条已接线)'
+    Assert-True ($healthIdx -lt $returnTrueIdx) `
+        'Kafka 存活闸排在可玩门 return $true 之前,broker 已死不给「现在可以登录进游戏」'
+}
 
 if ($script:Failed.Count -gt 0) {
     Write-Host ''

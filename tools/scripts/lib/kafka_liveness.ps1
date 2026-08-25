@@ -170,9 +170,17 @@ function New-PandoraKafkaLivenessVerdict {
 
 function Format-PandoraKafkaLivenessReport {
     <#
-      把结论排版成可以整段贴回来的几行。不健康时**必须**带上那句连带说明 ——
+      把结论排版成可以整段贴回来的几行。判死时**必须**带上那句连带说明 ——
       A-3 的全部价值就在这一句:2026-08-24 现场看到的是三个业务服务同时 exit 1,
       不点名的话下一个人还会照着那三个服务再查一轮。
+
+      ⚠️ 连带说明的开关是 Blocking(DEAD / DYING)而**不是** -not Healthy。
+      两者只差一个 UNKNOWN,而那一格恰恰是「端口有人监听但不是本工作区起的」或
+      「kafka.log 读不到」—— 现场完全可能是 Kafka 活得好好的。用 -not Healthy 会让
+      UNKNOWN 也打出「那三个服务会 exit 1」「本机不处于可玩状态」这种判死级文案,
+      既与 New-PandoraKafkaLivenessVerdict 里「UNKNOWN 只能告警不能拦」的取舍自相矛盾,
+      也正是本文件自己警告过的那种误报 —— 误报会让人学会忽略这段输出,
+      于是真的判死那次也被一起忽略掉。
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Verdict)
@@ -185,10 +193,14 @@ function Format-PandoraKafkaLivenessReport {
         foreach ($line in @($Verdict.Signature.Evidence)) { $lines.Add("  证据:$line") }
         $lines.Add("  处置:$($Verdict.Signature.Fix)")
     }
-    if (-not $Verdict.Healthy) {
+    if ($Verdict.Blocking) {
         $lines.Add(("  连带影响:{0} 会因为强依赖 Kafka 而 fail-fast 同时 exit 1。别去查那三个服务,它们只是被连带打死的,先把 Kafka 修好。" -f
             ($script:PandoraKafkaFailFastServices -join ' / ')))
         $lines.Add('  在 Kafka 恢复之前,本机这条链不处于「可玩」状态:撮合、PVE 撮合与战斗结算落库都起不来。')
+    }
+    elseif (-not $Verdict.Healthy) {
+        # UNKNOWN:只说「没看清」,绝不下判死结论,也不给处置指令。
+        $lines.Add('  这是观测缺口不是故障结论:Kafka 可能好好的(比如 broker 是另一个工作区起的)。要确认请跑 local_infra.ps1 -Action kafka-health。')
     }
     return , @($lines.ToArray())
 }
