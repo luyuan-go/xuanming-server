@@ -101,3 +101,58 @@ def test_generated_ddl_uses_the_go_types() -> None:
     ddl = protosql.schema_of(dpb.PlayerData).create_table_sql().upper()
     assert "MEDIUMTEXT" in ddl, f"nickname/avatar 没建成 MEDIUMTEXT：\n{ddl}"
     assert "VARCHAR(255)" not in ddl, f"仍在用 VARCHAR(255)：\n{ddl}"
+
+
+def test_table_options_are_taken_from_the_real_go_source() -> None:
+    """表选项（collation / 列注释前缀）也必须与 Go 真源一致。
+
+    ★ 这条是 2026-09-05 补的，补的是上面那条**没盖到的那一半**。
+
+    此前只核对了「列类型」映射，于是 `create_table_sql()` 的**表选项**那一行
+    漂了很久都没人发现：Go 钉 `COLLATE=utf8mb4_unicode_ci`，Python 只写
+    `DEFAULT CHARSET=utf8mb4` 不写 COLLATE。
+
+    后果比列类型漂移严重得多，因为它**修不回来**：两栈都用
+    `CREATE TABLE IF NOT EXISTS`，所以 `player_data` 由先启动的一侧建出来；
+    而 `SyncAllTables` 只发逐列 `MODIFY / CHANGE / ADD COLUMN`
+    （`buildAlterClauses`），**从不发 `ALTER TABLE ... CONVERT TO / COLLATE`**。
+    列类型漂了 Go 下次启动会改回来，collation 漂了则永远错着。
+
+    三种可能的结果：Go 先起 → `utf8mb4_unicode_ci`；Python 先起且落 dev MySQL
+    → `utf8mb4_0900_ai_ci`（继承 01-create-databases.sql 的库默认）；
+    Python 先起且落 TiDB → `utf8mb4_bin`（继承 collation_server）。
+    三者对「两个字符串是不是同一个」的答案互不相同。
+    """
+    src = _find_proto2mysql_source()
+    if src is None:
+        pytest.skip("GOPATH 里没有 proto2mysql 模块缓存（跑一次 go mod download 即可）")
+
+    text = src.read_text(encoding="utf-8", errors="replace")
+
+    m = re.search(r"ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=(\w+)", text)
+    assert m, f"没在 {src} 里找到建表的 ENGINE/CHARSET/COLLATE 那一行 —— 结构变了"
+    assert protosql.GO_TABLE_COLLATION == m.group(1), (
+        f"Go 侧表 collation 是 {m.group(1)!r}，protosql.GO_TABLE_COLLATION 写的是 "
+        f"{protosql.GO_TABLE_COLLATION!r}。两栈建同一张表，这里漂了就永远修不回来。"
+    )
+
+    m = re.search(r'columnCommentPrefix\s*=\s*"([^"]+)"', text)
+    assert m, f"没在 {src} 里找到 columnCommentPrefix —— 结构变了"
+    assert protosql._COLUMN_COMMENT_PREFIX == m.group(1), (
+        f"Go 侧列注释前缀是 {m.group(1)!r}，本仓写的是 "
+        f"{protosql._COLUMN_COMMENT_PREFIX!r}。它是 Go 的改名迁移锚点，"
+        f"对不上会让 Go 每次启动把所有列 MODIFY 一遍去回填。"
+    )
+
+
+def test_generated_ddl_carries_collation_and_field_number_comments() -> None:
+    """端到端：真建出来的 DDL 带 collation 和每列的 `pb:N`。"""
+    from pandora.data_service.v1 import data_service_pb2 as dpb
+
+    ddl = protosql.schema_of(dpb.PlayerData).create_table_sql()
+    assert f"COLLATE={protosql.GO_TABLE_COLLATION}" in ddl, (
+        f"建表语句没带 COLLATE —— 会继承库默认，而那是 MySQL/TiDB 各不相同的：\n{ddl}"
+    )
+    assert "COMMENT 'pb:1'" in ddl and "COMMENT 'pb:10'" in ddl, (
+        f"列注释缺 proto 字段号（Go 的改名迁移锚点）：\n{ddl}"
+    )

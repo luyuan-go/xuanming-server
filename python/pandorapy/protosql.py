@@ -30,6 +30,44 @@ _OPT_TABLE_NAME = 500001
 _OPT_PRIMARY_KEY = 500002
 _OPT_AUTO_INCREMENT = 500006
 
+# ─────────────────── 与 Go 侧逐字对齐的建表常量 ───────────────────
+#
+# 两栈都用 `CREATE TABLE IF NOT EXISTS` 建同一张 `player_data`，所以**先启动的
+# 那一侧决定这张表长什么样**，而 proto2mysql 的 `SyncAllTables` 只发逐列
+# `MODIFY / CHANGE / ADD COLUMN`（`buildAlterClauses`），**从不发
+# `ALTER TABLE ... CONVERT TO / COLLATE`** —— 建错了后启动的一侧也修不回来。
+#
+# 所以这里的值不是我们的偏好，是**必须抄 Go 的那一份**。理由与本文件顶上
+# string/bytes 类型映射那条完全同源：宁可跟着 Go 的选择，也不能让两栈分叉。
+
+#: 表级 collation。Go: `proto2mysql@v0.0.28/proto2mysql.go:425`
+#: `") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='…';"`
+#:
+#: ⚠ 原先这里**不写 COLLATE**，于是同一张 player_data 会长出三种形态：
+#: Go 先启动 → `utf8mb4_unicode_ci`；Python 先启动且落在 dev MySQL → 继承
+#: `01-create-databases.sql` 钉的 `utf8mb4_0900_ai_ci`；Python 先启动且落在 TiDB
+#: → 继承 `collation_server` 即 `utf8mb4_bin`。三者对「两个字符串是不是同一个」
+#: 的答案互不相同，而键空间由**启动顺序**决定 —— 换台机器就不复现的那类缺陷。
+GO_TABLE_COLLATION = "utf8mb4_unicode_ci"
+
+#: 列注释里记 proto 字段号的前缀。Go: `columnCommentPrefix`（同文件 :436）。
+#:
+#: 它是 Go 的**改名迁移锚点**：按字段号认列，才能支持字段改名走
+#: `CHANGE COLUMN` 而保留数据。Python 不写的话每列的 `fieldNum` 都解析成 0，
+#: Go 下次启动会把**所有列**用 `MODIFY COLUMN` 重写一遍去回填 —— 不损数据，
+#: 但每次启动刷一遍全表 DDL，真正的 schema 变更会被淹在里面看不见。
+_COLUMN_COMMENT_PREFIX = "pb:"
+
+
+def _escape_mysql_comment(comment: str) -> str:
+    """注释要拼进 SQL 字符串字面量，必须转义。
+
+    与 Go 的 `escapeMySQLComment`（同文件 :430）逐字同形：单引号转成 `\\'`、
+    换行压成空格。两边不一致的话，同一个表名会生成两条不同的 DDL，
+    而这个函数存在的全部意义就是让两栈生成**同一条**。
+    """
+    return comment.replace("'", "\\'").replace("\n", " ")
+
 # proto 标量类型 → MySQL 列类型。
 #
 # 无符号语义必须落到列上:CLAUDE.md §5.12 要求非负整型用 uint32/uint64,
@@ -101,14 +139,49 @@ class TableSchema:
         return [c.name for c in self.columns if c.name not in excluded]
 
     def create_table_sql(self) -> str:
-        """生成 CREATE TABLE IF NOT EXISTS。"""
-        cols = ",\n  ".join(f"`{c.name}` {c.sql_type} NOT NULL" for c in self.columns)
+        """生成 CREATE TABLE IF NOT EXISTS。**必须与 Go 侧逐字同形。**
+
+        ★ **表选项这一行是本函数最容易漏、后果最重的地方。**
+
+        两栈都用 `CREATE TABLE IF NOT EXISTS`，所以这张表**由先启动的那个服务建出来**，
+        而 proto2mysql 的 `SyncAllTables` 只发逐列 `MODIFY / CHANGE / ADD COLUMN`
+        （`buildAlterClauses`），**从不发 `ALTER TABLE ... CONVERT TO / COLLATE`** ——
+        建错了就永远错着，后启动的那一侧也修不回来。
+
+        原先这里只写 `DEFAULT CHARSET=utf8mb4` 不写 `COLLATE`，于是同一张
+        `player_data` 会长出**三种**形态：
+
+        | 先启动的 | 实际 collation |
+        |---|---|
+        | Go（`proto2mysql.go:425` 钉死） | `utf8mb4_unicode_ci` |
+        | Python，落在 dev MySQL 上 | `utf8mb4_0900_ai_ci`（继承 `01-create-databases.sql` 的库默认）|
+        | Python，落在 TiDB 上 | `utf8mb4_bin`（继承 TiDB 的 `collation_server`）|
+
+        三者对「两个字符串是不是同一个」的答案互不相同，而 `player_data` 的
+        `version` 列是乐观锁、`player_id` 是主键——键空间由**启动顺序**决定，
+        是那种「只在某个环境复现、换台机器就没了」的缺陷。
+
+        与本文件顶上那条 string/bytes 类型映射的理由**完全同源**：宁可跟着 Go 的
+        选择（哪怕 `utf8mb4_unicode_ci` 不是我们会独立挑的那个），也不能让两栈分叉。
+
+        ★ 列注释 `COMMENT 'pb:N'` 同理，那是 Go 的**改名迁移锚点**
+        （`columnCommentPrefix`，`proto2mysql.go:436`）。Python 不写的话每一列的
+        `fieldNum` 都解析成 0，Go 下次启动会把**所有列**用 `MODIFY COLUMN` 重写一遍
+        去回填——不损数据，但每次都刷一遍全表 DDL，而且把真正的 schema 变更淹掉。
+        """
+        cols = ",\n  ".join(
+            f"`{c.name}` {c.sql_type} NOT NULL"
+            f" COMMENT '{_COLUMN_COMMENT_PREFIX}{c.proto_field.number}'"
+            for c in self.columns
+        )
         pk = ", ".join(f"`{k}`" for k in self.primary_key)
         return (
             f"CREATE TABLE IF NOT EXISTS `{self.table_name}` (\n"
             f"  {cols},\n"
             f"  PRIMARY KEY ({pk})\n"
             f") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+            f" COLLATE={GO_TABLE_COLLATION}"
+            f" COMMENT='{_escape_mysql_comment(self.table_name)}'"
         )
 
 
