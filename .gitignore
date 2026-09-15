@@ -115,3 +115,6 @@ secrets/
 # setup-jenkins.ps1 按需从运行中的 Jenkins 下载(/jnlpJars/jenkins-cli.jar)。
 # 入库反而有害：与服务端版本漂移时 CLI 会协议不兼容。
 tools/devops/jenkins/jenkins-cli.jar
+
+# Python 后端独立维护；允许按原相对路径检出供共享配置与对照测试使用。
+/python/

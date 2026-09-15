@@ -3,6 +3,20 @@
 > 一款 MOBA 类型游戏的后端工程。
 > 客户端与 DS 工程在独立仓库(UE 5.8),本仓库只负责 go 后端 + proto + 部署 + 设计文档。
 
+## Python 后端独立仓库
+
+Python 实现已迁至 [`lhl-go/XuanMing-Server`](https://github.com/lhl-go/XuanMing-Server)，
+保留原 `python/` 目录的相关提交历史。本仓库继续维护共享协议、配置表、服务配置和部署脚本。
+
+需要运行 Python 启动脚本、生成器或跨语言测试时，在本仓库根目录执行：
+
+```powershell
+git clone https://github.com/lhl-go/XuanMing-Server.git python
+```
+
+`python/` 是独立 Git 工作区，已由本仓库忽略；Python 改动请在该目录中提交。
+安装环境与运行要求见 [Python 仓库说明](https://github.com/lhl-go/XuanMing-Server#readme)。
+
 ## 项目特点
 
 - **5v5 MOBA 战斗**:固定 25 分钟一局,UE 战斗 DS 一局一进程
