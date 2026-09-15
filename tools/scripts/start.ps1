@@ -4529,7 +4529,7 @@ function Assert-NoCrossStackPortHolder {
     if ($other -eq "go") {
         $stopCmd = "策划一键停止业务-保留基础设施-免Docker-测试版.cmd"
     } else {
-        $stopCmd = "Python策划一键停止业务-保留基础设施-免Docker-测试版.cmd"
+        $stopCmd = "python\Python策划一键停止业务-保留基础设施-免Docker-测试版.cmd"
     }
     Write-Err ("要起 {0} 栈,但 20001-20022 里有 {1} 个端口正被本工作区的 {2} 栈占着;继续下去只会得到一片 DEAD exit=1。" -f $Wanted, $hits.Count, $other)
     foreach ($h in ($hits | Sort-Object Port | Select-Object -First 5)) {

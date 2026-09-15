@@ -15,6 +15,8 @@ git clone https://github.com/lhl-go/XuanMing-Server.git python
 ```
 
 `python/` 是独立 Git 工作区，已由本仓库忽略；Python 改动请在该目录中提交。
+7 个 `Python*.cmd` 专用入口也已移至独立仓库；请从检出的 `python/` 目录运行，
+例如 `python\Python一键启动.cmd`，入口会调用本仓库的共享编排脚本。
 安装环境与运行要求见 [Python 仓库说明](https://github.com/lhl-go/XuanMing-Server#readme)。
 
 ## 项目特点

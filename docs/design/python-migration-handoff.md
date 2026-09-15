@@ -77,13 +77,16 @@ cd F:/work/XuanMing-Server/python && env PYTHONUTF8=1 .venv/Scripts/python.exe t
 
 `start.ps1` 加了 `-Python` 开关(仅 `-Mode local / k8s`),服务层换 Python 实现,
 基础设施 / 导表 / editor DS / 可玩性闸门 / Agones Linux DS 全部复用 go 路径,不分叉。
-仓库根多了六个双击入口(与 go 版同名前缀加 `Python`):
+Python 专用双击入口已移至 [Python 独立仓库](https://github.com/lhl-go/XuanMing-Server)。
+将独立仓库检出到本 Go 工作区的 `python/` 后，从 `python/` 内执行以下七个入口；
+共享编排脚本仍留在 Go 工作区的 `tools/scripts/`。
 
 | 入口 | 包一层的命令 |
 | --- | --- |
+| `Python一键启动.cmd` | `dev_all_python.ps1`（转发命令行参数） |
+| `Python一键停止.cmd` | `dev_all_python.ps1 -Down`（转发命令行参数） |
 | `Python策划一键启动-免Docker-测试版.cmd` | `start.ps1 -Python -Mode local -NoDocker -DsLauncher editor -GenTables` |
 | `Python策划一键停止-免Docker-测试版.cmd` | `start.ps1 -Python -Mode local -NoDocker -Down` |
-| `Python策划一键重启DS-免Docker-测试版.cmd` | 同启动 + `-DsOnly`(Python 无 go 的快速通道,回落全量幂等启动) |
 | `Python策划一键停止业务-保留基础设施-免Docker-测试版.cmd` | `dev_all_python.ps1 -Down -SkipInfra -NoDocker` |
 | `Python内网服务器一键启动-k8s集群.cmd` | `start.ps1 -Python -Mode k8s -GenTables` |
 | `Python内网服务器一键停止-k8s集群.cmd` | `start.ps1 -Python -Mode k8s -Down` |
