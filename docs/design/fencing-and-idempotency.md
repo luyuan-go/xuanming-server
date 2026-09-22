@@ -4,7 +4,7 @@
 >
 > **核对基线**：代码 `bdf2e6a`（2026-09-14）。本文只做解读：不变量以 `CLAUDE.md` §9（尤其 §9.6 / §9.22 / §9.23）为准，Owner 设计以 [owner-authority.md](owner-authority.md) 为准，冲突时以它们为准。
 >
-> **状态**：Owner Authority 为“设计定稿 + 主链路已接线，仍处于 migrate 阶段（新旧两道门并行）”，contract 阶段未完成，不能表述为全量上线。
+> **状态**：Owner Authority 整体仍处于 migrate 阶段，不能表述为全量上线。签票 / READY 前的 Begin、Hub 准入 ACK 的 Admit 已按 contract 强度 fail-closed；实例续租双写（`owner_lease_required` 默认 false）、Battle 准入、旧再入门退役仍在迁移中。
 
 ## 一、fencing 是什么
 
@@ -34,22 +34,23 @@ BeginTransition(玩家, expect_epoch=E, operation_id, BATTLE, 新DS身份)
     当前 epoch ≠ E → EPOCH_CONFLICT(别人先迁了,重新查询再决定,不许盲目重试)
     写入 E+1 / PENDING / 新目标 / admit_not_before(屏障时间)
 
-Admit(玩家, E+1, operation_id, 新DS身份)   ← 新 DS 的准入请求经 hub_allocator / ds_allocator 转调
+Admit(玩家, E+1, operation_id, 新DS身份)   ← 由 hub_allocator / ds_allocator 代 DS 调用
     epoch、operation_id、DS 身份五元组有任何一项不相等 → 拒绝
     now < admit_not_before → 屏障未开,返回还要等多少毫秒
     PENDING → ADMITTED,新 DS 到这一步才能创建可操作的 Pawn
 ```
 
 - **DS 身份五元组**：pod_name + instance_uid + instance_epoch + assignment/allocation_id + release_track。Agones 会复用 Pod 名，同名重建的 Pod 不能被当成同一个 owner。
+- Admit 的来源：Hub 走准入 ACK 强路径（Admit 失败就不放玩家生成角色）；Battle 目前由 ds_allocator 按心跳里的在场名单代提交，是近似准入。
 - 旧 DS 迟到的 `Release(E)` 是 no-op，只能删自己那份，删不掉新的归属。
 - **为什么放在 TiDB**：fencing 的前提是号**永远不倒退**。MySQL 异步复制在主从切换时可能丢掉已经确认的写，epoch 一回退，旧 DS 又成了合法写者。TiDB 用 Raft 多数派提交，确认过的写不会回滚。Redis 同样有这个问题，所以也不能用。
 
 ### ② 真正把写拒掉的地方：背包
 
-DS 写背包时会带上自己的 epoch。背包服务按 `CLAUDE.md` §9.6 的“DS 写权威五要件”（身份、owner 授权、fencing、额度、审计）拦两层：
+DS 写背包时，背包服务按 `CLAUDE.md` §9.6 的“DS 写权威五要件”（身份、owner 授权、fencing、额度、审计）拦两层。注意：DS 票据里并不带 owner_epoch（Hub 票在 Begin 之前就签好了，那时 epoch 还不知道），请求里的 epoch 可以填 0，由背包服务向 owner 查出当前值后代填。
 
-1. **查询 owner 权威**（`owner_authorizer.go` 的 `AuthorizeOwnerWrite`）：epoch 等于当前值、phase 是 ADMITTED、租约没过期、调用方正是记录里那台 DS，任何一项不满足就返回 `ErrBagEpochFenced`。生产必须配置 `owner_addr`，只有本地 / 单测能显式跳过（缺省 fail-closed）。
-2. **存储端水位**（`bag_repo.go` 的 `lockBagMetaTx`），教科书写法：
+1. **查询 owner 权威**（`owner_authorizer.go` 的 `AuthorizeOwnerWrite`，每次写都查、不缓存）：调用方 DS（凭据里的 pod + uid）必须正是记录指向的那台，owner 类型是 HUB/BATTLE，phase 是 ADMITTED，实例租约没过期；DS 若自报了非零 epoch，也必须等于当前值。任何一项不满足就返回 `ErrBagEpochFenced`；查不到 owner 返回 `ErrUnavailable`，不冒充有权。生产必须配置 `owner_addr`，只有本地 / 单测能显式跳过（缺省 fail-closed）。
+2. **存储端水位**（`bag_repo.go` 的 `lockBagMetaTx`），用上一步查出的当前 epoch 做单调 CAS，教科书写法：
 
 ```sql
 SELECT owner_epoch FROM bag_meta WHERE player_id=? FOR UPDATE
@@ -64,20 +65,20 @@ SELECT owner_epoch FROM bag_meta WHERE player_id=? FOR UPDATE
 epoch 只能拦**写到存储的请求**。分区中的旧 DS 就算不写库，内存里也可能还在模拟这个玩家（别的玩家还在跟他打），号码拦不住这种情况。
 
 - DS 租约上限 **20s**，续不上就**自我 fencing**：关闭输入、踢人、销毁 Pawn，计时用单调时钟。
-- 服务端屏障：`admit_not_before = max(now, 旧实例租约截止) + 7s`。
+- 服务端屏障：旧 owner 是 Battle 时，`admit_not_before = max(now, 旧实例租约截止) + 7s`；旧 owner 是 Hub 或没有旧 owner 时就是 now（理由见第六节）。释放 Battle 归属时会把这个屏障留存下来，下一次迁移再取 max，防止“先释放、再迁移”把屏障塌成 0。
 - **7s 余量**的构成：心跳在途 4s + 检测粒度 1s + 时钟漂移 ≥2s。2026-07-18 从 5 调到 7，因为原来的 5 秒完全没给时钟漂移留余量。
 - 核心不等式：**旧 DS 最晚停止可玩的时间 < 新 DS 最早开始可玩的时间**。
 - 租约按 DS 实例续，不按玩家续：几百台 DS 每 5 秒左右续一次，而不是 60 万个玩家各续各的。
 
 ### ④ 服务单写者：writer token（被问“分布式锁”时讲这个）
 
-hub_allocator 是分配账本的单写者，滚动更新时新旧两个进程会同时在线：
+hub_allocator 是 Hub 分配与容量账本的单写者。平时只有 1 个副本，但滚动更新（maxSurge=1）时新旧两个 Pod 会同时在线：
 
-- 用 etcd 选主，token 取 leader key 的 **CreateRevision**，历届严格递增。
-- Redis 里每个 pod 一个水位键，和业务写放在**同一个 WATCH/MULTI/EXEC** 里比较：水位比我大就拒绝，比我小就顺手推到我，相等就放行。
-- 新 leader 在对外宣布“我是写者”之前，先把**所有 pod** 的水位推到自己的 token。
-- 本地提前认定自己失效：etcd TTL 是 15s，本地只信 12s。
-- 删除时写墓碑，不直接 DEL。否则水位跟着记录一起消失，旧写者就能重新写回去。
+- 用 etcd 选主，token 取本届 leader key 的 **CreateRevision**：历届严格递增，但不连续（etcd 全局 revision 会跳号），下游只依赖“单调”。
+- Redis 里每个 pod 一个水位键 `pandora:hub:wfence:{pod}`，和业务写放在**同一个 WATCH/MULTI/EXEC** 里比较：水位比我大就拒绝（零写入），比我小就顺手推到我，相等就放行。按 pod 分键，是因为 Redis Cluster 的事务只能落在同一个 slot 里。
+- 当选不等于可写：新 leader 先把**所有已知 pod** 的水位推到自己的 token，再向 etcd 做一次 TimeToLive 证明（剩余寿命 > 3s），两步都通过才对外宣告持有。
+- 本地安全截止是滚动的：`证明请求发出时刻 + etcd 报回的剩余 TTL − 3s`，每 4 秒重新证明一次；etcd TTL 15s 时本地最多信 12s。过了截止 `Current()` 直接返回不持有，不等任何回调。
+- 每玩家归属记录带 `writer_token` 字段；删除时写带唯一 assignment_id 的墓碑（TTL 5 分钟），不直接 DEL。否则水位跟着记录一起消失，旧写者就能重新写回去。
 
 ### ⑤ 会话 jti（顶号）
 
@@ -138,7 +139,7 @@ BEGIN
 
 **fencing，约 45 秒：**
 
-> 租约或锁过期以后，旧的持有者可能因为 GC 或网络分区根本不知道自己已经失效，还在继续写，光靠 TTL 挡不住。fencing 就是每次授权发一个单调递增的号，写的时候带上，存储端记住见过的最大号，比它小的一律拒。我们每个玩家有一个 owner_epoch，放在 TiDB 里，因为这个号不能因为主从切换而倒退。迁移时在一个行锁事务里 CAS 成 E+1、PENDING；新 DS Admit 时要求 epoch、operation_id 和 DS 实例五元组全部相等。DS 写背包时带着 epoch，背包表里有 epoch 水位做单调 CAS，旧 epoch 的写直接被拒。另外，epoch 管不到旧 DS 在内存里继续模拟玩家的情况，所以还加了时间屏障：DS 租约 20 秒，续不上就自己踢人、销毁 Pawn；新 DS 要等旧租约到期再过 7 秒才能准入，保证旧 DS 停止可玩一定早于新 DS 开始可玩。
+> 租约或锁过期以后，旧的持有者可能因为 GC 或网络分区根本不知道自己已经失效，还在继续写，光靠 TTL 挡不住。fencing 就是每次授权发一个单调递增的号，写的时候带上，存储端记住见过的最大号，比它小的一律拒。我们每个玩家有一个 owner_epoch，放在 TiDB 里，因为这个号不能因为主从切换而倒退。迁移时在一个行锁事务里 CAS 成 E+1、PENDING；新 DS Admit 时要求 epoch、operation_id 和 DS 实例五元组全部相等。DS 写背包时，背包服务先向 owner 核对这台 DS 是不是当前 owner、是否已准入、租约是否有效，再用当前 epoch 在背包表上做单调 CAS，旧 owner 的迟到写直接被拒。另外，epoch 管不到旧 DS 在内存里继续模拟玩家的情况，所以还加了时间屏障：DS 租约 20 秒，续不上就自己踢人、销毁 Pawn；新 DS 要等旧租约到期再过 7 秒才能准入，保证旧 DS 停止可玩一定早于新 DS 开始可玩。
 
 **幂等，约 45 秒：**
 
@@ -189,19 +190,20 @@ DS 本地用单调时钟计时，而且本地的截止时间比服务端屏障�
 
 上线前的复审发现过一次险情（[INC-20260726-001](../incidents/2026-07-26-p0-hub-writer-fencing-near-miss.md)），有两个问题：
 
-- writer lease 把“本地还没收到失联通知”当成“租约仍然有效”的证据，网络分区恢复后可能把已经失效的任期续活。修复后改成必须拿到 etcd 服务端的 TimeToLive 证明才延长本地期限，拿不到就立刻自我 fencing 并让位。
-- 写入后的补偿逻辑重新读的是“当前 token”，而不是“这次写入用的 token”。失去 leader 后读到 0，或者读到新 leader 的 token，就认不出自己刚写的值。修复后改成把本次写入用的 token 和完整写入值随操作保存。
+- writer lease 把“本地还没收到失联通知”当成“租约仍然有效”的证据，网络分区恢复后可能把已经失效的任期续活。修复后改成：只有拿到 etcd 服务端的 TimeToLive 证明，才延长本地截止。2026-07-29 又修正了一次：持有期间偶发一次续证失败不算“证否”，保留任期到上一次证明给出的截止，期间继续重试；只有截止真的到了，或 etcd 明确回报剩余寿命 ≤3s，才自我 fencing 并让位。否则单副本一次慢响应就会自我 fencing，造成约 8 秒没有写者。
+- 写入后的补偿逻辑拿事后读到的“当前 token”去匹配刚写的记录，而不是用“这次写入用的 token”。失去 leader 后读到 0，或者读到新一届的 token，就认不出自己刚写的值。修复后改成：用本次写入时捕获的 token、完整写入值和原剩余 TTL 去定位、撤销；事后读 `Current()` 只用来判断“还是不是写入的那一届”。
 
-教训是：**token 必须跟着操作走，不能事后再猜。**
+教训是：**token 必须跟着操作走，不能事后再猜；“读不到证据”和“证据说已过期”要分开处理。**
 
 ## 七、要注意的边界（别说过头）
 
 - **不要说“已经全量上线”。** owner-authority.md 里写的状态是：设计定稿，主链路已接线，仍在迁移阶段（新旧两道门并行）。面试时照这个说更稳。
 - 上面那次险情是**上线前审计发现的，没有在生产发生过**，不要讲成线上事故。
-- Redis 上的 writer fence 有已知的残留风险：Sentinel 或 Cluster 主从切换可能回滚已经确认的写。所以“谁拥有玩家”的最终权威放在 TiDB 的 owner 服务里，hub 的分配记录只算执行细节。被问“Redis 做 fencing 靠不靠谱”时就这么答，主动讲局限反而加分。
-- 拾取 ACK 门控的执行端在 UE 侧（`AMyDropItemActor` / `UMyBagComponent::ReserveSpace`），不在本仓库；背包域 phase 2（DS 写权威切换）也仍在迁移阶段，别说成全部落地。
+- Redis 上的 writer fence 有已知的残留风险：Sentinel 或 Cluster 主从切换可能回滚已经确认的写。所以按设计，“谁拥有玩家”的最终权威是 TiDB 上的 owner 服务（目前仍在迁移阶段），hub 的分配记录只算执行细节。被问“Redis 做 fencing 靠不靠谱”时就这么答，主动讲局限反而加分。
+- 拾取 ACK 门控的执行端在 UE 侧（`AMyDropItemActor` / `UMyBagComponent::ReserveSpace`），不在本仓库；背包域 phase 2（DS 写权威切换）也仍在迁移阶段，UE 侧 DS 直写背包的开关默认关闭，别说成全部落地。
+- Battle 侧的 Admit 目前是 ds_allocator 按心跳在场名单代提交的近似准入，只有 Hub 有准入 ACK 强路径；DS 租约到期自我 fencing、准入前不生成可操作角色这两条，本仓库只有契约和文档，执行端在 UE 侧。
 - 简历写明代码主要由 Claude Code 完成，面试官一定会验证是否真懂。要能在白板上画出 **Begin → READY → Travel → Admit → 旧 DS 自我 fencing** 的时序图。
-- 需要记住的数字：租约 20s、余量 7s、屏障 27s、etcd TTL 15s（本地只信 12s）、流水保留 90 天、DS 身份五元组。
+- 需要记住的数字：租约 20s、余量 7s、屏障 27s、etcd TTL 15s（本地最多信 12s，每 4s 续证）、流水保留 90 天、DS 身份五元组。
 
 ## 八、代码位置
 
