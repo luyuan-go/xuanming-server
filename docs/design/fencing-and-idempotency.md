@@ -154,6 +154,17 @@ BEGIN
 
 所以存储端还有一道 `bag_meta.owner_epoch` 的单调 CAS。新 owner 第一次加载背包（checkout）时会把水位推到 E+1，之后旧 epoch 的写在存储事务里被原子地拒绝。checkout 之前旧 DS 写进去的内容，在语义上发生在交接之前，新 DS checkout 时会读到并接着用，所以不会丢，也不会互相覆盖。这和房卡一样：门锁在新客人第一次刷卡时才更新号码。
 
+**问：玩家在旧 DS 上拿到一件好装备，被 fencing 挡掉没写进去，玩家觉得亏了怎么办？业界标准做法是什么？**
+
+设计上是让它不发生，而不是事后补：
+
+1. **把“捡到”的定义反过来：入包 = 已持久化**（[realtime-progression.md](realtime-progression.md) 拾取 ACK 门控）。玩家拾取时，DS 先认领锁定掉落物（别人不能捡、暂停消失计时）并预留背包格子，再把拾取事实报给后端；后端落库后回执，DS 才把物品放进背包、销毁地上的掉落物。上报被确定拒绝时，DS 释放认领，物品回到地上。网络分区时连回执都收不到，掉落物一直锁着（防止“迟到入账 + 别人重捡”变成复制），直到 DS-A 自我 fencing 把玩家踢下线。玩家视角里他从来没“拿到过”，不存在“背包里有了又消失”。不变量：**战斗背包 ⊆ 后端已入账**。
+2. **分级持久化**（[bag-domain.md](bag-domain.md) §3）：判据是“操作效果会不会被本人回档范围之外的人观察到”。拾取、交易、邮件领取、拍卖冻结这类走同步 journal，零丢失；整理格子、穿脱装备、耐久、喝药走 checkpoint（周期 5~10 秒，外加迁移、下线等关键点），崩溃最多回档几秒，物品和效果一起回退，自洽。回档只会让布局变旧（比如装备从身上回到包里），不会让已入账的物品消失（§3.2 资产守恒 + 布局容忍）。
+3. **宁可丢，不可复制**：不接受 DS-A 的迟到写，是因为那等于承认两台 DS 同时有权改这个玩家，同一件装备可能被拿两次。复制道具伤害的是整个经济系统，比单个玩家的一次损失严重得多。
+4. **万一还有残留，可发现、可补偿**：journal 本身就是审计流水，fencing 拒绝都有 WARN 日志（`bag_owner_epoch_fenced` / `bag_owner_authz_rejected`）。核实后走系统邮件补发：邮件是本项目唯一的离线→在线资产通道，领取带幂等键，补偿本身不会重复。
+
+这就是业界的标准做法：**服务端权威，经济类事件先落库再给玩家看；非关键的个人状态周期存盘，接受回档；宁可回档也不能复制；出了问题凭审计日志用邮件补偿，补偿本身幂等**。项目也评估过 DS 本地 WAL，被否掉了：Agones 临时 Pod 的本地盘在 Pod 替换或节点宕机时会消失，加持久卷和回捞的成本高，仍然做不到零丢失。
+
 **问：epoch 和租约为什么两个都要？**
 
 epoch 拦的是“写”；租约拦的是“时间”，也就是旧 DS 在内存里继续让玩家可玩、但不落库的那部分影响。只有 epoch，可能出现双可玩；只有租约，时钟误差和迟到的写会漏过去。
@@ -188,6 +199,7 @@ DS 本地用单调时钟计时，而且本地的截止时间比服务端屏障�
 - **不要说“已经全量上线”。** owner-authority.md 里写的状态是：设计定稿，主链路已接线，仍在迁移阶段（新旧两道门并行）。面试时照这个说更稳。
 - 上面那次险情是**上线前审计发现的，没有在生产发生过**，不要讲成线上事故。
 - Redis 上的 writer fence 有已知的残留风险：Sentinel 或 Cluster 主从切换可能回滚已经确认的写。所以“谁拥有玩家”的最终权威放在 TiDB 的 owner 服务里，hub 的分配记录只算执行细节。被问“Redis 做 fencing 靠不靠谱”时就这么答，主动讲局限反而加分。
+- 拾取 ACK 门控的执行端在 UE 侧（`AMyDropItemActor` / `UMyBagComponent::ReserveSpace`），不在本仓库；背包域 phase 2（DS 写权威切换）也仍在迁移阶段，别说成全部落地。
 - 简历写明代码主要由 Claude Code 完成，面试官一定会验证是否真懂。要能在白板上画出 **Begin → READY → Travel → Admit → 旧 DS 自我 fencing** 的时序图。
 - 需要记住的数字：租约 20s、余量 7s、屏障 27s、etcd TTL 15s（本地只信 12s）、流水保留 90 天、DS 身份五元组。
 
@@ -204,3 +216,5 @@ DS 本地用单调时钟计时，而且本地的截止时间比服务端屏障�
 - [battle_repo.go](../../services/battle/battle_result/internal/data/battle_repo.go)：`SaveResult`（match_id 幂等 + 同事务 outbox）
 - [battle_result.go](../../services/battle/battle_result/internal/biz/battle_result.go)：`dropIdempotencyKey`
 - [match.go](../../services/matchmaking/matchmaker/internal/biz/match.go)：READY 至少一次推送
+- [bag-domain.md](bag-domain.md)：§0 需求、§3 journal / checkpoint 分层、§3.2 重放语义、§7 邮件资产通道
+- [realtime-progression.md](realtime-progression.md)：拾取 ACK 门控、§9 残余风险
