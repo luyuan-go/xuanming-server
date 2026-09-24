@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>好友上限为何必须锁在 player 守卫内</title>
+<style>html,body{margin:0;padding:0;background:#0f172a;}</style>
+</head>
+<body>
+<div style="width:1200px;box-sizing:border-box;font-family:'Microsoft YaHei',system-ui,sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;line-height:1.5;">
+<p style="margin:0 0 4px;font-size:18px;font-weight:600;color:#f8fafc;">场景：B 已有 199 个好友，上限 200。T1 接受 A→B，T2 接受 B→C，几乎同时。</p>
+<p style="margin:0 0 18px;font-size:14px;color:#94a3b8;">根因：TiDB 悲观事务<b>没有 gap 锁</b>，`COUNT FOR UPDATE` 只锁已存在的行，锁不住「间隙里将要被 INSERT 的新边」。</p>
+
+<div style="display:flex;flex-direction:column;gap:18px;">
+
+<!-- 无守卫 -->
+<div style="border:1px solid #7f1d1d;border-radius:10px;padding:14px;background:#180f0f;">
+  <div style="font-size:14px;font-weight:700;color:#f87171;margin-bottom:10px;">✗ 不锁 player 守卫（裸 COUNT FOR UPDATE）→ 上限被穿透</div>
+  <div style="display:flex;flex-direction:column;gap:8px;font-size:14px;">
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">T1：COUNT → 读到 <b style="color:#fbbf24;">199</b>（&lt;200 ✅）→ INSERT A→B</div>
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">T2：COUNT → 也读到 <b style="color:#fbbf24;">199</b>（&lt;200 ✅）→ INSERT B→C</div>
+    <div style="background:#450a0a;border-radius:6px;padding:8px 12px;color:#fca5a5;">结果：B 的好友数 = <b>201 &gt; 200</b>，超限。两笔都「看见 199」，COUNT 锁住的都是已存在的旧边，新边插进间隙不受影响 → 幻读穿透</div>
+  </div>
+</div>
+
+<!-- 有守卫 -->
+<div style="border:1px solid #14532d;border-radius:10px;padding:14px;background:#0d1a12;">
+  <div style="font-size:14px;font-weight:700;color:#4ade80;margin-bottom:10px;">✓ 先锁 player(B) 守卫，再在锁内 COUNT → 上限权威</div>
+  <div style="display:flex;flex-direction:column;gap:8px;font-size:14px;">
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">T1：<b style="color:#f59e0b;">锁 player(B) 守卫</b> → COUNT <b style="color:#fbbf24;">199</b> → INSERT A→B → <b style="color:#4ade80;">COMMIT 释放</b>（B 变 200）</div>
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">T2：<b style="color:#f59e0b;">等 player(B) 守卫</b>…拿到后 → COUNT <b style="color:#fbbf24;">200</b>（≥200 ❌）→ 拒绝 B→C</div>
+    <div style="background:#052e16;border-radius:6px;padding:8px 12px;color:#86efac;">结果：T1、T2 抢同一行守卫锁 → <b>串行</b>。T2 的 COUNT 必然读到 T1 提交后的最新值 → 不超限</div>
+  </div>
+</div>
+
+</div>
+
+<p style="margin:16px 0 0;font-size:14px;color:#94a3b8;">守卫行（friend_player_guards）是<b>一行永远存在的数据</b>，对它做 `INSERT … ON DUPLICATE KEY UPDATE` 加的是<b>真正的排他点锁</b>——所有碰 B 的写都得先抢到这行锁。串行临界区内 COUNT 读到的必是「前一事务提交后」的结果，上限因此权威。</p>
+</div>
+</body>
+</html>

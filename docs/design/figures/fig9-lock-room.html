@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>守卫行是门锁，friendships 才是房间</title>
+<style>html,body{margin:0;padding:0;background:#0f172a;}</style>
+</head>
+<body>
+<div style="width:1200px;box-sizing:border-box;font-family:system-ui,-apple-system,'Microsoft YaHei',sans-serif;background:#0f172a;color:#e2e8f0;padding:22px;border-radius:14px;line-height:1.5;">
+<p style="margin:0 0 14px;font-size:15px;font-weight:600;color:#f8fafc;">先拿门锁，再进屋放东西</p>
+
+<div style="display:flex;gap:14px;flex-wrap:wrap;">
+
+<div style="flex:1 1 300px;border:1px solid #334155;border-radius:10px;padding:12px;background:#111c2e;">
+  <div style="font-size:13px;font-weight:700;color:#f59e0b;margin-bottom:8px;">① 守卫表 friend_player_guards —— 门锁</div>
+  <div style="font-family:Consolas,monospace;font-size:12px;background:#0f172a;border-radius:6px;padding:8px;color:#fcd34d;">
+    INSERT INTO friend_player_guards (player_id)<br>
+    VALUES (B)<br>
+    ON DUPLICATE KEY UPDATE player_id = player_id
+  </div>
+  <div style="font-size:12px;color:#94a3b8;margin-top:8px;">只有一列 player_id。执行完 = 握住 B 的门把手（行锁），<b>不改任何数据</b>。此时还没加好友。</div>
+</div>
+
+<div style="display:flex;align-items:center;justify-content:center;font-size:18px;color:#64748b;padding:6px;">→</div>
+
+<div style="flex:1 1 300px;border:1px solid #334155;border-radius:10px;padding:12px;background:#111c2e;">
+  <div style="font-size:13px;font-weight:700;color:#4ade80;margin-bottom:8px;">② 好友表 friendships —— 房间里的东西</div>
+  <div style="font-family:Consolas,monospace;font-size:12px;background:#0f172a;border-radius:6px;padding:8px;color:#86efac;">
+    INSERT IGNORE INTO friendships<br>
+    &nbsp;&nbsp;(player_id, friend_id) VALUES (B, C)<br>
+    INSERT IGNORE INTO friendships<br>
+    &nbsp;&nbsp;(player_id, friend_id) VALUES (C, B)
+  </div>
+  <div style="font-size:12px;color:#94a3b8;margin-top:8px;">这才是<b>真正加好友</b>：写两条双向边（B→C、C→B）。此刻锁还在手上，安全。</div>
+</div>
+
+</div>
+
+<p style="margin:14px 0 0;font-size:13px;color:#94a3b8;">类比：守卫行 = 每个玩家门口的一把门锁（门牌号是 player_id）；上面那条 SQL = 「把门推开并握住门把手」；friendships 的 INSERT = 「进屋把礼物放进房间」。锁门和放东西是两回事。</p>
+</div>
+</body>
+</html>

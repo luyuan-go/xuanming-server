@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Block 与 Accept 并发走查：为什么需要 pair 守卫</title>
+<style>html,body{margin:0;padding:0;background:#0d1117;}</style>
+</head>
+<body>
+<div style="width:1520px;box-sizing:border-box;font-family:Consolas,'Courier New','Microsoft YaHei',monospace;background:#0d1117;color:#c9d1d9;padding:26px 30px;line-height:1.4;">
+<p style="margin:0 0 6px;font-size:17px;font-weight:600;color:#e6edf3;">场景：TA = 接受 A→B，TB = B 拉黑 A，几乎同时提交。<span style="color:#8b949e;font-weight:400;">（无 pair 守卫时的交错 —— pair 守卫存在的理由）</span></p>
+<p style="margin:0 0 18px;font-size:14px;color:#8b949e;">绿=拿到锁/成功，黄=等待，红=冲突/拒绝，蓝=校验。</p>
+
+<div style="display:flex;gap:0;font-size:14px;">
+
+<!-- 左列 -->
+<div style="flex:1;border-right:1px solid #21262d;padding-right:20px;">
+<div style="font-size:13px;color:#58a6ff;font-weight:700;margin-bottom:8px;">TA · 接受 A→B</div>
+
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#8b949e;">t0 <span style="color:#e6edf3;">BEGIN 事务</span></div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#8b949e;">t1 <span style="color:#e6edf3;">预读请求 R1（A→B pending）</span></div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#8b949e;">t2 <span style="color:#7ee787;">锁请求行 R1 FOR UPDATE → 仍 pending ✅</span></div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#8b949e;">t3 <span style="color:#58a6ff;">block 双向查 → 无 ✅（还没看到 TB 的黑名单）</span></div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#8b949e;">t4 <span style="color:#58a6ff;">COUNT 双方好友数 ✅</span></div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#ff7b72;">t5 <span style="color:#ff7b72;"><b>INSERT 双向好友边 (A,B)(B,A)</b> —— 黑名单已存在，边照插 ✗</span></div>
+<div style="padding:8px 0;color:#ff7b72;">t6 <span style="color:#ff7b72;"><b>COMMIT ✗</b></span></div>
+</div>
+
+<!-- 右列 -->
+<div style="flex:1;padding-left:20px;">
+<div style="font-size:13px;color:#58a6ff;font-weight:700;margin-bottom:8px;">TB · B 拉黑 A</div>
+
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#8b949e;">BEGIN 事务</div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#8b949e;">预读（决定拉黑 A）</div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#7ee787;">插 blocks (B,A) ✅</div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#7ee787;">DELETE friendships 双向（此刻没边，删空）✅</div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#7ee787;">UPDATE 两人间 pending 请求 → rejected ✅</div>
+<div style="padding:8px 0;border-bottom:1px solid #161b22;color:#7ee787;">COMMIT ✅</div>
+<div style="padding:8px 0;color:#8b949e;">（结束）</div>
+</div>
+
+</div>
+
+<div style="margin-top:16px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px 16px;font-size:14px;color:#c9d1d9;">
+<b style="color:#ff7b72;">结果（无 pair 守卫）：</b>B 的黑名单里有 A，friendships 里又有 A↔B —— <b>既好友又拉黑</b>，违反不变量。<br>
+<b style="color:#7ee787;">加 pair 守卫后：</b>TA、TB 抢 <b>pair(A,B)</b> 同一行守卫，全序执行 —— 先 TB 则 TA 复核时看到黑名单/请求已 rejected 而放弃；先 TA 则 TB 删掉边。不会再出现「边在黑名单之后插入」的交错。
+</div>
+</div>
+</body>
+</html>

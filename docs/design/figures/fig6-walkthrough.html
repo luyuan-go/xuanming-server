@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AB 与 BC 并发接受完整走查</title>
+<style>html,body{margin:0;padding:0;background:#0f172a;}</style>
+</head>
+<body>
+<div style="width:1200px;box-sizing:border-box;font-family:'Microsoft YaHei',system-ui,sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;line-height:1.5;">
+<p style="margin:0 0 4px;font-size:18px;font-weight:600;color:#f8fafc;">T1 = 接受 A→B，T2 = 接受 B→C，几乎同时提交。B 现有 199 个好友，上限 200。</p>
+<p style="margin:0 0 16px;font-size:14px;color:#94a3b8;">绿=拿到锁/成功，黄=等待，红=拒绝，蓝=校验。</p>
+
+<div style="display:flex;flex-direction:column;font-size:13.5px;">
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t0</div>
+  <div style="flex:1;color:#7dd3fc;">T1 BEGIN 事务</div>
+  <div style="flex:1;color:#7dd3fc;">T2 BEGIN 事务</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t1</div>
+  <div style="flex:1;color:#cbd5e1;">预读请求 R1（不加锁）→ requester=A, target=B</div>
+  <div style="flex:1;color:#cbd5e1;">预读请求 R2（不加锁）→ requester=B, target=C</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t2</div>
+  <div style="flex:1;color:#cbd5e1;">锁 <b style="color:#38bdf8;">pair(A,B)</b> 守卫 <span style="color:#4ade80;">✅ 立即拿到</span></div>
+  <div style="flex:1;color:#cbd5e1;">锁 <b style="color:#38bdf8;">pair(B,C)</b> 守卫 <span style="color:#4ade80;">✅ 立即拿到 —— 两行不同，互不冲突</span></div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;background:#1a1507;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t3</div>
+  <div style="flex:1;color:#cbd5e1;">锁 <b style="color:#f59e0b;">player(A)</b> <span style="color:#4ade80;">✅</span></div>
+  <div style="flex:1;color:#fcd34d;">锁 <b style="color:#f59e0b;">player(B)</b> ⏳ <b>卡住！T1 还没放手</b></div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;background:#1a1507;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t4</div>
+  <div style="flex:1;color:#cbd5e1;">锁 <b style="color:#f59e0b;">player(B)</b> <span style="color:#4ade80;">✅ 此刻没人抢</span></div>
+  <div style="flex:1;color:#64748b;">…继续等 player(B)</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;background:#1a1507;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t5</div>
+  <div style="flex:1;color:#cbd5e1;">锁请求行 R1 <code style="background:#0f172a;padding:0 4px;border-radius:3px;">FOR UPDATE</code> → 仍 <b>pending</b> ✅</div>
+  <div style="flex:1;color:#64748b;">…等</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;background:#1a1507;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t6</div>
+  <div style="flex:1;color:#cbd5e1;">block 双向查（锁定读）→ 无 ✅</div>
+  <div style="flex:1;color:#64748b;">…等</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;background:#1a1507;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t7</div>
+  <div style="flex:1;color:#cbd5e1;">COUNT A 好友 = 50 &lt; 200 ✅</div>
+  <div style="flex:1;color:#64748b;">…等</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;background:#1a1507;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t8</div>
+  <div style="flex:1;color:#cbd5e1;">COUNT B 好友 = <b style="color:#fbbf24;">199</b> &lt; 200 ✅ 通过</div>
+  <div style="flex:1;color:#64748b;">…等</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;background:#1a1507;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t9</div>
+  <div style="flex:1;color:#cbd5e1;">UPDATE R1=accepted + 插两条边(A,B)(B,A) + 收敛反向 pending</div>
+  <div style="flex:1;color:#64748b;">…等</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;background:#0d1a12;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t10</div>
+  <div style="flex:1;color:#4ade80;font-weight:700;">COMMIT —— 释放全部锁（含 player(B)）→ B 好友数 = 200</div>
+  <div style="flex:1;color:#4ade80;">✅ 终于拿到 <b style="color:#f59e0b;">player(B)</b> 守卫</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t11</div>
+  <div style="flex:1;color:#64748b;">（T1 结束，返回 accepted=true，推送事件）</div>
+  <div style="flex:1;color:#cbd5e1;">锁 <b style="color:#f59e0b;">player(C)</b> 守卫 ✅ → 锁请求行 R2 → pending ✅</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t12</div>
+  <div style="flex:1;"></div>
+  <div style="flex:1;color:#cbd5e1;">block 双向查 → 无 ✅</div>
+</div>
+
+<div style="display:flex;border-bottom:1px solid #1e293b;padding:6px 0;background:#170b0b;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t13</div>
+  <div style="flex:1;"></div>
+  <div style="flex:1;color:#f87171;font-weight:700;">COUNT B 好友 = <b>200</b> ≥ 200 → 拒绝（ErrFriendLimit）</div>
+</div>
+
+<div style="display:flex;padding:6px 0;background:#170b0b;">
+  <div style="width:36px;color:#64748b;font-weight:700;">t14</div>
+  <div style="flex:1;"></div>
+  <div style="flex:1;color:#fca5a5;">ROLLBACK，返回错误 → B→C 好友没建成</div>
+</div>
+
+</div>
+
+<div style="margin:14px 0 0;background:#1e293b;border-radius:8px;padding:12px 16px;font-size:14px;color:#cbd5e1;">最终：A、B 成了好友（B 好友数 199→200）；B、C 没成（被上限拦下）。整个过程中 T1、T2 只在 t3~t10 的 <b>player(B)</b> 一处排队，其余步骤全部并行。</div>
+</div>
+</body>
+</html>

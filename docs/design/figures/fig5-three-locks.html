@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AcceptRequest 完整锁链：三把锁各管一事</title>
+<style>html,body{margin:0;padding:0;background:#0f172a;}</style>
+</head>
+<body>
+<div style="width:1200px;box-sizing:border-box;font-family:'Microsoft YaHei',system-ui,sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;line-height:1.5;">
+<p style="margin:0 0 4px;font-size:18px;font-weight:600;color:#f8fafc;">一进事务，按顺序拿三把锁（锁序：pair → player 升序 → 业务行）</p>
+<p style="margin:0 0 18px;font-size:14px;color:#94a3b8;">三者缺一不可：pair 管「这一对关系不乱」，player 管「这个人限额不超」，业务行锁管「这一行不被并发改」</p>
+
+<div style="display:flex;gap:16px;align-items:stretch;">
+
+<div style="flex:1 1 360px;border:1px solid #334155;border-radius:10px;padding:14px;background:#111c2e;border-top:4px solid #38bdf8;">
+  <div style="font-size:14px;font-weight:700;color:#38bdf8;margin-bottom:8px;">第 1 把 · pair 守卫</div>
+  <div style="font-family:Consolas,monospace;font-size:12px;background:#0f172a;border-radius:6px;padding:8px;color:#bae6fd;">friend_pair_guards<br>(lo,hi) = (50,100)</div>
+  <div style="font-size:14px;color:#cbd5e1;margin-top:8px;">锁 <b>AB 这一对</b>。<br>防：同对的 Accept / Block / AddFriend 互相矛盾 —— 既好友又拉黑、已拉黑+pending</div>
+</div>
+
+<div style="flex:1 1 360px;border:1px solid #334155;border-radius:10px;padding:14px;background:#111c2e;border-top:4px solid #f59e0b;">
+  <div style="font-size:14px;font-weight:700;color:#f59e0b;margin-bottom:8px;">第 2 把 · player 守卫（升序）</div>
+  <div style="font-family:Consolas,monospace;font-size:12px;background:#0f172a;border-radius:6px;padding:8px;color:#fcd34d;">friend_player_guards<br>(A) → (B)</div>
+  <div style="font-size:14px;color:#cbd5e1;margin-top:8px;">锁 <b>A 和 B 各自</b>。<br>防：A/B 的好友数上限被并发穿透（必须按 ID 升序取，防死锁）</div>
+</div>
+
+<div style="flex:1 1 360px;border:1px solid #334155;border-radius:10px;padding:14px;background:#111c2e;border-top:4px solid #34d399;">
+  <div style="font-size:14px;font-weight:700;color:#34d399;margin-bottom:8px;">第 3 把 · 业务行锁</div>
+  <div style="font-family:Consolas,monospace;font-size:12px;background:#0f172a;border-radius:6px;padding:8px;color:#86efac;">friend_requests<br>WHERE request_id=?<br>FOR UPDATE</div>
+  <div style="font-size:14px;color:#cbd5e1;margin-top:8px;">锁 <b>那条请求行</b>。<br>防：同一请求被并发 accept / reject / Block 改状态 → 复核仍 pending 才动手</div>
+</div>
+
+</div>
+
+<div style="margin:14px 0 0;background:#1e293b;border-radius:8px;padding:12px 16px;font-size:14px;color:#cbd5e1;">全部拿到 → 做校验 + 写（置 accepted、插两条双向边、收敛反向 pending）→ <b>COMMIT 三把锁一起放</b>。锁的是「行」，A、B 两个玩家没有被整体锁住，锁住的是这三行数据。</div>
+</div>
+</body>
+</html>

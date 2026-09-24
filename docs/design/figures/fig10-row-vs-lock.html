@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>守卫行永远在，锁随事务自动释放</title>
+<style>html,body{margin:0;padding:0;background:#0f172a;}</style>
+</head>
+<body>
+<div style="width:1200px;box-sizing:border-box;font-family:system-ui,-apple-system,'Microsoft YaHei',sans-serif;background:#0f172a;color:#e2e8f0;padding:22px;border-radius:14px;line-height:1.5;">
+<p style="margin:0 0 4px;font-size:15px;font-weight:600;color:#f8fafc;">两个事务轮流用同一把守卫行，中间不需要任何 DELETE</p>
+
+<div style="margin:18px 0 6px;font-size:12px;color:#94a3b8;">→ 时间</div>
+
+<!-- 守卫行泳道 -->
+<div style="display:flex;align-items:center;margin:8px 0;">
+  <div style="width:140px;font-size:12px;font-weight:700;color:#38bdf8;">守卫行<br>friend_player_guards(B)</div>
+  <div style="flex:1;position:relative;height:26px;">
+    <div style="position:absolute;left:0;width:100%;height:24px;background:#1e3a5f;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#bae6fd;">行一直在表里：player_id = B（INSERT 一次后永不删，除非保留期清理）</div>
+  </div>
+</div>
+
+<!-- 事务 A 泳道 -->
+<div style="display:flex;align-items:center;margin:8px 0;">
+  <div style="width:140px;font-size:12px;font-weight:700;color:#7dd3fc;">事务 A</div>
+  <div style="flex:1;position:relative;height:26px;">
+    <div style="position:absolute;left:0;width:60%;height:22px;background:#0f3d2e;border:1px solid #4ade80;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#86efac;">INSERT..ON DUP 拿到锁 → 做事 → <b>COMMIT：锁自动消失</b></div>
+    <div style="position:absolute;left:60%;width:40%;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#64748b;">无锁</div>
+  </div>
+</div>
+
+<!-- 事务 B 泳道 -->
+<div style="display:flex;align-items:center;margin:8px 0;">
+  <div style="width:140px;font-size:12px;font-weight:700;color:#7dd3fc;">事务 B</div>
+  <div style="flex:1;position:relative;height:26px;">
+    <div style="position:absolute;left:0;width:22%;height:22px;background:#3b2a10;border:1px dashed #f59e0b;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fcd34d;">等锁</div>
+    <div style="position:absolute;left:22%;width:56%;height:22px;background:#0f3d2e;border:1px solid #4ade80;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#86efac;">A 提交后拿到锁 → 做事 → <b>COMMIT：锁又自动消失</b></div>
+    <div style="position:absolute;left:78%;width:22%;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#64748b;">无锁</div>
+  </div>
+</div>
+
+<div style="margin:16px 0 0;background:#1e293b;border-radius:8px;padding:10px 14px;font-size:13px;color:#cbd5e1;">同一行被 A、B 轮流锁，<b>行不用删、不用重建</b>：A 提交自动松手 → B 的 INSERT..ON DUP 再次锁上同一行 → B 提交再松手。释放动作就是代码里的 <code style="background:#0f172a;padding:0 5px;border-radius:4px;">tx.Commit()</code> / <code style="background:#0f172a;padding:0 5px;border-radius:4px;">defer tx.Rollback()</code>。</div>
+</div>
+</body>
+</html>

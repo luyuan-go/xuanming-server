@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AB 与 BC 并发在 player 守卫上碰头</title>
+<style>html,body{margin:0;padding:0;background:#0f172a;}</style>
+</head>
+<body>
+<div style="width:1200px;box-sizing:border-box;font-family:'Microsoft YaHei',system-ui,sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;line-height:1.5;">
+<p style="margin:0 0 4px;font-size:18px;font-weight:600;color:#f8fafc;">两个事务同时跑：T1 = 接受 A→B，T2 = 接受 B→C</p>
+<p style="margin:0 0 18px;font-size:14px;color:#94a3b8;">pair 守卫各锁各的对 → 并行不冲突；交点全在 <b style="color:#f59e0b;">player(B) 守卫</b>上 → 那里串行</p>
+
+<div style="display:flex;gap:16px;align-items:stretch;">
+
+<!-- T1 -->
+<div style="flex:1 1 460px;border:1px solid #334155;border-radius:10px;padding:14px;background:#111c2e;">
+  <div style="font-size:14px;font-weight:700;color:#7dd3fc;margin-bottom:10px;">事务 T1 — 接受 A→B</div>
+  <div style="display:flex;flex-direction:column;gap:8px;font-size:14px;">
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">① 锁 <b style="color:#38bdf8;">pair(A,B)</b> 守卫 <span style="color:#4ade80;">✅ 独有，无竞争</span></div>
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">② 锁 <b style="color:#f59e0b;">player(A)</b> + <b style="color:#f59e0b;">player(B)</b> 守卫 <span style="color:#fbbf24;">⚠️ player(B) 要抢</span></div>
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">③ 锁请求行、COUNT、INSERT A→B 边</div>
+  </div>
+</div>
+
+<!-- 碰撞点 -->
+<div style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:6px;">
+  <div style="color:#f87171;font-size:14px;font-weight:700;text-align:center;">player(B)<br>串行点</div>
+  <div style="width:3px;height:64px;background:#f87171;"></div>
+  <div style="font-size:13px;color:#94a3b8;text-align:center;">谁先拿到谁先<br>COUNT+INSERT，<br>提交后另一个才进</div>
+</div>
+
+<!-- T2 -->
+<div style="flex:1 1 460px;border:1px solid #334155;border-radius:10px;padding:14px;background:#111c2e;">
+  <div style="font-size:14px;font-weight:700;color:#7dd3fc;margin-bottom:10px;">事务 T2 — 接受 B→C</div>
+  <div style="display:flex;flex-direction:column;gap:8px;font-size:14px;">
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">① 锁 <b style="color:#38bdf8;">pair(B,C)</b> 守卫 <span style="color:#4ade80;">✅ 独有，无竞争</span></div>
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">② 锁 <b style="color:#f59e0b;">player(B)</b> + <b style="color:#f59e0b;">player(C)</b> 守卫 <span style="color:#fbbf24;">⚠️ 等 player(B) 释放</span></div>
+    <div style="background:#1e293b;border-radius:6px;padding:8px 12px;color:#cbd5e1;">③ 锁请求行、COUNT、INSERT B→C 边</div>
+  </div>
+</div>
+
+</div>
+
+<p style="margin:16px 0 0;font-size:14px;color:#94a3b8;">pair(A,B) 与 pair(B,C) 是<b>两行不同的守卫</b>，互不阻塞 → ①② 并行跑；T1、T2 都要先锁 <b>player(B)</b>，在那里一个等一个 → B 的好友数 COUNT 是串行、权威的，绝不会并发把 B 的好友数插超。</p>
+</div>
+</body>
+</html>
