@@ -32,9 +32,9 @@
 
 ### 2.3 去重靠序号或幂等键，确认在持久化之后
 
-- Telegram：`local_pts + pts_count == pts` 才应用；结果较小时按重复处理，较大时补缺失更新。微信 seqsvr 的用户序号单调递增、允许跳号，适合做版本水位，不能直接当连续日志下标。
-- 去重生命周期取决于产品，不能一概而论。原文将 Telegram `random_id` 与 Stripe Idempotency-Key 一并概括为有限窗口；本次公共来源核对时，[Telegram 当前官方更新文档](https://core.telegram.org/api/updates)明确其服务端 `random_id` 去重记录不失效，因此订正该泛化。有限窗口的论点仍适用于 Stripe（原文记录至少保留 24 小时）和下面的 SQS FIFO，不能套到 Telegram。
-- AWS outbox 示例可用 SQS FIFO 去重，但原文记录窗口只有 5 分钟，接收端仍须持久去重。不能把中间件的短期去重当永久业务幂等。
+- Telegram：`local_pts + pts_count == pts` 才应用；`local_pts + pts_count > pts` 是已处理的重复，`local_pts + pts_count < pts` 表示缺口。微信 seqsvr 的用户序号单调递增、允许跳号，适合做版本水位，不能直接当连续日志下标。
+- 去重生命周期取决于产品，不能一概而论。原文将 Telegram `random_id` 与 Stripe Idempotency-Key 一并概括为有限窗口；本次公共来源核对时，[Telegram 当前官方更新文档](https://core.telegram.org/api/updates)明确其服务端 `random_id` 去重记录不失效，因此订正该泛化。有限窗口的论点仍适用于 [Stripe API v1](https://docs.stripe.com/api/idempotent_requests)（至少 24 小时后可清理）和下面的 SQS FIFO，不能套到 Telegram。
+- AWS outbox 示例可用 SQS FIFO 去重，但 [SQS FIFO 官方去重间隔](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/FIFO-key-terms.html)只有 5 分钟，接收端仍须持久去重。不能把中间件的短期去重当永久业务幂等。
 - Cloudflare Durable Objects：[官方术语表](https://developers.cloudflare.com/durable-objects/reference/glossary/)的输出门说明会在写入确认持久化前扣住对外消息及回包。这里借鉴的是“先落权威结果，再确认”，不能据此推导所有 Redis/MySQL 配置都已提供同样的持久性。
 
 ### 2.4 旧节点能不能写，由存储在提交时判断
@@ -47,7 +47,7 @@
 
 - 保留期：原文记录 WhatsApp 未送达消息最多 30 天。Iris“约一周”来自 [2014 年文章](https://engineering.fb.com/2014/10/09/production-engineering/building-mobile-first-infrastructure-for-messenger/)的历史实现参数；[2018 年存储迁移文章](https://engineering.fb.com/2018/06/26/core-infra/migrating-messenger-storage-to-optimize-performance/)描述保留数周，不能将“一周”当成其当前固定承诺。
 - 重连续传窗口：原文记录 Ably 约 2 分钟，Discord 为几分钟。
-- 超窗恢复：Discord Invalid Session 后重新 Identify；Telegram `differenceTooLong` 后重新获取对应消息箱状态；FCM 离线待发超过 100 条时清空并通知应用全量同步；LINE 落后过多走全量同步，并定期交换摘要对账。
+- 超窗恢复：[Discord Invalid Session](https://github.com/discord/discord-api-docs/blob/main/developers/events/gateway-events.mdx) 的 `d=false` 表示不可恢复，需要重新 Identify，`d=true` 则可能 Resume；Telegram `differenceTooLong` 后重新获取对应消息箱状态；[FCM Android 非折叠待发消息](https://firebase.google.com/docs/cloud-messaging/customize-messages/collapsible-message-types)超过 100 条时清空并通知应用全量同步；LINE 落后过多走全量同步，并定期交换摘要对账。
 
 以上数字是行业调研快照，不是本项目保留期。完整的业务契约还应明确最大未决条数、单次拉取条数、总字节数、重试期限、归档/补偿、告警和对账方式。资产未完成操作不能因投递窗到期就静默丢弃。
 
