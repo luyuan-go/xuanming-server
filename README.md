@@ -56,6 +56,8 @@ Pandora/
 10. [`AGENTS.md`](./AGENTS.md) — AI 协作守则
 11. [`PROGRESS.md`](./PROGRESS.md) — 当前进度
 
+专题调研与仓库对照：[玩家重要消息：持久收件箱、拉取恢复与迁移窗口（2026-10-14）](./docs/design/reliable-player-inbox-20261014.md)。
+
 ## 快速启动
 
 ### 0. 一键启动(推荐:策划/新人本地联调)
