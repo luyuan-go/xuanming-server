@@ -10,6 +10,8 @@
 
 **重要消息存进按收件人身份组织的持久收件箱，接收方准备好之后按自己的进度去拉；推送只起提醒作用，丢了也不要紧。**
 
+这句话是用户针对玩家跨节点迁移提出、供本仓库借鉴的设计建议，概括的是“持久事实与消费进度脱离临时位置”。它不是所有公司的唯一共同实现：Iris 可以向消费者推送实际更新，Temporal Signal 自身就是持久输入，不只是提醒。各例子支持不同环节，不能据此认定所有框架都只推提醒、只靠客户端拉取。
+
 玩家从 A 迁到 B、再迁到 C，重要消息的持久归属始终是稳定的 `player_id`，不用让投递器追着位置变化搬消息。目标节点完成接管与 Admission 后，再按业务游标或幂等键消费；节点通知只改善及时性。业务库、事务 outbox、邮件表或专门的更新流都可能承载这一职责，不要求所有业务再复制进一张通用队列表。
 
 “推送丢了也不要紧”的前提是权威数据已持久化、恢复入口持续可用，且接收端确实接上了拉取与失败恢复。对于驱动进场、换场景、匹配 READY 等会让玩家停住的状态，仍必须遵守本仓库已有的有界驱动与 watchdog 契约，见 [协议顺序规则 §12](protocol-ordering-rules.md)。
@@ -18,9 +20,9 @@
 
 ### 2.1 收件箱按人存，不按位置存
 
-- Meta Messenger 的 Iris：按用户全序排列的更新队列；手机端、存储层等消费者各有独立指针，成功消费后才推进。手机离线时指针停住，新消息仍入队。
+- Meta Messenger 的 Iris：按用户全序排列的更新队列；手机端、存储层等消费者各有独立指针，成功消费后才推进。手机离线时指针停住，新消息仍入队。[2014 年官方文章](https://engineering.fb.com/2014/10/09/production-engineering/building-mobile-first-infrastructure-for-messenger/)描述这一结构；它是实际更新流，不限于提醒帧。
 - Telegram：消息箱有递增的 `pts`，接收方据此维护进度。
-- Temporal：signal 按 Workflow Id 写入持久历史，发送方不需要知道 worker 的物理位置。
+- Temporal：signal 按 Workflow Id 写入持久历史，发送方不需要知道 worker 的物理位置；它本身就是异步持久消息。[官方消息传递文档](https://docs.temporal.io/develop/go/workflows/message-passing)支持该语义，不能把它概括为不可靠通知。
 
 ### 2.2 推送用于提醒，准确数据靠接收方按进度拉
 
@@ -33,17 +35,17 @@
 - Telegram：`local_pts + pts_count == pts` 才应用；结果较小时按重复处理，较大时补缺失更新。微信 seqsvr 的用户序号单调递增、允许跳号，适合做版本水位，不能直接当连续日志下标。
 - 去重生命周期取决于产品，不能一概而论。原文将 Telegram `random_id` 与 Stripe Idempotency-Key 一并概括为有限窗口；本次公共来源核对时，[Telegram 当前官方更新文档](https://core.telegram.org/api/updates)明确其服务端 `random_id` 去重记录不失效，因此订正该泛化。有限窗口的论点仍适用于 Stripe（原文记录至少保留 24 小时）和下面的 SQS FIFO，不能套到 Telegram。
 - AWS outbox 示例可用 SQS FIFO 去重，但原文记录窗口只有 5 分钟，接收端仍须持久去重。不能把中间件的短期去重当永久业务幂等。
-- Cloudflare Durable Objects：原文记录其输出门会在写入确认持久化前扣住对外消息及回包。这里借鉴的是“先落权威结果，再确认”，不能据此推导所有 Redis/MySQL 配置都已提供同样的持久性。
+- Cloudflare Durable Objects：[官方术语表](https://developers.cloudflare.com/durable-objects/reference/glossary/)的输出门说明会在写入确认持久化前扣住对外消息及回包。这里借鉴的是“先落权威结果，再确认”，不能据此推导所有 Redis/MySQL 配置都已提供同样的持久性。
 
 ### 2.4 旧节点能不能写，由存储在提交时判断
 
 - Orleans 的位置目录默认最终一致，集群不稳定时可能出现同实体多实例；Akka 单写者也依赖正确的脑裂处理。不能仅凭路由或实例数量证明只有一个有效写者。
-- Martin Kleppmann 讨论的 fencing token、Google Chubby sequencer、Kafka producer epoch 都体现同一原则：新任期生效后，存储或资源端拒绝旧任期写入；Kafka 新生产者实例推进 epoch，旧实例写入会被拒绝。
+- Martin Kleppmann 讨论的 fencing token、Google Chubby sequencer、Kafka producer epoch 都体现同一原则：新任期生效后，存储或资源端拒绝旧任期写入。[Kafka 4.3 生产者文档](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/producer/KafkaProducer.html)中的这一保证针对使用同一个 `transactional.id` 的事务生产者：新实例初始化事务后可 fence 旧实例；不能扩展为任意生产者重启都会拒绝旧实例。
 - 流程约束也重要。原文记录微信 seqsvr 旧节点连续 N 秒读不到配置即停服、新节点等待 N 秒后接管；Discord 在 2026 年 3 月语音故障后加入交接准入检查，未完成交接不得缩容。后一个事故时间与措施仍按原调研快照保存，未在本次归档独立复核。
 
 ### 2.5 每条链路有上限，超限有明确退路
 
-- 保留期：原文记录 WhatsApp 未送达消息最多 30 天，Iris 队列后端约一周。
+- 保留期：原文记录 WhatsApp 未送达消息最多 30 天。Iris“约一周”来自 [2014 年文章](https://engineering.fb.com/2014/10/09/production-engineering/building-mobile-first-infrastructure-for-messenger/)的历史实现参数；[2018 年存储迁移文章](https://engineering.fb.com/2018/06/26/core-infra/migrating-messenger-storage-to-optimize-performance/)描述保留数周，不能将“一周”当成其当前固定承诺。
 - 重连续传窗口：原文记录 Ably 约 2 分钟，Discord 为几分钟。
 - 超窗恢复：Discord Invalid Session 后重新 Identify；Telegram `differenceTooLong` 后重新获取对应消息箱状态；FCM 离线待发超过 100 条时清空并通知应用全量同步；LINE 落后过多走全量同步，并定期交换摘要对账。
 
@@ -57,15 +59,15 @@
 
 ## 3. 迁移窗口里的在途消息
 
-用户调研把迁移时的快速投递路径概括为三种；该层一般是内存机制，允许失败或丢失，正确性仍由前述持久业务记录与拉取恢复保证。
+用户调研把迁移时的快速投递路径概括为三种。下表讨论位置切换时的拒收、有限转发与默认内存缓冲；它们不能代替业务持久化，也不能用来断言框架的全部可靠投递能力都只在内存里。
 
 | 做法 | 原文代表 | 原文记录的边界 |
 |---|---|---|
 | 拒收，发送方刷新位置后重试 | Dapr、Service Fabric | Service Fabric 为尽力而为，可能重复 |
-| 旧节点有限次数转发 | Orleans | 默认最多转发 2 次，超限退回调用方 |
-| 路由层缓冲 | Akka Cluster Sharding | 默认缓冲 10 万条，满后丢弃；交接时可能主动丢弃部分缓冲以避免乱序 |
+| 旧节点有限次数转发 | Orleans | 当前 [SiloMessagingOptions 源码](https://github.com/dotnet/orleans/blob/main/src/Orleans.Runtime/Configuration/Options/SiloMessagingOptions.cs)默认最多转发 2 次，超限失败返回调用方；该值可配置 |
+| 路由层缓冲 | Akka Cluster Sharding | [官方 sharding 文档](https://doc.akka.io/libraries/akka-core/current/typed/cluster-sharding.html)默认缓冲上限为**每个 ShardRegion 10 万条**，满后丢弃；交接时可能主动丢弃部分缓冲以避免乱序 |
 
-原文还记录 Orleans 默认 at-most-once 且不自动去重、Akka Reliable Delivery 的生产使用警告。[Akka 当前官方说明（2.10.24）](https://doc.akka.io/libraries/akka-core/current/typed/reliable-delivery.html)在本次公共来源核对时仍保留生产使用警告。**其他参数仍是原调研的框架版本结论，实施前须查对应版本文档与配置**，不能扩展成所有版本、所有可选模块的一致保证。
+Orleans 的 [官方投递保证](https://learn.microsoft.com/en-us/dotnet/orleans/implementation/messaging-delivery-guarantees)说明默认 at-most-once；开启重试后可能多次到达，框架不替应用做持久业务去重。[Akka 当前官方说明（2.10.24）](https://doc.akka.io/libraries/akka-core/current/typed/reliable-delivery.html)在本次公共来源核对时仍保留 Reliable Delivery 生产使用警告，但该模块可使用 `DurableProducerQueue` 持久化生产者队列；这与上表 sharding 默认内存缓冲是不同层，不能混写成“都在内存里、都可能丢”。**其他参数仍是原调研的框架版本结论，实施前须查对应版本文档与配置**，不能扩展成所有版本、所有可选模块的一致保证。
 
 ## 4. 与上一轮方案的三点差别
 
@@ -125,3 +127,18 @@
 4. 超保留窗、超条数、坏帧、增量缺口：给出明确 resync/归档/补偿/业务错误；有界恢复，不静默丢资产、不永久等待。
 5. 定期比较权威结果、游标、未决 outbox 与业务收据，记录最老待办年龄及数量告警；仅有总量上限不等于完成对账。
 6. 验证范围包含服务端、UE 客户端/DS 与实际配置。原 C++/Unity 项目的测试状态不能充当本 Go/UE 项目的验收证据。
+
+## 8. 本次补核的公共来源
+
+以下是本次归档中补充核对的来源及适用范围；链接和当前页内容核对时间为 2026-10-14。未列入表格的行业案例与参数仍按用户调研快照保存，不声称本次已独立核实。
+
+| 来源 | 支持的结论及限制 |
+|---|---|
+| [Meta：Messenger 移动基础设施（2014）](https://engineering.fb.com/2014/10/09/production-engineering/building-mobile-first-infrastructure-for-messenger/) | 按用户的更新队列、消费者独立指针及当时保留期；不是“只推提醒”的证据 |
+| [Meta：Messenger 存储迁移（2018）](https://engineering.fb.com/2018/06/26/core-infra/migrating-messenger-storage-to-optimize-performance/) | 队列保留数周，说明 2014“一周”不能当当前不变参数 |
+| [Telegram：更新同步](https://core.telegram.org/api/updates) | `pts`、缺口恢复与差量同步；明确 `random_id` 服务端去重记录不失效，订正原文的有限窗口泛化 |
+| [Temporal：Go 消息传递](https://docs.temporal.io/develop/go/workflows/message-passing) | Signal 的异步持久消息及 Workflow 寻址语义 |
+| [Orleans：投递保证](https://learn.microsoft.com/en-us/dotnet/orleans/implementation/messaging-delivery-guarantees)、[默认配置源码](https://github.com/dotnet/orleans/blob/main/src/Orleans.Runtime/Configuration/Options/SiloMessagingOptions.cs) | 默认至多一次、可选重试不等于业务去重；默认最大转发 2 次可配置，main 分支源码随版本变化 |
+| [Akka：Cluster Sharding](https://doc.akka.io/libraries/akka-core/current/typed/cluster-sharding.html)、[Reliable Delivery](https://doc.akka.io/libraries/akka-core/current/typed/reliable-delivery.html) | 10 万条是每 ShardRegion 的默认缓冲上限；Reliable Delivery 的持久生产者队列与 sharding 默认缓冲不同；保留当前文档生产使用警告 |
+| [Cloudflare Durable Objects：术语表](https://developers.cloudflare.com/durable-objects/reference/glossary/) | output gate 在存储写入持久化前阻止对外消息 |
+| [Kafka 4.3：KafkaProducer](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/producer/KafkaProducer.html) | 同 `transactional.id` 的新事务生产者可 fence 旧实例；不能泛化为全部生产者重启语义 |
