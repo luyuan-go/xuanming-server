@@ -1,8 +1,8 @@
 # GitHub 游戏源码与开发资源目录
 
-资料整理日期：2026-09-09。
+资料整理日期：2026-09-09；斗地主、捕鱼、麻将专项补充核对：2026-10-21。
 
-本目录共收录 **152 个唯一仓库标识**，覆盖游戏源码、经典游戏重实现、客户端与服务端、配套资源、引擎、工具、算法、资料合集及检索中发现的受限候选。收录范围包含 GitHub game Topics 页面摘录的 80 个仓库，以及此前游戏、棋牌、卡牌与捕鱼调研中的相关仓库；按 owner/repo 忽略大小写去重。
+本目录共收录 **154 个唯一仓库标识**，覆盖游戏源码、经典游戏重实现、客户端与服务端、配套资源、引擎、工具、算法、资料合集及检索中发现的受限候选。收录范围包含 GitHub game Topics 页面摘录的 80 个仓库，以及此前游戏、棋牌、卡牌与捕鱼调研中的相关仓库，并补入 2026-10-21 专项检索的新项目；按 owner/repo 忽略大小写去重。
 
 ## 收录与核对口径
 
@@ -13,6 +13,29 @@
 - **Star** 是资料查询时的快照，部分页面可能使用索引缓存；带 k 的为约数，1k = 1000。**— 表示未记录，不表示 0**。
 - “重实现”“引擎”“服务端”“部署包”“资源合集”分别标明源码范围；不将它们一律称为完整可运行游戏。表内未写限制的项目，也不表示已经完成完整性或许可证审计。
 
+## 斗地主、捕鱼、麻将高星候选（2026-10-21）
+
+按用户要求，以 **GitHub Star（收藏数）最多**为检索目标，不局限于此前收藏。检索相关中文、英文关键词与 GitHub Topics，排除无关同名项目、资料导航和销售推广项目后，本次找到的各类专门项目高星候选如下。**这是本次检索结果，未证明覆盖全 GitHub 或为全站绝对第一**；通用多游戏 AI 框架不参与“麻将专用项目”的比较。
+
+下表 Star 均为 2026-10-21 从 GitHub 公共仓库 API 的 `stargazers_count` 核对的快照，项目范围依据官方仓库首页和 README；其他分类条目仍按各自原有核对口径，不代表全目录已重新核对。
+
+| 类型 | 项目／仓库 | Star | 实际内容 |
+|---|---|---:|---|
+| 斗地主专用 AI | [kwai/DouZero](https://github.com/kwai/DouZero) | **4,686** | 斗地主强化学习、训练和评估框架 |
+| 麻将专用助手 | [EndlessCheng/mahjong-helper](https://github.com/EndlessCheng/mahjong-helper) | **2,347** | 日麻牌效、防守、记牌助手，支持雀魂、天凤；不是独立麻将游戏 |
+| 捕鱼游戏 | [fylz1125/CCFish](https://github.com/fylz1125/CCFish) | **289** | Cocos Creator／TypeScript 单机捕鱼达人学习工程 |
+
+如果目标是游戏源码，按公开范围另看以下高星候选；AI、助手、服务端与游戏工程分别列明：
+
+| 类型 | 项目／仓库 | Star | 公开源码范围与限制 |
+|---|---|---:|---|
+| 斗地主游戏 | [ainilili/ratel](https://github.com/ainilili/ratel) | **2,208** | Java／Netty 命令行客户端＋服务端；旧版已停止维护 |
+| 麻将服务端 | [lonng/nanoserver](https://github.com/lonng/nanoserver) | **958** | Go 四川血战三人／四人麻将服务端，作为 Nano 示例；README 将客户端定位为调试用途，客户端源码未在该仓库直接公开，不能算公开完整双端 |
+| 日式麻将游戏 | [kobalab/Majiang](https://github.com/kobalab/Majiang) | **738** | HTML5／JavaScript「電脳麻将」，含 AI、牌谱回放；联网使用公开的配套 majiang-server，见下方配套分类 |
+| 国内麻将游戏 | [liumengniu/majiang](https://github.com/liumengniu/majiang) | **612** | LayaAir／TypeScript 湖南麻将客户端；Node.js 配套服务端另仓库公开，见下方配套分类 |
+
+捕鱼游戏源码候选为上表 CCFish。本次未下载、编译或运行这些项目，公开范围核对不等于运行验收。
+
 ## 分类索引
 
 | 分类 | 仓库数 |
@@ -22,7 +45,7 @@
 | [RPG、生存、冒险](#category-3) | 7 |
 | [MMO 服务端与经典重实现](#category-4) | 8 |
 | [动作、射击、竞速、音乐](#category-5) | 15 |
-| [卡牌、棋牌、麻将](#category-6) | 13 |
+| [卡牌、棋牌、麻将](#category-6) | 14 |
 | [休闲小游戏](#category-7) | 5 |
 | [捕鱼](#category-8) | 3 |
 | [编程教育与引擎示例](#category-9) | 7 |
@@ -30,7 +53,7 @@
 | [网络、ECS与开发工具](#category-11) | 12 |
 | [资料导航与资源合集](#category-12) | 9 |
 | [配套客户端、服务端与资源](#category-13) | 5 |
-| [算法、AI与规则库](#category-14) | 4 |
+| [算法、AI与规则库](#category-14) | 5 |
 | [备选与范围受限项目](#category-15) | 12 |
 | [运行环境、模拟器与运维工具](#category-16) | 5 |
 | [关联但非游戏项目](#category-17) | 1 |
@@ -130,7 +153,7 @@
 
 <a id="category-6"></a>
 
-## 卡牌、棋牌、麻将（13 个）
+## 卡牌、棋牌、麻将（14 个）
 
 | 项目／仓库 | Star | 语言／技术 | 内容、源码范围与限制 | 信息依据 |
 |---|---:|---|---|---|
@@ -138,12 +161,13 @@
 | [无名杀](https://github.com/libnoname/noname)<br>libnoname/noname | 4,968 | JavaScript | 三国杀类游戏，武将与技能扩展；README 请求勿商用 | 仓库核对 |
 | [Forge](https://github.com/Card-Forge/forge)<br>Card-Forge/forge | 2,678 | Java | 万智牌规则、界面、AI、冒险和任务 | 仓库核对 |
 | [XMage](https://github.com/magefree/mage)<br>magefree/mage | 2,351 | Java | 万智牌客户端＋服务端，规则裁定和联机 | 仓库核对 |
-| [Ratel 旧版](https://github.com/ainilili/ratel)<br>ainilili/ratel | 2.2k | Java / Netty | 命令行斗地主双端；已停止维护 | 仓库核对 |
+| [Ratel 旧版](https://github.com/ainilili/ratel)<br>ainilili/ratel | 2,208 | Java / Netty | 命令行斗地主双端；已停止维护 | 仓库核对（2026-10-21） |
 | [YGOPro](https://github.com/Fluorohydride/ygopro)<br>Fluorohydride/ygopro | 2,055 | C++ / Lua | 游戏王规则和脚本引擎、示例 GUI | 仓库核对 |
 | [Cockatrice](https://github.com/Cockatrice/Cockatrice)<br>Cockatrice/Cockatrice | 1,836 | C++ / Qt | 多人联网卡牌虚拟桌面，含客户端和服务端 | 仓库核对 |
 | [太阳神三国杀](https://github.com/Mogara/QSanguosha)<br>Mogara/QSanguosha | 1,014 | C++ / Qt / Lua | 经典桌面三国杀源码；构建工具较老 | 仓库核对 |
-| [電脳麻将](https://github.com/kobalab/Majiang)<br>kobalab/Majiang | 735 | JavaScript | 日式麻将、AI、牌谱回放；联网另有 majiang-server | 仓库核对 |
-| [联网麻将](https://github.com/liumengniu/majiang)<br>liumengniu/majiang | 611 | TypeScript / LayaAir | 麻将客户端；Node.js 服务端另仓库公开 | 仓库核对 |
+| [Nano 四川麻将服务端](https://github.com/lonng/nanoserver)<br>lonng/nanoserver | 958 | Go / Nano | 四川血战三人／四人麻将服务端示例；客户端用于调试，源码未在该仓库直接公开 | 仓库核对（2026-10-21） |
+| [電脳麻将](https://github.com/kobalab/Majiang)<br>kobalab/Majiang | 738 | JavaScript | 日式麻将、AI、牌谱回放；联网另有 majiang-server | 仓库核对（2026-10-21） |
+| [联网麻将](https://github.com/liumengniu/majiang)<br>liumengniu/majiang | 612 | TypeScript / LayaAir | 湖南麻将客户端；Node.js 服务端另仓库公开 | 仓库核对（2026-10-21） |
 | [H5 斗地主](https://github.com/svzdev/doudizhu)<br>svzdev/doudizhu | 520 | Python / Phaser | 含客户端、服务端和 SQL | 仓库核对 |
 | [Ratel 新版](https://github.com/ratel-online/server)<br>ratel-online/server | 519 | Go | 多人命令行棋牌；麻将存在问题、UNO 开发中 | 仓库核对 |
 | [Go 斗地主](https://github.com/dwg255/landlord)<br>dwg255/landlord | 401 | Go / SQLite | 斗地主后端、静态客户端、基础 AI；MIT；客户端源自旧 mailgyc/doudizhu | 仓库核对 |
@@ -166,7 +190,7 @@
 
 | 项目／仓库 | Star | 语言／技术 | 内容、源码范围与限制 | 信息依据 |
 |---|---:|---|---|---|
-| [CCFish](https://github.com/fylz1125/CCFish)<br>fylz1125/CCFish | 287 | TypeScript / Cocos Creator | 单机捕鱼达人学习工程，含脚本和场景 | 仓库核对 |
+| [CCFish](https://github.com/fylz1125/CCFish)<br>fylz1125/CCFish | 289 | TypeScript / Cocos Creator | 单机捕鱼达人学习工程，含脚本和场景 | 仓库核对（2026-10-21） |
 | [Go 捕鱼](https://github.com/dwg255/fish)<br>dwg255/fish | 182 | Go / H5 | 账户、大厅、游戏服务端；完整客户端工程未确认 | 仓库核对 |
 | [fishJoy](https://github.com/sherryvs/fishJoy)<br>sherryvs/fishJoy | 49 | JavaScript / Canvas | 小型单机捕鱼；预加载、场景管理、碰撞检测；未见明确 LICENSE | 仓库核对 |
 
@@ -255,11 +279,12 @@
 
 <a id="category-14"></a>
 
-## 算法、AI与规则库（4 个）
+## 算法、AI与规则库（5 个）
 
 | 项目／仓库 | Star | 语言／技术 | 内容、源码范围与限制 | 信息依据 |
 |---|---:|---|---|---|
-| [DouZero](https://github.com/kwai/DouZero)<br>kwai/DouZero | 4.7k | Python | 斗地主强化学习、训练和评估框架；Apache-2.0 | 仓库核对 |
+| [DouZero](https://github.com/kwai/DouZero)<br>kwai/DouZero | 4,686 | Python | 斗地主强化学习、训练和评估框架；Apache-2.0 | 仓库核对（2026-10-21） |
+| [mahjong-helper](https://github.com/EndlessCheng/mahjong-helper)<br>EndlessCheng/mahjong-helper | 2,347 | Go | 日麻牌效、防守、记牌助手，支持雀魂、天凤；不是独立麻将游戏 | 仓库核对（2026-10-21） |
 | [q_algorithm](https://github.com/yuanfengyun/q_algorithm)<br>yuanfengyun/q_algorithm | 2.1k | Lua / C++ / C# / Go / JS / Java / Python | 麻将、跑胡子、扑克牌型与胡牌算法；未见明确 LICENSE | 仓库核对 |
 | [DeepLearningFlappyBird](https://github.com/yenchenlin/DeepLearningFlappyBird)<br>yenchenlin/DeepLearningFlappyBird | — | Python | Flappy Bird 深度强化学习示例 | Topics 摘录 |
 | [Solvitaire](https://github.com/thecharlieblake/Solvitaire)<br>thecharlieblake/Solvitaire | 51 | C++ | 多种单人纸牌游戏的求解器；GPL-2.0 | 低星搜索核对 |
